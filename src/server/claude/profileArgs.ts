@@ -27,7 +27,8 @@
  */
 import { modelNameSchema, permissionModeSchema } from '@shared/common';
 import { makeError, type ErrorCode, type ErrorPayload, type ProfileArgInvalidReason } from '@shared/errors';
-import { windowsPathIssue } from '@shared/paths';
+import type { PathRules } from '@shared/paths';
+import { HOST_PATH_RULES } from '../lib/paths';
 import type { ParseProfileArgs, ProfileArgIssueParams, ProfileArgsResult, ProfileSdkOptions } from './ports';
 
 type MultiKey =
@@ -139,8 +140,19 @@ export function isBroadToolRule(rule: string): boolean {
   return ['', '*', ':*', '**', '*:*'].includes(specifier);
 }
 
-/** Parses profile.args (C.12). Implements the port `ParseProfileArgs`. */
-export const parseProfileArgs: ParseProfileArgs = (args, passRaw) => {
+/**
+ * The parser of profile.args with the path rules of `--add-dir`/`--plugin-dir` values (WP-103: the
+ * rules of the host the profile runs on; tests pin `WIN32_PATHS`/`POSIX_PATHS`).
+ */
+export function profileArgsParser(rules: PathRules): ParseProfileArgs {
+  return (args, passRaw) => parseArgs(args, passRaw, rules);
+}
+
+/** Parses profile.args (C.12) with the path rules of this host. Implements the port `ParseProfileArgs`. */
+export const parseProfileArgs: ParseProfileArgs = (args, passRaw) =>
+  parseArgs(args, passRaw, HOST_PATH_RULES);
+
+function parseArgs(args: readonly string[], passRaw: boolean, rules: PathRules): ProfileArgsResult {
   const sdkOptions: ProfileSdkOptions = {};
   const extraArgs: Record<string, string | null> = {};
   const warnings: ErrorPayload[] = [];
@@ -294,7 +306,7 @@ export const parseProfileArgs: ParseProfileArgs = (args, passRaw) => {
       invalid(index, flag, 'missing_value');
       continue;
     }
-    if (spec.path === true && items.some((item) => windowsPathIssue(item) !== null)) {
+    if (spec.path === true && items.some((item) => rules.issue(item) !== null)) {
       invalid(index, flag, 'invalid_value');
       continue;
     }
@@ -317,4 +329,4 @@ export const parseProfileArgs: ParseProfileArgs = (args, passRaw) => {
     errors,
   };
   return result;
-};
+}

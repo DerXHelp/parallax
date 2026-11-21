@@ -3,14 +3,18 @@
  * §B.8: as soon as the coupling generation of its connection is no longer current, incoming
  * messages are dropped (and the socket is terminated) and nothing is sent any more – even if a
  * handler still runs after an unpair. The listener destroys the TCP socket anyway.
+ *
+ * WP-107 (§B.13): `remote` tells the hub the coupling level at the moment of each command (null once
+ * the generation is stale) and takes the report of commands it ran (connection log).
  */
 import type { RawData, WebSocket } from 'ws';
-import type { HubSocket } from '../sync/hub';
+import type { HubSocket, RemoteSocketAccess } from '../sync/hub';
 
 export class GuardedHubSocket implements HubSocket {
   constructor(
     private readonly ws: WebSocket,
     private readonly current: () => boolean,
+    readonly remote?: RemoteSocketAccess,
   ) {}
 
   get readyState(): number {

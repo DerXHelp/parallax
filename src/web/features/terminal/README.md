@@ -1,11 +1,22 @@
-# src/web/features/terminal – Eingebettetes Terminal (WP-99b)
+# src/web/features/terminal – Eingebettetes Terminal (WP-99b, Linux WP-105)
 
-Owner: **WP-99b**. Auftrag: `docs/wp/WP-99.md` („Aufteilung“), Details und Stolpersteine: `docs/wp/WP-99b.md`,
-Entscheidung ADR-239. Server: `src/server/terminal` (WP-99a), Protokoll v1: `src/shared/terminal.ts`.
+Owner: **WP-99b**; Linux-Welle L2: **WP-105**. Auftrag: `docs/wp/WP-99.md` („Aufteilung“), Details und Stolpersteine:
+`docs/wp/WP-99b.md`, `docs/wp/WP-105.md`; Entscheidung ADR-239. Server: `src/server/terminal` (WP-99a, WP-105),
+Protokoll v1: `src/shared/terminal.ts`.
 
 Tab „Terminal“ des Seitenpanels (Slot `TerminalPanel`): cmd, PowerShell oder Git Bash im Ordner der Session, in
 einer Pseudokonsole dieses Rechners, angezeigt mit xterm.js (nur DOM-Renderer). Bis zu 4 Terminals je Session; die
 Shells laufen weiter, wenn das Panel schließt, beim Wiederöffnen spielt der Server den Verlauf neu ab.
+
+WP-105:
+- Die Shells kommen vom Rechner der Session (`useSessionShells` aus `shell/navigation/session-actions`, unter Linux
+  dessen `shell.detect`).
+- Eine Session eines anderen Rechners verbindet über den Vermittler dieses Servers (`env.socketUrl(hostId)` →
+  `hostTerminalWsPath`, E3).
+- „Im Terminal fortsetzen“ (`command: 'claude'`): Tab „claude 1“; läuft claude, gibt es kein „Neu starten“. Danach sagt
+  die Exit-Leiste, dass die Session weitergeht, und „<Shell> öffnen“ startet die Shell aus `TerminalInfo.shell`.
+- Ein Ziel der Shell (`useTerminalTarget`, gesetzt von „Im Terminal fortsetzen“ und „Terminal mit claude zeigen“) wird
+  aktiv und fokussiert, sobald das Terminal in der Liste steht.
 
 ## Exporte
 
@@ -34,7 +45,7 @@ Shells laufen weiter, wenn das Panel schließt, beim Wiederöffnen spielt der Se
 | `state/terminals.ts` | Zustand-Store je `sessionKey` (Liste, aktives Terminal, Verfügbarkeit, letzter Fehler, Tab-Nummern), Screenreader-Modus (localStorage) |
 | `state/controller.ts` | Ein montiertes Panel: Verbindung ↔ Store, automatisches erstes Terminal (einmal je Mount), open/close/restart |
 | `state/view.ts` | `TerminalViewRuntime`: Engine öffnen, attach mit eingepasster Größe, Ausgabe schreiben, Resize (100 ms entprellt), Theme |
-| `state/environment.ts` | `TerminalEnvironment` (Engine, Socket, Zwischenablage, Schrift) als Kontext – Tests setzen Fakes |
+| `state/environment.ts` | `TerminalEnvironment` (Engine, Socket-URL je Host, Socket, Zwischenablage, Schrift) als Kontext – Tests setzen Fakes |
 | `testing.ts` | `FakeTerminalServer`, `FakeTerminalSocket`, `fakeTerminalEnvironment`, Beispiel-Terminals |
 | `i18n/` | Lazy-Namensraum (`useTerminalT`, `en.ts`, `de.ts`); nicht in `src/web/i18n/dictionaries.ts` registriert |
 
@@ -50,5 +61,6 @@ Shells laufen weiter, wenn das Panel schließt, beim Wiederöffnen spielt der Se
 ## Regeln
 
 - xterm, seine CSS und die Texte nur im Lazy-Chunk: nie aus `index.ts` oder etwas, das es statisch importiert.
-- Keine Imports aus anderen Features; Shell-Bausteine (`shell/shortcuts`, `shell/zoom-input`) sind erlaubt.
-- Nur für Sessions dieses Rechners (die Shell zeigt den Tab nur bei `useTerminalAvailable`).
+- Keine Imports aus anderen Features; Shell-Bausteine (`shell/shortcuts`, `shell/zoom-input`,
+  `shell/navigation/session-actions`) sind erlaubt.
+- Den Tab zeigt die Shell nur bei `useTerminalAvailable` (bis WP-107 nur für Sessions dieses Rechners).

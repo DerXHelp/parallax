@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
 import type { TranscriptItem } from '@shared/model';
+import { POSIX_PATHS, WIN32_PATHS } from '@shared/paths';
 import { makeError } from '@shared/errors';
 import {
   sampleDetail,
@@ -109,6 +110,20 @@ describe('sinceFacts', () => {
     ).toBeNull();
     expect(sinceFacts([edit('x', 1, 200, 'a.ts', { status: 'error' }), turn('r', 2, 210)], SEEN)?.files).toEqual([]);
     expect(sinceFacts(history(), 'not a date')).toBeNull();
+  });
+
+  it('counts a file once by the rules of the host: case-insensitive on Windows, not on Linux (WP-104)', () => {
+    const items = [
+      edit('a', 1, 200, '/home/alice/src/A.ts'),
+      edit('b', 2, 201, '/home/alice/src/a.ts'),
+      edit('c', 3, 202, '/home/alice//src/a.ts'),
+      turn('r', 4, 210),
+    ];
+    expect(sinceFacts(items, SEEN, POSIX_PATHS)?.files).toEqual([
+      '/home/alice/src/A.ts',
+      '/home/alice/src/a.ts',
+    ]);
+    expect(sinceFacts(items, SEEN, WIN32_PATHS)?.files).toEqual(['/home/alice/src/A.ts']);
   });
 });
 

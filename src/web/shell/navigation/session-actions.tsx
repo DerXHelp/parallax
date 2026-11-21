@@ -20,23 +20,27 @@ import {
   PinOffIcon,
   SmartphoneIcon,
   SparklesIcon,
+  SquareChevronRightIcon,
   SquareTerminalIcon,
   TerminalIcon,
   type LucideIcon,
 } from 'lucide-react';
-import { Fragment } from 'react';
-import { LOCAL_HOST_ID, parseSessionKey, type HostId } from '@shared/common';
+import { Fragment, useEffect, useMemo } from 'react';
+import { useStore } from 'zustand';
+import { createStore } from 'zustand/vanilla';
+import { LOCAL_HOST_ID, parseSessionKey, type EntryId, type HostId, type TerminalId } from '@shared/common';
 import { makeError } from '@shared/errors';
-import { SHELL_KINDS, type SessionSummary, type ShellKind } from '@shared/model';
-import { windowsPathIssue } from '@shared/paths';
+import { shellKindSchema, type SessionSummary, type ShellKind } from '@shared/model';
 import type { Command, CommandName } from '@shared/protocol';
-import { useT, type TranslationKey } from '@web/i18n';
+import { t as translateNow, useT, type TranslationKey } from '@web/i18n';
 import { copyText } from '@web/lib/clipboard';
 import { focusElement, focusedElement } from '@web/lib/return-focus';
+import { effectiveShell, shellChoices } from '@web/lib/shells';
 import { openClaudeSessionUrl, openSessionWindow } from '@web/lib/windows';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand } from '@web/state/hooks';
-import { selectTerminalAvailable, sessionAllows } from '@web/state/hosts';
+import { getSessionCapabilities, getSessionPaths, selectHostFlavor } from '@web/state/host-platform';
+import { canSendTo, selectTerminalAvailable, sendHostCommand, sessionAllows } from '@web/state/hosts';
 import { showErrorNotice, showTextNotice } from '@web/state/notices';
 import { selectSettings } from '@web/state/settings';
 import { clientStore } from '@web/state/store';
@@ -61,7 +65,7 @@ import { requestShell } from '../requests';
 import { openSidePanel } from '../side-panel/state';
 import { shortcutKeyLabels } from '../shortcuts';
 import { sessionFocusTarget } from './focus';
-import { isHandoffPending, openExternalConsole } from './handoff';
+import { isHandoffPending, openExternalConsole, trackHandoff } from './handoff';
 import { openQuickAsk } from './quick-ask';
 import { copyRemoteLink, remoteLinkOf } from './remote-control';
 import { requestRemoveSession } from './remove-session';
@@ -100,7 +104,12 @@ export type SessionActionId =
   | 'outputStyle'
   /** WP-97: cmd, PowerShell or Git Bash as a window in the session's folder (submenu). */
   | 'openShell'
-  | 'openTerminal';
+  | 'openTerminal'
+  /**
+   * WP-105 (102e): "Continue in terminal" – `claude --resume` in the embedded terminal of the session's
+   * computer; while it runs there (`summary.external.terminalId`) "Show terminal with claude".
+   */
+  | 'openInTerminal';
 
 export type SessionActionSlot = SessionActionId | 'separator';
 
@@ -129,7 +138,8 @@ export interface SessionSubAction {
 
 /**
  * Sidebar context menu and the "…" menu of a row (order of WP-35 §3; WP-58: + open folder; WP-63:
- * + remove; WP-64: + Remote Control; WP-65: + generate title again; WP-66: + quick question).
+ * + remove; WP-64: + Remote Control; WP-65: + generate title again; WP-66: + quick question; WP-105:
+ * + continue in terminal).
  */
 export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
   'quickAsk',
@@ -145,6 +155,7 @@ export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
   'separator',
   'sleep',
   'openExternal',
+  'openInTerminal',
   'copyConsoleCommand',
   'separator',
   'signIn',
@@ -158,7 +169,7 @@ export const SIDEBAR_ACTIONS: readonly SessionActionSlot[] = [
 
 /**
  * Header menu (WP-35 §8; WP-58: + open folder; WP-63: + remove; WP-64: + Remote Control; WP-65: + title;
- * WP-70: + output style, sign in).
+ * WP-70: + output style, sign in; WP-105: + continue in terminal).
  */
 export const HEADER_ACTIONS: readonly SessionActionSlot[] = [
   'conversations',
@@ -172,6 +183,7 @@ export const HEADER_ACTIONS: readonly SessionActionSlot[] = [
   'openShell',
   'openTerminal',
   'openExternal',
+  'openInTerminal',
   'copyConsoleCommand',
   'separator',
   'signIn',
@@ -228,11 +240,12 @@ export function newSessionIn(cwd: string, hostId: HostId = LOCAL_HOST_ID): void 
  * "Open folder in Explorer" (WP-58, ADR-144): `file.open {target: 'explorer', path: cwd}` – the
  * `cwd` string exactly as stored; the server checks the path and starts Explorer (only on the local
  * host). A refusal (`OPEN_FAILED`, `PATH_NOT_ALLOWED`, `FILE_NOT_FOUND` …) becomes a notice.
- * Defence in depth (R5W-10, C.10): a `cwd` that `windowsPathIssue` rejects (UNC, device, ADS …) is
- * never sent – the same notice as the server's refusal instead.
+ * Defence in depth (R5W-10, C.10): a `cwd` that the rules of the session's host reject (Windows: UNC,
+ * device, ADS …; Linux: relative, `/proc` … – WP-104) is never sent – the same notice as the server's
+ * refusal instead. WP-104: on Linux the file manager of the desktop (`capabilities.fileManager`).
  */
 export function openFolderInExplorer(sessionKey: string, summary: SessionSummary): void {
-  if (windowsPathIssue(summary.cwd) !== null) {
+  if (getSessionPaths(sessionKey).issue(summary.cwd) !== null) {
     showErrorNotice(makeError('PATH_REJECTED'), { sessionKey });
     return;
   }
@@ -254,29 +267,158 @@ export const SHELL_LABELS: Readonly<Record<ShellKind, TranslationKey>> = {
   cmd: 'navigation.shells.cmd',
   powershell: 'navigation.shells.powershell',
   gitbash: 'navigation.shells.gitbash',
+  login: 'navigation.shells.login',
+  bash: 'navigation.shells.bash',
+  zsh: 'navigation.shells.zsh',
+  fish: 'navigation.shells.fish',
+  pwsh: 'navigation.shells.pwsh',
 };
 
-/** The default shell of this computer's settings (shells open only on this computer). */
-export function defaultShell(): ShellKind {
-  return selectSettings(clientStore.getState()).console.defaultShell;
+// ---- Shells of a host (WP-105: `shell.detect` of a Linux host, cached per host) ----
+
+/** A detection answer is used this long before the next menu or panel asks again. */
+export const SHELL_DETECT_TTL_MS = 60_000;
+/** After a failed detection the next attempt waits this long (the kinds of the platform meanwhile). */
+const SHELL_DETECT_RETRY_MS = 10_000;
+
+interface HostShells {
+  /** `shell.detect.shells`; null = not known (the detection failed). */
+  shells: readonly ShellKind[] | null;
+  /** When the answer (or the failure) arrived (`Date.now()`). */
+  at: number;
+}
+
+const hostShellStore = createStore<{ byHost: Readonly<Partial<Record<HostId, HostShells>>> }>(() => ({
+  byHost: {},
+}));
+const detecting = new Set<HostId>();
+
+function hostOfSession(sessionKey: string | null): HostId {
+  if (sessionKey === null) return LOCAL_HOST_ID;
+  return parseSessionKey(sessionKey)?.hostId ?? LOCAL_HOST_ID;
+}
+
+/**
+ * Asks a Linux host which shells it has (`shell.detect`, also over remote access – E3). A Windows host
+ * always offers its three (its detection would only look for Git again), so it is never asked; a fresh
+ * answer is reused for `SHELL_DETECT_TTL_MS`, one request per host at a time, failures stay quiet (the
+ * menus keep the kinds of the platform).
+ */
+export function detectHostShells(hostId: HostId): void {
+  if (selectHostFlavor(clientStore.getState(), hostId) !== 'posix') return;
+  if (detecting.has(hostId) || !canSendTo(hostId, 'shell.detect')) return;
+  const known = hostShellStore.getState().byHost[hostId];
+  const ttl = known?.shells === null ? SHELL_DETECT_RETRY_MS : SHELL_DETECT_TTL_MS;
+  if (known !== undefined && Date.now() - known.at < ttl) return;
+  detecting.add(hostId);
+  const store = (shells: readonly ShellKind[] | null) => {
+    hostShellStore.setState((state) => ({
+      byHost: { ...state.byHost, [hostId]: { shells: shells ?? known?.shells ?? null, at: Date.now() } },
+    }));
+  };
+  let request: Promise<{ shells: readonly ShellKind[] }>;
+  try {
+    request = sendHostCommand(hostId, { name: 'shell.detect' });
+  } catch {
+    request = Promise.reject(new Error('shell.detect could not be sent'));
+  }
+  request
+    .then(
+      (result) => {
+        store(result.shells);
+      },
+      () => {
+        store(null);
+      },
+    )
+    .finally(() => {
+      detecting.delete(hostId);
+    });
+}
+
+/** The detected shells of a host, null before an answer. */
+function detectedShells(hostId: HostId): readonly ShellKind[] | null {
+  return hostShellStore.getState().byHost[hostId]?.shells ?? null;
+}
+
+/** Tests: forget every detection. */
+export function resetHostShells(): void {
+  detecting.clear();
+  hostShellStore.setState({ byHost: {} });
+}
+
+/**
+ * The shells offered for a session's computer (WP-104: by its platform; WP-105: a Linux computer's
+ * detected list). Outside React (menus are built while rendering): asks the host in a microtask, so a
+ * menu opened later shows the answer.
+ */
+export function sessionShellChoices(sessionKey: string | null): readonly ShellKind[] {
+  const hostId = hostOfSession(sessionKey);
+  queueMicrotask(() => {
+    detectHostShells(hostId);
+  });
+  return shellChoices(getSessionPaths(sessionKey).flavor, detectedShells(hostId));
+}
+
+/** `sessionShellChoices` for components: re-renders when the platform or the detected list changes. */
+export function useSessionShells(sessionKey: string | null): readonly ShellKind[] {
+  const hostId = hostOfSession(sessionKey);
+  const flavor = useStore(clientStore, (state) => selectHostFlavor(state, hostId));
+  const detected = useStore(hostShellStore, (state) => state.byHost[hostId]?.shells ?? null);
+  useEffect(() => {
+    detectHostShells(hostId);
+  }, [hostId, flavor]);
+  return useMemo(() => shellChoices(flavor, detected), [flavor, detected]);
+}
+
+/**
+ * The default shell of this computer's settings; WP-104: when the session's computer does not offer
+ * it (a Windows setting on Linux, a shell that is not installed there), that computer's default.
+ */
+export function defaultShell(sessionKey: string | null = null): ShellKind {
+  const setting = selectSettings(clientStore.getState()).console.defaultShell;
+  const flavor = getSessionPaths(sessionKey).flavor;
+  return effectiveShell(setting, flavor, shellChoices(flavor, detectedShells(hostOfSession(sessionKey))));
+}
+
+/**
+ * A refusal of "Open shell" as a notice. WP-105: SHELL_NOT_FOUND of a Linux shell names that shell (the
+ * error text speaks of Git for Windows, which is right only for Git Bash).
+ */
+function showShellRefusal(sessionKey: string, error: unknown): void {
+  const payload = errorPayloadOf(error);
+  const shell = shellKindSchema.safeParse(payload.params.shell);
+  if (payload.code === 'SHELL_NOT_FOUND' && shell.success && shell.data !== 'gitbash') {
+    showTextNotice(
+      'navigation.shells.missing',
+      { shell: translateNow(SHELL_LABELS[shell.data]) },
+      { tone: 'warning', sessionKey },
+    );
+    return;
+  }
+  showErrorNotice(payload, { sessionKey });
 }
 
 /**
  * "Open shell in folder" (WP-97, ADR-238): `session.openShell {shell}` – the server opens cmd,
  * PowerShell or Git Bash as a window in the session's stored cwd (only on the local host). A
  * refusal (SHELL_NOT_FOUND, CWD_NOT_FOUND …) becomes a notice. Defence in depth like
- * `openFolderInExplorer`: a `cwd` that `windowsPathIssue` rejects is never sent.
+ * `openFolderInExplorer`: a `cwd` that the host's rules reject is never sent.
  */
 export function openShellIn(
   sessionKey: string,
   summary: SessionSummary,
-  shell: ShellKind = defaultShell(),
+  shell: ShellKind = defaultShell(sessionKey),
 ): void {
-  if (windowsPathIssue(summary.cwd) !== null) {
+  if (getSessionPaths(sessionKey).issue(summary.cwd) !== null) {
     showErrorNotice(makeError('PATH_REJECTED'), { sessionKey });
     return;
   }
-  runSessionCommand(sessionKey, { name: 'session.openShell', entryId: summary.entryId, shell });
+  sendCommand(sessionKey, { name: 'session.openShell', entryId: summary.entryId, shell }).catch(
+    (error: unknown) => {
+      showShellRefusal(sessionKey, error);
+    },
+  );
 }
 
 /** WP-99: "Terminal in panel" – opens the terminal tab of the side panel (help `?`, menu hint). */
@@ -322,6 +464,69 @@ export function openTerminalPanel(sessionKey: string): void {
   focusSessionTerminal(sessionKey);
 }
 
+// ---- WP-105: a terminal the panel should show (the claude terminal of "Continue in terminal") ----
+
+/** The terminal a session's terminal panel should make active; `token` tells two requests apart. */
+export interface TerminalTarget {
+  terminalId: TerminalId;
+  token: number;
+}
+
+const terminalTargetStore = createStore<{ targets: Readonly<Partial<Record<string, TerminalTarget>>> }>(
+  () => ({ targets: {} }),
+);
+let targetTokens = 0;
+
+/**
+ * Asks the session's terminal panel to make `terminalId` active and focus it – now when it is mounted,
+ * else when it mounts. The panel (`features/terminal`) takes the target once the terminal is in its
+ * list and clears it (`clearTerminalTarget`); a newer request replaces an older one.
+ */
+export function requestTerminalTarget(sessionKey: string, terminalId: TerminalId): void {
+  const target: TerminalTarget = { terminalId, token: ++targetTokens };
+  terminalTargetStore.setState((state) => ({ targets: { ...state.targets, [sessionKey]: target } }));
+}
+
+/** The pending target of a session's terminal panel (null = none). */
+export function useTerminalTarget(sessionKey: string): TerminalTarget | null {
+  return useStore(terminalTargetStore, (state) => state.targets[sessionKey] ?? null);
+}
+
+/** The panel took the target `token` (a newer request stays). */
+export function clearTerminalTarget(sessionKey: string, token: number): void {
+  terminalTargetStore.setState((state) => {
+    if (state.targets[sessionKey]?.token !== token) return state;
+    return {
+      targets: Object.fromEntries(Object.entries(state.targets).filter(([key]) => key !== sessionKey)),
+    };
+  });
+}
+
+/** Tests: forget every target. */
+export function resetTerminalTargets(): void {
+  terminalTargetStore.setState({ targets: {} });
+}
+
+/** The terminal panel of the session at `terminalId` ("Show terminal with claude"). */
+export function showSessionTerminal(sessionKey: string, terminalId: TerminalId): void {
+  requestTerminalTarget(sessionKey, terminalId);
+  openTerminalPanel(sessionKey);
+}
+
+/**
+ * "Continue in terminal" (WP-105, 102e): `session.openInTerminal` – the server ends the SDK process and
+ * starts `claude --resume …` in an embedded terminal of the session's computer; the panel then opens
+ * at that terminal. Tracked like the external console (`trackHandoff`): the composer sends nothing
+ * until the server answered. Rejects with the refusal (the caller shows it).
+ */
+export function continueInTerminal(sessionKey: string, entryId: EntryId): Promise<void> {
+  return trackHandoff(sessionKey, sendCommand(sessionKey, { name: 'session.openInTerminal', entryId })).then(
+    (result) => {
+      showSessionTerminal(sessionKey, result.terminalId);
+    },
+  );
+}
+
 /** True for a session of the local host (Explorer, new window: only there). */
 export function isLocalSession(sessionKey: string): boolean {
   return parseSessionKey(sessionKey)?.hostId === LOCAL_HOST_ID;
@@ -356,6 +561,7 @@ const ACTION_COMMANDS: Partial<Record<SessionActionId, CommandName>> = {
   openFolder: 'file.open',
   openShell: 'session.openShell',
   openExternal: 'session.openExternal',
+  openInTerminal: 'session.openInTerminal',
   copyConsoleCommand: 'session.consoleCommand',
   signIn: 'profile.login',
 };
@@ -368,6 +574,8 @@ function build(
 ): SessionAction | null {
   const command = ACTION_COMMANDS[id];
   if (command !== undefined && !sessionAllows(sessionKey, command)) return null;
+  // WP-104: what the session's computer has on its desktop (all true on Windows).
+  const capabilities = getSessionCapabilities(sessionKey);
   const entryId = summary.entryId;
   const external = summary.external !== null;
   const started = summary.sessionId !== null;
@@ -432,9 +640,14 @@ function build(
       };
     case 'openFolder':
       // Explorer opens on the session's computer: only this computer's sessions (ADR-144, ACTION_COMMANDS).
+      // WP-104: left out without a file manager there; on Linux its name is not "Explorer".
+      if (!capabilities.fileManager) return null;
       return {
         id,
-        label: 'navigation.actions.openFolder',
+        label:
+          getSessionPaths(sessionKey).flavor === 'win32'
+            ? 'navigation.actions.openFolder'
+            : 'navigation.actions.openFolderFileManager',
         icon: FolderOpenIcon,
         disabled: false,
         run: () => {
@@ -443,7 +656,9 @@ function build(
       };
     case 'openShell': {
       // A window on the session's computer: only this computer's sessions (ACTION_COMMANDS).
-      const preferred = defaultShell();
+      // WP-104: left out without shell windows there (`capabilities.shellWindow`).
+      if (!capabilities.shellWindow) return null;
+      const preferred = defaultShell(sessionKey);
       return {
         id,
         label: 'navigation.actions.openShell',
@@ -452,7 +667,8 @@ function build(
         run: () => {
           openShellIn(sessionKey, summary, preferred);
         },
-        children: SHELL_KINDS.map((shell): SessionSubAction => {
+        // WP-104: the shells of the session's computer (its platform).
+        children: sessionShellChoices(sessionKey).map((shell): SessionSubAction => {
           const item: SessionSubAction = {
             id: shell,
             label: SHELL_LABELS[shell],
@@ -506,6 +722,8 @@ function build(
         },
       };
     case 'openExternal':
+      // WP-104: left out when the session's computer cannot open a console window (`externalConsole`).
+      if (!capabilities.externalConsole) return null;
       return {
         id,
         label: 'navigation.actions.openExternal',
@@ -518,6 +736,36 @@ function build(
           });
         },
       };
+    case 'openInTerminal': {
+      // A pseudo console on the session's computer (`terminalAvailable`); left out otherwise.
+      if (!selectTerminalAvailable(clientStore.getState(), sessionKey)) return null;
+      const terminalId = summary.external?.terminalId ?? null;
+      if (terminalId !== null) {
+        return {
+          id,
+          label: 'navigation.console.showTerminal',
+          icon: PanelRightOpenIcon,
+          disabled: false,
+          // After the menu closed: the terminal takes the focus.
+          run: () => {
+            runAfterMenu(sessionKey, () => {
+              showSessionTerminal(sessionKey, terminalId);
+            });
+          },
+        };
+      }
+      return {
+        id,
+        label: 'navigation.console.continueInTerminal',
+        icon: SquareChevronRightIcon,
+        disabled: !started || external || summary.archived || isHandoffPending(sessionKey),
+        run: () => {
+          continueInTerminal(sessionKey, entryId).catch((error: unknown) => {
+            showErrorNotice(errorPayloadOf(error), { sessionKey });
+          });
+        },
+      };
+    }
     case 'copyConsoleCommand':
       return {
         id,

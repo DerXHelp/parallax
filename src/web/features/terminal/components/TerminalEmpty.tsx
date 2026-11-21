@@ -1,16 +1,18 @@
 import { TerminalIcon } from 'lucide-react';
-import { SHELL_KINDS, type ShellKind } from '@shared/model';
+import { WINDOWS_SHELL_KINDS, type ShellKind } from '@shared/model';
 import { Button } from '@web/ui/button';
 import { useTerminalT } from '../i18n';
 import { SHELL_KEYS } from '../lib/shells';
 
 export interface TerminalEmptyProps {
   defaultShell: ShellKind;
+  /** The shells of the session's computer (WP-104); default the Windows three. */
+  shells?: readonly ShellKind[];
   onOpen: (shell: ShellKind) => void;
 }
 
 /** After the user closed every terminal: one button per shell (the default one emphasized). */
-export function TerminalEmpty({ defaultShell, onOpen }: TerminalEmptyProps) {
+export function TerminalEmpty({ defaultShell, shells = WINDOWS_SHELL_KINDS, onOpen }: TerminalEmptyProps) {
   const tt = useTerminalT();
   return (
     <div
@@ -23,7 +25,7 @@ export function TerminalEmpty({ defaultShell, onOpen }: TerminalEmptyProps) {
         <p className="text-muted-foreground text-xs">{tt('empty.hint')}</p>
       </div>
       <div className="flex flex-wrap justify-center gap-2">
-        {SHELL_KINDS.map((shell) => (
+        {shells.map((shell) => (
           <Button
             key={shell}
             size="sm"

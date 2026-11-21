@@ -12,7 +12,7 @@
  *   when its `stat` really ends, also after a listing gave up on it (CR2-06, ADR-135). A drive still waiting
  *   for a slot at its timeout keeps the answer of its last finished stat (a local drive behind
  *   hanging network drives stays listed; one never seen is left out until it is probed).
- * - Otherwise: `windowsPathIssue` → PATH_REJECTED {reason}; `assertNoUnsafeLink` →
+ * - Otherwise: `rules.issue` (host path rules) → PATH_REJECTED {reason}; `assertNoUnsafeLink` →
  *   PATH_REJECTED {reason: 'link_target'}; `stat` + `readdir(withFileTypes)`; only folders and
  *   links to folders (a link's target is checked like a path – unsafe links are left out, never
  *   followed); `hidden` = dot name or a known system folder (Node has no hidden attribute), left
@@ -23,9 +23,14 @@
  *   FOLDER_NOT_READABLE {path}.
  *
  * `fs.createDirectory {parent, folderName}`: the parent is checked like a listed folder (string,
- * links, exists, is a folder); `windowsNameIssue(folderName)` → PATH_REJECTED {reason}; then ONE
+ * links, exists, is a folder); `rules.nameIssue(folderName)` → PATH_REJECTED {reason}; then ONE
  * `mkdir` of `childPath(parent, folderName)` – never recursive, so only a folder the user named is
  * created. EEXIST → FOLDER_EXISTS {path}, EACCES/EPERM/EROFS → FOLDER_NOT_WRITABLE {path: parent}.
+ *
+ * POSIX hosts (WP-103, `FsCommandsDeps.platform`): every check uses the POSIX path rules
+ * (case-sensitive, `/`). The roots are the user folder, `/`, `/media/<user>` and `/mnt` (`kind:
+ * 'drive'`, each only when its `stat` answers in time, same probe limits as the drives); `hidden` is
+ * a dot name only; `parent` of `/` is null.
  */
 import { lstat, mkdir, readdir, readlink, stat } from 'node:fs/promises';
 import os from 'node:os';
@@ -33,7 +38,7 @@ import path from 'node:path';
 import { LIMITS } from '@shared/common';
 import { makeError } from '@shared/errors';
 import type { FsEntry, FsListing } from '@shared/model';
-import { windowsNameIssue, windowsPathIssue, windowsPathsEqual } from '@shared/paths';
+import { pathFlavorOf, pathRules, WIN32_PATHS, type PathRules } from '@shared/paths';
 import type { HostCommand, HostCommandName } from '@shared/protocol';
 import { assertNoUnsafeLink, assertSafePath, fsErrorCode, type LinkFs } from '../lib/paths';
 import { CommandError, type HostCommandHandler } from '../sync/ports';
@@ -63,8 +68,13 @@ export interface FsCommandsDeps {
   fs?: DirFs;
   /** User folder of the roots (default `os.homedir()`). */
   home?: string;
-  /** Drives are listed only on Windows (default `process.platform`). */
+  /**
+   * Path rules and roots of this platform (default `process.platform`): drives on Windows; `/`,
+   * `/media/<user>` and `/mnt` elsewhere (WP-103).
+   */
   platform?: NodeJS.Platform;
+  /** POSIX: the user name of `/media/<user>` (default `os.userInfo().username`). */
+  userName?: string;
   /** Per drive `stat` (default `DRIVE_TIMEOUT_MS`). */
   driveTimeoutMs?: number;
   /** `fs.createDirectory`: creates one folder, never recursive (default `fs.promises.mkdir`). */
@@ -90,7 +100,7 @@ interface DriveProbe {
   answer: Promise<boolean>;
 }
 
-/** System folders Explorer hides (lower case); besides every name starting with `.`. */
+/** System folders Explorer hides (lower case, Windows only); besides every name starting with `.`. */
 const HIDDEN_NAMES: ReadonlySet<string> = new Set([
   '$recycle.bin',
   'system volume information',
@@ -99,8 +109,9 @@ const HIDDEN_NAMES: ReadonlySet<string> = new Set([
   'config.msi',
 ]);
 
-export function isHiddenName(name: string): boolean {
-  return name.startsWith('.') || HIDDEN_NAMES.has(name.toLowerCase());
+export function isHiddenName(name: string, rules: PathRules = WIN32_PATHS): boolean {
+  if (name.startsWith('.')) return true;
+  return rules.flavor === 'win32' && HIDDEN_NAMES.has(name.toLowerCase());
 }
 
 /** Case-insensitive, then by code point (stable across locales). */
@@ -111,17 +122,36 @@ function compareNames(a: FsEntry, b: FsEntry): number {
   return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 }
 
-/** `dir` + `name` exactly (one separator in the input's style, the input's spelling kept). */
-export function childPath(dir: string, name: string): string {
+/** `dir` + `name` exactly (one separator in the input's style, the input's spelling kept; POSIX: `/`). */
+export function childPath(dir: string, name: string, rules: PathRules = WIN32_PATHS): string {
+  if (rules.flavor !== 'win32') return dir.endsWith('/') ? `${dir}${name}` : `${dir}/${name}`;
   if (/[\\/]$/.test(dir)) return `${dir}${name}`;
   const separator = dir.includes('/') && !dir.includes('\\') ? '/' : '\\';
   return `${dir}${separator}${name}`;
 }
 
-/** The folder above `dir`, null at a drive root. */
-export function parentPath(dir: string): string | null {
-  const parent = path.win32.dirname(dir);
-  return windowsPathsEqual(parent, dir) ? null : parent;
+/** The folder above `dir`, null at a drive root (POSIX: at `/`). */
+export function parentPath(dir: string, rules: PathRules = WIN32_PATHS): string | null {
+  const parent = rules.flavor === 'win32' ? path.win32.dirname(dir) : path.posix.dirname(dir);
+  return rules.equal(parent, dir) ? null : parent;
+}
+
+/** The roots below `/` a POSIX folder browser offers besides the user folder and `/` (WP-103). */
+export function posixRootCandidates(userName: string | null): string[] {
+  const roots: string[] = [];
+  if (userName !== null && pathRules('posix').nameIssue(userName) === null) {
+    roots.push(`/media/${userName}`);
+  }
+  roots.push('/mnt');
+  return roots;
+}
+
+function currentUserName(): string | null {
+  try {
+    return os.userInfo().username;
+  } catch {
+    return null;
+  }
 }
 
 function folderError(error: unknown, dir: string): unknown {
@@ -149,9 +179,9 @@ function createError(error: unknown, parent: string, target: string): unknown {
  * folder the link physically lies in, also when the listed folder is reached through a link); true
  * only for a safe link to a folder.
  */
-async function isSafeFolderLink(fs: DirFs, link: string): Promise<boolean> {
+async function isSafeFolderLink(fs: DirFs, link: string, rules: PathRules): Promise<boolean> {
   try {
-    await assertNoUnsafeLink(link, fs);
+    await assertNoUnsafeLink(link, fs, rules);
     return (await fs.stat(link)).isDirectory();
   } catch {
     return false;
@@ -163,6 +193,7 @@ export function createFsCommands(deps: FsCommandsDeps = {}): HostCommandHandler 
   const fs = deps.fs ?? nodeDirFs;
   const makeDir = deps.mkdir ?? nodeMkdir;
   const platform = deps.platform ?? process.platform;
+  const rules = pathRules(pathFlavorOf(platform));
   const driveTimeoutMs = deps.driveTimeoutMs ?? DRIVE_TIMEOUT_MS;
   /** Drive stats waiting or running (one per drive at most, see the file comment). */
   const pendingDrives = new Map<string, DriveProbe>();
@@ -227,8 +258,8 @@ export function createFsCommands(deps: FsCommandsDeps = {}): HostCommandHandler 
   const roots = async (): Promise<FsListing> => {
     const entries: FsEntry[] = [];
     const home = deps.home ?? os.homedir();
-    if (home !== '' && windowsPathIssue(home) === null) {
-      entries.push({ name: path.win32.basename(home) || home, path: home, kind: 'home', hidden: false });
+    if (home !== '' && rules.issue(home) === null) {
+      entries.push({ name: rules.baseName(home) || home, path: home, kind: 'home', hidden: false });
     }
     if (platform === 'win32') {
       const present = await Promise.all(DRIVE_ROOTS.map((root) => driveAnswers(root)));
@@ -237,27 +268,36 @@ export function createFsCommands(deps: FsCommandsDeps = {}): HostCommandHandler 
           entries.push({ name: root.slice(0, 2), path: root, kind: 'drive', hidden: false });
         }
       });
+    } else {
+      entries.push({ name: '/', path: '/', kind: 'drive', hidden: false });
+      const candidates = posixRootCandidates(deps.userName ?? currentUserName());
+      const present = await Promise.all(candidates.map((root) => driveAnswers(root)));
+      candidates.forEach((root, i) => {
+        if (present[i] === true) entries.push({ name: root, path: root, kind: 'drive', hidden: false });
+      });
     }
     return { path: null, parent: null, entries, truncated: false };
   };
 
   const list = async (dir: string, showHidden: boolean): Promise<FsListing> => {
-    assertSafePath(dir);
+    assertSafePath(dir, rules);
     let raw: DirEntry[];
     try {
-      await assertNoUnsafeLink(dir, fs);
+      await assertNoUnsafeLink(dir, fs, rules);
       if (!(await fs.stat(dir)).isDirectory()) throw new CommandError(makeError('CWD_NOT_DIRECTORY'));
       raw = await fs.readdir(dir);
     } catch (error) {
       throw folderError(error, dir);
     }
-    const candidates = raw.filter((entry) => showHidden || !isHiddenName(entry.name));
+    const candidates = raw.filter((entry) => showHidden || !isHiddenName(entry.name, rules));
     const found = await Promise.all(
       candidates.map(async (entry): Promise<FsEntry | null> => {
-        const entryPath = childPath(dir, entry.name);
-        const hidden = isHiddenName(entry.name);
+        const entryPath = childPath(dir, entry.name, rules);
+        // Review WP-109: never offer what the rules refuse (`/proc`, `/sys`, `/dev` below `/`).
+        if (rules.issue(entryPath) !== null) return null;
+        const hidden = isHiddenName(entry.name, rules);
         if (entry.isSymbolicLink()) {
-          return (await isSafeFolderLink(fs, entryPath))
+          return (await isSafeFolderLink(fs, entryPath, rules))
             ? { name: entry.name, path: entryPath, kind: 'link', hidden }
             : null;
         }
@@ -268,24 +308,24 @@ export function createFsCommands(deps: FsCommandsDeps = {}): HostCommandHandler 
     const truncated = entries.length > LIMITS.fsListMax;
     return {
       path: dir,
-      parent: parentPath(dir),
+      parent: parentPath(dir, rules),
       entries: truncated ? entries.slice(0, LIMITS.fsListMax) : entries,
       truncated,
     };
   };
 
   const create = async (parent: string, folderName: string): Promise<{ path: string }> => {
-    assertSafePath(parent);
-    const issue = windowsNameIssue(folderName);
+    assertSafePath(parent, rules);
+    const issue = rules.nameIssue(folderName);
     if (issue !== null) throw new CommandError(makeError('PATH_REJECTED', { reason: issue }));
-    const target = childPath(parent, folderName);
-    assertSafePath(target);
+    const target = childPath(parent, folderName, rules);
+    assertSafePath(target, rules);
     // Every later command takes at most LIMITS.pathChars (listing it, session.create).
     if (target.length > LIMITS.pathChars) {
       throw new CommandError(makeError('PATH_REJECTED', { reason: 'too_long' }));
     }
     try {
-      await assertNoUnsafeLink(parent, fs);
+      await assertNoUnsafeLink(parent, fs, rules);
       if (!(await fs.stat(parent)).isDirectory()) throw new CommandError(makeError('CWD_NOT_DIRECTORY'));
     } catch (error) {
       throw folderError(error, parent);

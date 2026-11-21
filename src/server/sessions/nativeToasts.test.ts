@@ -175,6 +175,8 @@ describe('native toasts (WP22-03/-15, A.9)', () => {
         tag: ENTRY,
         launchUri: `parallax://session/${ENTRY}`,
         silent: true,
+        // WP-106: the click action of a Linux toast (ignored on Windows).
+        actionLabel: TOAST_TEXTS.en.open,
       },
       { title: 'B – error', body: TOAST_TEXTS.en.body, tag: ENTRY, launchUri: null, silent: false },
     ]);

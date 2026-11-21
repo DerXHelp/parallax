@@ -15,8 +15,21 @@ import {
   DEFAULT_PROGRAM_EXTENSIONS,
   defaultEditorSettings,
   EDITOR_BLOCKED_EXECUTABLES,
+  EDITOR_BLOCKED_POSIX_EXECUTABLES,
+  POSIX_SHELL_KINDS,
+  SHELL_KINDS,
+  WINDOWS_HOST_CAPABILITIES,
+  WINDOWS_SHELL_KINDS,
+  defaultShellFor,
+  shellKindsFor,
   EDITOR_PRESET_ARGS,
+  DEFAULT_CONSOLE_SETTINGS,
+  consoleSettingsSchema,
   editorExecutableIssue,
+  editorPresetsFor,
+  remoteEventSchema,
+  remotePeerRecordSchema,
+  remotePeerSchema,
   conversationSchema,
   editorSettingsSchema,
   entrySchema,
@@ -64,6 +77,7 @@ import {
   MIN_ZOOM,
   ZOOM_LEVELS,
 } from './model';
+import { POSIX_PATHS, WIN32_PATHS } from './paths';
 import {
   SAMPLE_IDS,
   sampleContextBreakdown,
@@ -78,6 +92,9 @@ import {
   sampleFileStatResult,
   sampleFsListing,
   sampleHostState,
+  sampleRemoteEvent,
+  sampleRemotePeer,
+  sampleRemotePeerRecord,
   sampleId,
   sampleItems,
   sampleModelOption,
@@ -635,12 +652,34 @@ describe('Phase 2 contracts (WP-30 §4.5)', () => {
     expect(REGISTRY_SCHEMA_VERSION).toBe(2);
   });
 
+  it('102e: a handoff names its terminal; older records and summaries have none', () => {
+    const { terminalId: _t, ...older } = sampleExternalHandoff();
+    expect(externalHandoffSchema.parse(older).terminalId).toBeNull();
+    const terminalId = `tm_${'b'.repeat(32)}`;
+    expectRoundTrip(externalHandoffSchema, sampleExternalHandoff({ terminalId }));
+    expect(externalHandoffSchema.safeParse(sampleExternalHandoff({ terminalId: 'tm_x' })).success).toBe(
+      false,
+    );
+    expect(
+      sessionSummarySchema.parse({
+        ...sampleSummary(),
+        external: { since: sampleTime(), pid: null, running: true },
+      }).external?.terminalId,
+    ).toBeNull();
+  });
+
+  it('102e: HostState.homeDir defaults to null', () => {
+    const { homeDir: _h, ...older } = sampleHostState();
+    expect(hostStateSchema.parse(older).homeDir).toBeNull();
+    expectRoundTrip(hostStateSchema, sampleHostState({ homeDir: '/home/demo' }));
+  });
+
   it('summary.external and the handoff item default sensibly', () => {
     const { external: _x, ...older } = sampleSummary();
     expect(sessionSummarySchema.parse(older).external).toBeNull();
     expectRoundTrip(
       sessionSummarySchema,
-      sampleSummary({ external: { since: sampleTime(), pid: 4242, running: false } }),
+      sampleSummary({ external: { since: sampleTime(), pid: 4242, running: false, terminalId: null } }),
     );
     const { importedItems: _n, ...handoff } = sampleSystemItems.handoff({ phase: 'external' });
     expect(transcriptItemSchema.parse(handoff)).toEqual(
@@ -684,6 +723,45 @@ describe('Phase 3 contracts (WP-50 §4.5)', () => {
     expect(settingsPatchSchema.parse({}).editor).toBeUndefined();
     expect(EDITOR_PRESET_ARGS.notepadpp).toContain('{file}');
     expect(EDITOR_PRESET_ARGS.vscode.some((arg) => arg.includes('{file}'))).toBe(true);
+  });
+
+  it('102e: editor presets per platform with argument templates', () => {
+    expect(editorPresetsFor('win32')).toEqual(['notepadpp', 'vscode', 'custom', 'system']);
+    expect(editorPresetsFor('posix')).toEqual([
+      'vscode',
+      'vscodium',
+      'zed',
+      'sublime',
+      'kate',
+      'gnome_text_editor',
+      'gedit',
+      'custom',
+      'system',
+    ]);
+    for (const [preset, args] of Object.entries(EDITOR_PRESET_ARGS)) {
+      expect(
+        args.some((arg) => arg.includes('{file}')),
+        preset,
+      ).toBe(true);
+    }
+    expect(issuesOf({ preset: 'kate', executable: null, args: [] })).toEqual([]);
+    expect(issuesOf({ preset: 'zed', executable: '/usr/bin/zed', args: [] })).toEqual([]);
+  });
+
+  it('102e: console.terminalEmulator – absolute and safe by its own shape, no block list', () => {
+    expect(
+      consoleSettingsSchema.parse({ defaultShell: 'cmd', gitBashWindow: 'mintty', gitDir: null }),
+    ).toEqual(DEFAULT_CONSOLE_SETTINGS);
+    const valid = (terminalEmulator: string | null) =>
+      consoleSettingsSchema.safeParse({ ...DEFAULT_CONSOLE_SETTINGS, terminalEmulator }).success;
+    expect(valid(null)).toBe(true);
+    expect(valid('/usr/bin/kitty')).toBe(true);
+    // Terminal emulators are what is meant here (unlike the editor's block list).
+    expect(valid('/usr/bin/xterm')).toBe(true);
+    expect(valid('C:\\Program Files\\WezTerm\\wezterm-gui.exe')).toBe(true);
+    expect(valid('kitty')).toBe(false);
+    expect(valid('')).toBe(false);
+    expect(valid('/usr/bin/../bin/kitty')).toBe(false);
   });
 
   it('editor: presets, overrides and a custom template', () => {
@@ -746,6 +824,78 @@ describe('Phase 3 contracts (WP-50 §4.5)', () => {
     expect(isDefaultProgramAllowed('D:\\work\\page.html')).toBe(false);
     expect(isDefaultProgramAllowed('D:\\work\\Makefile')).toBe(false);
     expect(isDefaultProgramAllowed('D:\\work\\.md')).toBe(false);
+  });
+
+  it('default program on POSIX (WP-102): same extensions, POSIX base names', () => {
+    expect(isDefaultProgramAllowed('/home/user/notes.MD', POSIX_PATHS)).toBe(true);
+    expect(isDefaultProgramAllowed('/home/user/run.sh', POSIX_PATHS)).toBe(false);
+    expect(isDefaultProgramAllowed('/home/user/a.d/Makefile', POSIX_PATHS)).toBe(false);
+    expect(isDefaultProgramAllowed('/home/user/.md', POSIX_PATHS)).toBe(false);
+  });
+
+  it('editor on POSIX (WP-102): absolute and safe, no .exe needed, POSIX block list', () => {
+    const posix = (executable: string) => editorExecutableIssue(executable, POSIX_PATHS);
+    expect(posix('/usr/bin/code')).toBeNull();
+    expect(posix('/opt/sublime_text/sublime_text')).toBeNull();
+    expect(posix('/snap/bin/notepad-plus-plus')).toBeNull();
+    expect(posix('code')).toBe('path');
+    expect(posix('/usr/bin/../bin/code')).toBe('path');
+    expect(posix('C:\\Tools\\Code.exe')).toBe('path');
+    expect(posix('/proc/self/exe')).toBe('path');
+    expect(posix('/usr/bin/bash')).toBe('blocked');
+    expect(posix('/usr/bin/python3.12')).toBe('blocked');
+    // Security review WP-109: versioned and suffixed names, more programs that run others.
+    expect(posix('/usr/bin/perl5.38-x86_64-linux-gnu')).toBe('blocked');
+    expect(posix('/usr/bin/pypy3')).toBe('blocked');
+    expect(posix('/usr/bin/gjs')).toBe('blocked');
+    expect(posix('/usr/bin/x-terminal-emulator')).toBe('blocked');
+    expect(posix('/usr/bin/xdg-open')).toBe('blocked');
+    for (const name of EDITOR_BLOCKED_POSIX_EXECUTABLES) {
+      expect(posix(`/usr/local/bin/${name.toUpperCase()}`)).toBe('blocked');
+    }
+    // The default rules stay Windows (existing callers).
+    expect(editorExecutableIssue('/usr/bin/code')).toBe('path');
+    expect(editorExecutableIssue('C:\\x\\Code.exe', WIN32_PATHS)).toBeNull();
+  });
+
+  it('editor schema accepts a path of either shape; each by its own rules (WP-102)', () => {
+    const exe = (executable: string) => issuesOf({ preset: 'custom', executable, args: ['{file}'] });
+    expect(exe('/usr/bin/code')).toEqual([]);
+    expect(exe('/usr/bin/zsh')).toEqual(['executable:blocked']);
+    expect(exe('/usr/bin/../zsh')).toEqual(['executable:path']);
+    expect(exe('C:\\Tools\\edit.bat')).toEqual(['executable:not_exe']);
+    expect(exe('usr/bin/code')).toEqual(['executable:path']);
+  });
+
+  it('shell kinds per platform (WP-102)', () => {
+    expect(SHELL_KINDS).toEqual([...WINDOWS_SHELL_KINDS, ...POSIX_SHELL_KINDS]);
+    expect(shellKindsFor('win32')).toEqual(['cmd', 'powershell', 'gitbash']);
+    expect(shellKindsFor('posix')).toEqual(['login', 'bash', 'zsh', 'fish', 'pwsh']);
+    expect(defaultShellFor('win32')).toBe('cmd');
+    expect(defaultShellFor('posix')).toBe('login');
+  });
+
+  it('coupling level and event detail have defaults for older files and servers (WP-102)', () => {
+    const { level: _record, ...olderRecord } = sampleRemotePeerRecord({ level: 'manage' });
+    expect(remotePeerRecordSchema.parse(olderRecord).level).toBe('control');
+    expect(remotePeerRecordSchema.parse(sampleRemotePeerRecord({ level: 'manage' })).level).toBe('manage');
+    expect(remotePeerRecordSchema.safeParse({ ...olderRecord, level: 'root' }).success).toBe(false);
+    const { level: _peer, ...olderPeer } = sampleRemotePeer();
+    expect(remotePeerSchema.parse(olderPeer).level).toBe('control');
+    const { detail: _detail, ...olderEvent } = sampleRemoteEvent();
+    expect(remoteEventSchema.parse(olderEvent).detail).toBeNull();
+    const command = sampleRemoteEvent({ kind: 'manage_command', detail: 'settings.update', rejected: false });
+    expect(remoteEventSchema.parse(command)).toEqual(command);
+  });
+
+  it('host capabilities default to the Windows set for older servers (WP-102)', () => {
+    const { capabilities, ...older } = sampleHostState();
+    expect(capabilities).toEqual(WINDOWS_HOST_CAPABILITIES);
+    expect(hostStateSchema.parse(older).capabilities).toEqual(WINDOWS_HOST_CAPABILITIES);
+    const server = { ...WINDOWS_HOST_CAPABILITIES, desktop: false, editor: false, autostart: false };
+    expect(hostStateSchema.parse({ ...older, platform: 'linux', capabilities: server }).capabilities).toEqual(
+      server,
+    );
   });
 
   it('additive defaults: task outputFile, plan_approved.freshContext, category id, detail fields', () => {

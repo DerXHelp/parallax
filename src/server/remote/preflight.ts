@@ -4,6 +4,10 @@
  * store (DPAPI) and, for the role "Share", port and addresses. Strictly read-only: the role
  * comes from `multi-host.json` without quarantine or migration, no key is created, nothing listens
  * longer than the port probe. English output like the rest of the preflight.
+ *
+ * Linux (WP-107, docs/wp/WP-76.md §B.14): the key store names its scheme (Secret Service,
+ * `systemd-creds --user`, the opt-in file with a warning), OpenSSL must be 3.5 or newer (ML-KEM,
+ * ML-DSA), and the firewall hint speaks of `ufw`.
  */
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -11,6 +15,7 @@ import {
   DEFAULT_MULTI_HOST_CONFIG,
   MULTI_HOST_SCHEMA_VERSION,
   multiHostFileSchema,
+  type KeyStoreScheme,
   type MultiHostConfig,
 } from '@shared/model';
 import type { PreflightCheck, PreflightLevel } from '../claude/preflight';
@@ -35,6 +40,69 @@ export interface MultiHostPreflightDeps {
   /** Addresses a listener on `bindAddress` is reachable at (remote/addresses.ts listenerAddresses). */
   addresses: (bindAddress: string) => string[];
   probe: (address: string, port: number) => Promise<PortProbe>;
+  /** WP-107: default `process.platform`. */
+  platform?: NodeJS.Platform;
+  /** WP-107: the scheme of the store after `keyStoreAvailable` (Linux); absent = DPAPI. */
+  keyStoreScheme?: () => KeyStoreScheme | undefined;
+  /** WP-107: OpenSSL of this Node.js (default `process.versions.openssl`). */
+  openssl?: string;
+}
+
+/** OpenSSL 3.5 brings ML-KEM and ML-DSA (WP-76 §A); older builds fail the TLS self-test. */
+export const MIN_OPENSSL: readonly [number, number] = [3, 5];
+
+/** `3.5.9` → true; anything unparsable → false. */
+export function opensslSupported(version: string | undefined): boolean {
+  const match = /^(\d+)\.(\d+)/u.exec(version ?? '');
+  if (match === null) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > MIN_OPENSSL[0] || (major === MIN_OPENSSL[0] && minor >= MIN_OPENSSL[1]);
+}
+
+const SCHEME_NAMES: Readonly<Record<KeyStoreScheme, string>> = {
+  dpapi: 'Windows DPAPI',
+  secret_service: 'Secret Service (keyring)',
+  systemd_creds: 'systemd-creds --user',
+  file: 'file (0600, --key-store=file)',
+};
+
+function keyStoreCheck(
+  available: boolean,
+  platform: NodeJS.Platform,
+  scheme: KeyStoreScheme | undefined,
+  missing: PreflightLevel,
+): PreflightCheck {
+  const base = { id: 'multihost-keystore', title: 'Key store' };
+  if (platform === 'win32') {
+    return available
+      ? { ...base, level: 'ok', detail: 'Windows DPAPI available' }
+      : {
+          ...base,
+          level: missing,
+          detail: 'Windows DPAPI not available - keys cannot be stored safely',
+          hint: 'needs Node.js 26.9 or newer (node:ffi) on Windows x64',
+        };
+  }
+  if (!available) {
+    return {
+      ...base,
+      level: missing,
+      detail: 'no key store usable - keys cannot be stored safely',
+      hint:
+        'with a desktop: an unlocked keyring (GNOME Keyring); without one: systemd-creds --user ' +
+        '(systemd 256 or newer) or, explicitly, --key-store=file',
+    };
+  }
+  if (scheme === 'file') {
+    return {
+      ...base,
+      level: 'warn',
+      detail: `keys in ${SCHEME_NAMES.file}`,
+      hint: 'a copy of the data folder or of a backup contains the keys; prefer a keyring or systemd-creds',
+    };
+  }
+  return { ...base, level: 'ok', detail: `${SCHEME_NAMES[scheme ?? 'dpapi']} available` };
 }
 
 /** Reads the role without touching the file (no quarantine, unlike the server's store). */
@@ -109,18 +177,23 @@ export async function multiHostPreflight(deps: MultiHostPreflightDeps): Promise<
           hint: 'this Node.js lacks ML-KEM/ML-DSA; update Node.js',
         },
   );
+  const platform = deps.platform ?? process.platform;
+  if (platform !== 'win32') {
+    const openssl = deps.openssl ?? process.versions.openssl;
+    checks.push(
+      opensslSupported(openssl)
+        ? { id: 'multihost-openssl', title: 'OpenSSL', level: 'ok', detail: openssl }
+        : {
+            id: 'multihost-openssl',
+            title: 'OpenSSL',
+            level: missing,
+            detail: `${openssl === '' ? 'unknown' : openssl} - needs ${MIN_OPENSSL.join('.')} or newer`,
+            hint: 'use the official Node.js build (it brings its own OpenSSL)',
+          },
+    );
+  }
   const keyStore = await deps.keyStoreAvailable().catch(() => false);
-  checks.push(
-    keyStore
-      ? { id: 'multihost-keystore', title: 'Key store', level: 'ok', detail: 'Windows DPAPI available' }
-      : {
-          id: 'multihost-keystore',
-          title: 'Key store',
-          level: missing,
-          detail: 'Windows DPAPI not available - keys cannot be stored safely',
-          hint: 'needs Node.js 26.9 or newer (node:ffi) on Windows x64',
-        },
-  );
+  checks.push(keyStoreCheck(keyStore, platform, deps.keyStoreScheme?.(), missing));
   if (config.role !== 'share') return checks;
 
   const probe = await deps.probe(config.bindAddress, config.port);
@@ -155,13 +228,16 @@ export async function multiHostPreflight(deps: MultiHostPreflightDeps): Promise<
           hint: 'the other computer cannot reach this one',
         },
   );
-  // No firewall query (ADR-228): the user sets up the Windows Firewall; a reminder only.
+  // No firewall query (ADR-228): the user sets up the firewall; a reminder only.
   checks.push({
     id: 'multihost-firewall',
     title: 'Firewall',
     level: 'info',
     detail: 'not checked by Parallax',
-    hint: `allow inbound TCP ${String(config.port)} for Node.js in private networks (Windows Firewall)`,
+    hint:
+      platform === 'win32'
+        ? `allow inbound TCP ${String(config.port)} for Node.js in private networks (Windows Firewall)`
+        : `if ufw is active: sudo ufw allow from <controlling computer> to any port ${String(config.port)} proto tcp`,
   });
   return checks;
 }

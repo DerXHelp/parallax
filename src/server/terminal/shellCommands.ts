@@ -10,16 +10,19 @@
  *   tracked afterwards. Checks: entry known (ENTRY_NOT_FOUND), `checkCwd` (PATH_REJECTED,
  *   CWD_NOT_FOUND, CWD_NOT_DIRECTORY), Git for Windows for `gitbash` (SHELL_NOT_FOUND); a launcher
  *   failure → SHELL_OPEN_FAILED {reason} (scrubbed like the external console's).
- * - `shell.detect`: the Git for Windows folder for the settings (fresh lookup).
+ * - `shell.detect`: the Git for Windows folder for the settings (fresh lookup) and the shells of this
+ *   host – Windows the three as before; Linux (WP-105) `login` and the installed ones, `gitDir` null
+ *   (no Git lookup, no `reg.exe`).
  *
- * Both are in REMOTE_DENIED_COMMANDS: a window of another computer never opens a shell here.
+ * `session.openShell` is in REMOTE_DENIED_COMMANDS: a window of another computer never opens a shell
+ * window here; `shell.detect` is allowed over remote access since WP-102 (E3, embedded terminal).
  * `createRecordingShellLauncher` opens NOTHING and logs `session.openShell (fake): <exe> <args>` –
  * compose wires it with the FakeBackend (dev, E2E), like the recording file opener.
  */
 import type { Logger } from 'pino';
 import type { EntryId } from '@shared/common';
 import { makeError } from '@shared/errors';
-import type { Settings } from '@shared/model';
+import { WINDOWS_SHELL_KINDS, type Settings } from '@shared/model';
 import type { ConsoleLaunchSpec } from '../claude/ports';
 import { logger as rootLogger } from '../lib/logger';
 import { checkCwd as defaultCheckCwd } from '../lib/paths';
@@ -28,7 +31,14 @@ import { nodeFsProbe, type FsProbe } from '../lib/windows';
 import { scrubConsoleReason } from '../sessions/external';
 import { CommandError, type HostCommandHandler } from '../sync/ports';
 import type { ConsoleLauncher } from '../system/ports';
-import { createGitFinder, resolveShellLaunch, type GitFinder, type GitLocatorDeps } from './shells';
+import {
+  availablePosixShells,
+  createGitFinder,
+  resolveShellLaunch,
+  shellEnvironment,
+  type GitFinder,
+  type GitLocatorDeps,
+} from './shells';
 
 export interface ShellCommandsDeps {
   /** The stored cwd of an entry (exactly as stored), null = unknown entry. */
@@ -41,23 +51,36 @@ export interface ShellCommandsDeps {
   regKeyQuery?: RegKeyQuery;
   checkCwd?: (cwd: string) => Promise<void>;
   gitFinder?: GitFinder;
+  /** WP-105: the host's platform (default `process.platform`). */
+  platform?: NodeJS.Platform;
+  /** WP-105: the shell of the user's passwd entry (tests; default `os.userInfo().shell`). */
+  passwdShell?: () => string | null;
 }
 
 export function createShellCommands(deps: ShellCommandsDeps): HostCommandHandler {
   const env = deps.env ?? process.env;
+  const platform = deps.platform ?? process.platform;
+  const fs = deps.fs ?? nodeFsProbe;
   const finder = deps.gitFinder ?? createGitFinder();
   const checkCwd = deps.checkCwd ?? ((cwd: string) => defaultCheckCwd(cwd));
   let registry: RegKeyQuery | null = deps.regKeyQuery ?? null;
   const locator = (): GitLocatorDeps => {
     registry ??= defaultRegKeyQuery();
-    return { fs: deps.fs ?? nodeFsProbe, env, regKeyQuery: registry };
+    return { fs, env, regKeyQuery: registry };
   };
 
   return {
     names: ['session.openShell', 'shell.detect'],
     async handle(cmd) {
       if (cmd.name === 'shell.detect') {
-        return { gitDir: await finder.refresh(deps.settings().console.gitDir, locator()) };
+        if (platform !== 'win32') {
+          // WP-105: the shells of this Linux host, looked up in the PATH a shell gets.
+          return { gitDir: null, shells: await availablePosixShells(shellEnvironment(env, platform), fs) };
+        }
+        return {
+          gitDir: await finder.refresh(deps.settings().console.gitDir, locator()),
+          shells: [...WINDOWS_SHELL_KINDS],
+        };
       }
       if (cmd.name !== 'session.openShell') {
         throw new CommandError(makeError('NOT_IMPLEMENTED', { command: cmd.name }));
@@ -68,6 +91,9 @@ export function createShellCommands(deps: ShellCommandsDeps): HostCommandHandler
       const settings = deps.settings().console;
       const launch = await resolveShellLaunch(cmd.shell, cwd, settings, 'window', {
         env,
+        platform,
+        fs,
+        ...(deps.passwdShell === undefined ? {} : { passwdShell: deps.passwdShell }),
         gitDir: () => finder.find(settings.gitDir, locator()),
       });
       const spec: ConsoleLaunchSpec = {

@@ -28,10 +28,18 @@ import {
   profileIdSchema,
   promptPrioritySchema,
   ruleDestinationSchema,
+  terminalIdSchema,
   themeSchema,
 } from './common';
 import { errorCodeSchema, errorInfoSchema, errorPayloadSchema } from './errors';
-import { isSafeWindowsPath, windowsBaseName, windowsPathExtension } from './paths';
+import {
+  WIN32_PATHS,
+  isSafeWindowsPath,
+  pathFlavorOfShape,
+  pathRules,
+  type PathFlavor,
+  type PathRules,
+} from './paths';
 import { runStateSchema, statusFactsSchema, turnOutcomeSchema, type NotificationKind } from './status';
 
 export { turnInfoSchema, type TurnInfo } from './status';
@@ -416,15 +424,59 @@ export const portSettingSchema = z.number().int().min(1024).max(65535).nullable(
 
 // ---- Editor for "Open in editor" (Phase 3, ADR-144; WP-30 F1) ----
 
-export const EDITOR_PRESETS = ['notepadpp', 'vscode', 'custom', 'system'] as const;
+/**
+ * Editor presets. Windows: Notepad++, VS Code; Linux (102e, WP-100 §5.6): VS Code, VSCodium, Zed,
+ * Sublime Text, Kate, GNOME Text Editor, gedit – each found on `PATH` (`files/editors.ts`). `custom`
+ * and `system` (the default program) on both. Which ones a host offers: `editorPresetsFor`.
+ */
+export const EDITOR_PRESETS = [
+  'notepadpp',
+  'vscode',
+  'custom',
+  'system',
+  'vscodium',
+  'zed',
+  'sublime',
+  'kate',
+  'gnome_text_editor',
+  'gedit',
+] as const;
 export const editorPresetSchema = z.enum(EDITOR_PRESETS);
 export type EditorPreset = z.infer<typeof editorPresetSchema>;
+
+/** Presets with a detected program and fixed arguments (everything but `custom` and `system`). */
+export type EditorProgramPreset = Exclude<EditorPreset, 'custom' | 'system'>;
 
 /** Argument templates of the presets; placeholders {file} {line} {col} (a missing line/col is 1). */
 export const EDITOR_PRESET_ARGS = {
   notepadpp: ['-n{line}', '-c{col}', '{file}'],
   vscode: ['--goto', '{file}:{line}:{col}'],
-} as const satisfies Record<'notepadpp' | 'vscode', readonly string[]>;
+  vscodium: ['--goto', '{file}:{line}:{col}'],
+  zed: ['{file}:{line}:{col}'],
+  sublime: ['{file}:{line}:{col}'],
+  kate: ['--line', '{line}', '--column', '{col}', '{file}'],
+  // GNOME Text Editor documents no line argument: the file only.
+  gnome_text_editor: ['{file}'],
+  gedit: ['+{line}:{col}', '{file}'],
+} as const satisfies Record<EditorProgramPreset, readonly string[]>;
+
+const WINDOWS_EDITOR_PRESETS = ['notepadpp', 'vscode', 'custom', 'system'] as const;
+const POSIX_EDITOR_PRESETS = [
+  'vscode',
+  'vscodium',
+  'zed',
+  'sublime',
+  'kate',
+  'gnome_text_editor',
+  'gedit',
+  'custom',
+  'system',
+] as const;
+
+/** 102e: the presets a host of this path flavor offers, in display order. */
+export function editorPresetsFor(flavor: PathFlavor): readonly EditorPreset[] {
+  return flavor === 'win32' ? WINDOWS_EDITOR_PRESETS : POSIX_EDITOR_PRESETS;
+}
 
 /**
  * Never accepted as editor executable (base name, case-insensitive): shells, script hosts, LOLBins –
@@ -470,17 +522,126 @@ export const DEFAULT_PROGRAM_EXTENSIONS = [
   'pdf',
 ] as const;
 
-/** The server checks the requested AND the resolved path (ADR-144). */
-export function isDefaultProgramAllowed(path: string): boolean {
-  return (DEFAULT_PROGRAM_EXTENSIONS as readonly string[]).includes(windowsPathExtension(path));
+/**
+ * Linux counterpart of `EDITOR_BLOCKED_EXECUTABLES` (WP-102, base name, case-insensitive, a trailing
+ * version like `python3.12` ignored, and – security review WP-109 – the part before the first `-`, `.`
+ * or digit, like `perl5.38-x86_64-linux-gnu`): shells, interpreters, wrappers that run another program,
+ * terminal emulators and openers that hand the file to whatever program the desktop picks. The server
+ * also checks the target of a link (`spawnGui`).
+ */
+export const EDITOR_BLOCKED_POSIX_EXECUTABLES = [
+  // shells
+  'sh',
+  'bash',
+  'dash',
+  'zsh',
+  'fish',
+  'ksh',
+  'mksh',
+  'csh',
+  'tcsh',
+  'pwsh',
+  'busybox',
+  'rbash',
+  // interpreters
+  'python',
+  'pypy',
+  'java',
+  'gjs',
+  'cjs',
+  'perl',
+  'ruby',
+  'node',
+  'nodejs',
+  'deno',
+  'bun',
+  'php',
+  'lua',
+  'tclsh',
+  'wish',
+  'awk',
+  'gawk',
+  'mawk',
+  'nawk',
+  // wrappers that run another program
+  'env',
+  'sudo',
+  'su',
+  'doas',
+  'pkexec',
+  'runuser',
+  'setsid',
+  'nohup',
+  'nice',
+  'timeout',
+  'xargs',
+  'script',
+  'ssh',
+  'systemd-run',
+  'flatpak',
+  'snap',
+  'unshare',
+  'flock',
+  'stdbuf',
+  'chroot',
+  'firejail',
+  'bwrap',
+  'dbus-launch',
+  'dbus-run-session',
+  'gtk-launch',
+  // terminal emulators
+  'x-terminal-emulator',
+  'gnome-terminal',
+  'kgx',
+  'ptyxis',
+  'konsole',
+  'xterm',
+  'xfce4-terminal',
+  'mate-terminal',
+  'lxterminal',
+  'tilix',
+  'terminator',
+  'kitty',
+  'alacritty',
+  'wezterm',
+  'foot',
+  'urxvt',
+  'rxvt',
+  'xdg-terminal-exec',
+  // openers
+  'xdg-open',
+  'gio',
+  'gnome-open',
+  'kde-open',
+  'kde-open5',
+  'exo-open',
+] as const;
+
+/** The server checks the requested AND the resolved path (ADR-144); `rules` = those of the host. */
+export function isDefaultProgramAllowed(path: string, rules: PathRules = WIN32_PATHS): boolean {
+  return (DEFAULT_PROGRAM_EXTENSIONS as readonly string[]).includes(rules.extension(path));
 }
 
-/** Why an editor executable is not acceptable, or null (absolute `.exe`, not on the block list). */
-export function editorExecutableIssue(executable: string): 'path' | 'not_exe' | 'blocked' | null {
-  if (!isSafeWindowsPath(executable)) return 'path';
-  if (!/\.exe$/i.test(executable)) return 'not_exe';
-  const base = windowsBaseName(executable).toLowerCase();
-  return (EDITOR_BLOCKED_EXECUTABLES as readonly string[]).includes(base) ? 'blocked' : null;
+export type EditorExecutableIssue = 'path' | 'not_exe' | 'blocked';
+
+/**
+ * Why an editor executable is not acceptable, or null. Windows: absolute `.exe`, not on the block list.
+ * POSIX (WP-102): absolute and safe, not on the POSIX block list. `rules` = those of the host.
+ */
+export function editorExecutableIssue(
+  executable: string,
+  rules: PathRules = WIN32_PATHS,
+): EditorExecutableIssue | null {
+  if (!rules.isSafe(executable)) return 'path';
+  const base = rules.baseName(executable).toLowerCase();
+  if (rules.flavor === 'win32') {
+    if (!/\.exe$/i.test(executable)) return 'not_exe';
+    return (EDITOR_BLOCKED_EXECUTABLES as readonly string[]).includes(base) ? 'blocked' : null;
+  }
+  const unversioned = base.replace(/[\d.]+$/, '');
+  const stem = base.replace(/[-.\d].*$/, '');
+  const blocked = EDITOR_BLOCKED_POSIX_EXECUTABLES as readonly string[];
+  return [base, unversioned, stem].some((name) => blocked.includes(name)) ? 'blocked' : null;
 }
 
 export const editorSettingsSchema = z
@@ -493,7 +654,10 @@ export const editorSettingsSchema = z
   })
   .superRefine((editor, ctx) => {
     if (editor.executable !== null) {
-      const issue = editorExecutableIssue(editor.executable);
+      // Shared by both kinds of host: the rules of the path's own shape; the host checks again with its
+      // rules when saving (`settings.update`) and the UI with the rules of the host it edits (WP-102).
+      const rules = pathRules(pathFlavorOfShape(editor.executable));
+      const issue = editorExecutableIssue(editor.executable, rules);
       if (issue !== null) ctx.addIssue({ code: 'custom', path: ['executable'], message: issue });
     }
     if (editor.preset === 'custom') {
@@ -514,10 +678,27 @@ export function defaultEditorSettings(): EditorSettings {
 
 // ---- Shell in the project folder (WP-97, ADR-238) ----
 
-/** Shells of "Open shell in folder" (WP-97) – a visible window in the session's cwd. */
-export const SHELL_KINDS = ['cmd', 'powershell', 'gitbash'] as const;
+/** Shells on Windows (WP-97): cmd, Windows PowerShell 5.1, Git Bash. */
+export const WINDOWS_SHELL_KINDS = ['cmd', 'powershell', 'gitbash'] as const;
+/**
+ * Shells on Linux (WP-102, WP-100 §5.4): `login` = the user's login shell (`$SHELL`, else the
+ * passwd entry), plus bash, zsh, fish and PowerShell 7 (`pwsh`) where installed (`shell.detect`).
+ */
+export const POSIX_SHELL_KINDS = ['login', 'bash', 'zsh', 'fish', 'pwsh'] as const;
+/** Every shell kind on the wire ("Open shell in folder", WP-97; embedded terminal, WP-99). */
+export const SHELL_KINDS = [...WINDOWS_SHELL_KINDS, ...POSIX_SHELL_KINDS] as const;
 export const shellKindSchema = z.enum(SHELL_KINDS);
 export type ShellKind = z.infer<typeof shellKindSchema>;
+
+/** The shell kinds a host of this flavor can offer (the installed ones come from `shell.detect`). */
+export function shellKindsFor(flavor: PathFlavor): readonly ShellKind[] {
+  return flavor === 'win32' ? WINDOWS_SHELL_KINDS : POSIX_SHELL_KINDS;
+}
+
+/** Default shell of a fresh host of this flavor (the settings default `cmd` is replaced on Linux). */
+export function defaultShellFor(flavor: PathFlavor): ShellKind {
+  return flavor === 'win32' ? 'cmd' : 'login';
+}
 
 /**
  * Window of Git Bash: `mintty` = `git-bash.exe` (like the Start menu shortcut "Git Bash"),
@@ -531,19 +712,36 @@ export type GitBashWindow = z.infer<typeof gitBashWindowSchema>;
 export const consoleSettingsSchema = z.object({
   defaultShell: shellKindSchema,
   gitBashWindow: gitBashWindowSchema,
-  /** Folder of Git for Windows (holds `git-bash.exe`); null = detected (shell.detect). */
+  /**
+   * Folder of Git for Windows (holds `git-bash.exe`); null = detected (shell.detect). Windows only:
+   * stays Windows-strict, a Linux host keeps it null (WP-102).
+   */
   gitDir: z
     .string()
     .min(1)
     .max(LIMITS.pathChars)
     .refine((value) => isSafeWindowsPath(value), 'path')
     .nullable(),
+  /**
+   * 102e: terminal emulator for the shell window and the external console on Linux (absolute path,
+   * e.g. `/usr/bin/kitty`); null = detected (`xdg-terminal-exec`, `x-terminal-emulator`, known ones).
+   * Checked by the rules of its own shape like the editor, but without the block list (terminal
+   * emulators are exactly what is meant); the host checks again with its rules. Windows ignores it.
+   */
+  terminalEmulator: z
+    .string()
+    .min(1)
+    .max(LIMITS.pathChars)
+    .refine((value) => pathRules(pathFlavorOfShape(value)).isSafe(value), 'path')
+    .nullable()
+    .default(null),
 });
 export type ConsoleSettings = z.infer<typeof consoleSettingsSchema>;
 export const DEFAULT_CONSOLE_SETTINGS = {
   defaultShell: 'cmd',
   gitBashWindow: 'mintty',
   gitDir: null,
+  terminalEmulator: null,
 } as const satisfies ConsoleSettings;
 
 // ---- Remote Control (WP-64) ----
@@ -837,9 +1035,20 @@ export const remoteAccessCheckSchema = z.object({
 });
 export type RemoteAccessCheck = z.infer<typeof remoteAccessCheckSchema>;
 
+/**
+ * Level of the one coupling (WP-102, WP-76 §B.13): `control` = sessions, files, terminal (as before);
+ * `manage` = also settings, profiles, updates, server, role and the coupling itself
+ * (`REMOTE_MANAGE_COMMANDS`). Chosen on site when the pairing window opens; never raised remotely.
+ */
+export const REMOTE_PEER_LEVELS = ['control', 'manage'] as const;
+export const remotePeerLevelSchema = z.enum(REMOTE_PEER_LEVELS);
+export type RemotePeerLevel = z.infer<typeof remotePeerLevelSchema>;
+
 /** The coupled controlling computer as the sharing computer shows it. */
 export const remotePeerSchema = z.object({
   name: hostNameSchema,
+  /** WP-102: what it may do here (default for older servers: `control`). */
+  level: remotePeerLevelSchema.default('control'),
   pairedAt: isoDateTimeSchema,
   /** At least one connection of it is open. */
   connected: z.boolean(),
@@ -880,6 +1089,8 @@ export const remotePeerRecordSchema = z.object({
   certificate: certificateDerSchema,
   /** DPAPI(kAuth) – the coupling secret of the connection proof (WP-76 §B.9), purpose `auth:peer`. */
   authKey: protectedSecretSchema,
+  /** WP-102: level bound to the pairing window; couplings from before WP-102 are `control`. */
+  level: remotePeerLevelSchema.default('control'),
   pairedAt: isoDateTimeSchema,
   lastSeenAt: isoDateTimeSchema.nullable().default(null),
   lastAddress: z.string().max(64).nullable().default(null),
@@ -910,6 +1121,10 @@ export const REMOTE_EVENT_KINDS = [
   'connected',
   'disconnected',
   'unpaired',
+  // WP-102 (WP-76 §B.13): level change, a command of the level `manage`, a terminal started remotely.
+  'level_changed',
+  'manage_command',
+  'terminal_opened',
 ] as const;
 export const remoteEventKindSchema = z.enum(REMOTE_EVENT_KINDS);
 export type RemoteEventKind = z.infer<typeof remoteEventKindSchema>;
@@ -941,6 +1156,11 @@ export const remoteEventSchema = z.object({
   port: z.number().int().min(0).max(65535).nullable(),
   /** Name the other side gave (pairing request); unverified unless the kind is `pair_ok`. */
   claimedName: hostNameSchema.nullable(),
+  /**
+   * WP-102: what happened, without content – `manage_command`: the command name; `level_changed`:
+   * `control>manage` / `manage>control`. Rows merge only with an equal detail.
+   */
+  detail: z.string().max(64).nullable().default(null),
   rejected: z.boolean(),
 });
 export type RemoteEvent = z.infer<typeof remoteEventSchema>;
@@ -961,12 +1181,24 @@ export type RemoteEventsFile = z.infer<typeof remoteEventsFileSchema>;
  * the PKCS#8 DER (base64); `certificate` = the own self-signed certificate (public).
  */
 export const KEY_FILE_SCHEMA_VERSION = 1;
+
+/**
+ * 102e (WP-76 §B.14): how `protected` is protected – DPAPI (Windows), Secret Service (Linux desktop,
+ * AES-256-GCM with a keyring key), `systemd-creds --user`, or a 0600 file (Linux without a desktop, only
+ * when switched on; `protected` then holds the key itself). A change of the scheme needs a new pairing.
+ */
+export const KEY_STORE_SCHEMES = ['dpapi', 'secret_service', 'systemd_creds', 'file'] as const;
+export const keyStoreSchemeSchema = z.enum(KEY_STORE_SCHEMES);
+export type KeyStoreScheme = z.infer<typeof keyStoreSchemeSchema>;
+
 export const keyPurposeSchema = z.string().regex(/^(?:identity|coupling:[a-z0-9][a-z0-9-]{0,31})$/u);
 export const keyFileSchema = z.object({
   schemaVersion: z.literal(KEY_FILE_SCHEMA_VERSION),
   purpose: keyPurposeSchema,
   algorithm: z.literal('ml-dsa-87'),
   protected: protectedSecretSchema,
+  /** 102e: the key store scheme that wrote `protected`; files from before Linux are DPAPI. */
+  scheme: keyStoreSchemeSchema.default('dpapi'),
   certificate: certificateDerSchema,
   createdAt: isoDateTimeSchema,
 });
@@ -1072,6 +1304,39 @@ export const updateStateSchema = z.object({
 export type UpdateState = z.infer<typeof updateStateSchema>;
 export const DEFAULT_UPDATE_STATE: UpdateState = updateStateSchema.parse({});
 
+/**
+ * What the host's desktop can do (WP-102, WP-100 §3.3): the UI shows desktop actions only where
+ * the host has them – a Linux server without a desktop has none of these. Session features
+ * (transcript, files, terminal) are not listed here (`terminalAvailable`, `fileOpenAvailable`, …).
+ */
+export const hostCapabilitiesSchema = z.object({
+  /** A local desktop session (Chrome window, notifications, programs). False in server mode. */
+  desktop: z.boolean(),
+  /** "Open in external console" (`session.openExternal`). */
+  externalConsole: z.boolean(),
+  /** "Open shell in folder" as a window (`session.openShell`, WP-97). */
+  shellWindow: z.boolean(),
+  /** Open files in an editor / the default program (`file.open`). */
+  editor: z.boolean(),
+  /** "Show in folder" (Explorer, file manager). */
+  fileManager: z.boolean(),
+  /** Start with the user's login (Windows shortcut, XDG autostart or the systemd user service). */
+  autostart: z.boolean(),
+  /** `parallax:` links. */
+  protocolHandler: z.boolean(),
+});
+export type HostCapabilities = z.infer<typeof hostCapabilitiesSchema>;
+/** Default for servers that do not send capabilities: every one of them runs on Windows with a desktop. */
+export const WINDOWS_HOST_CAPABILITIES = {
+  desktop: true,
+  externalConsole: true,
+  shellWindow: true,
+  editor: true,
+  fileManager: true,
+  autostart: true,
+  protocolHandler: true,
+} as const satisfies HostCapabilities;
+
 export const hostStateSchema = z.object({
   /** package.json version. */
   serverVersion: z.string(),
@@ -1079,8 +1344,10 @@ export const hostStateSchema = z.object({
   sdkVersion: z.string(),
   /** Minimum CLI according to the SDK manifest. */
   sdkClaudeCodeVersion: z.string(),
-  /** 'win32' */
+  /** `process.platform` of the host ('win32', 'linux'); picks the path rules (`pathFlavorOf`, WP-102). */
   platform: z.string(),
+  /** WP-102: desktop actions of this host; absent (older servers, all Windows) → everything available. */
+  capabilities: hostCapabilitiesSchema.default(WINDOWS_HOST_CAPABILITIES),
   /** Display only, e.g. '%LOCALAPPDATA%\\Parallax' or 'dev'. */
   dataDirLabel: z.string(),
   dev: z.boolean(),
@@ -1125,10 +1392,16 @@ export const hostStateSchema = z.object({
   /** WP-76: remote access of a sharing computer (role `share`); null otherwise. */
   remoteAccess: remoteAccessStateSchema.nullable().default(null),
   /**
-   * WP-99 (ADR-239): the embedded terminal works on this computer (ConPTY through `node:ffi`). The
-   * panel tab "Terminal" appears only for sessions of this computer and only when true.
+   * WP-99 (ADR-239): the embedded terminal works on this computer (ConPTY through `node:ffi` on
+   * Windows, a POSIX pty on Linux). The panel tab "Terminal" appears only when true – for sessions of
+   * this computer and, through the relay, of a paired one (ADR-244).
    */
   terminalAvailable: z.boolean().default(false),
+  /**
+   * 102e: home folder of the host's user (`os.homedir()`, only if safe by the host's path rules), so
+   * the web resolves `~/…` in the transcript outside the `cwd`; null = unknown (older hosts).
+   */
+  homeDir: z.string().min(1).max(LIMITS.pathChars).nullable().default(null),
 });
 export type HostState = z.infer<typeof hostStateSchema>;
 
@@ -1186,6 +1459,12 @@ export const externalHandoffSchema = z.object({
   since: isoDateTimeSchema,
   /** Conversation whose session id was resumed in the console. */
   conversationId: conversationIdSchema,
+  /**
+   * 102e "Continue in terminal" (`session.openInTerminal`): the embedded terminal running `claude`;
+   * null = a visible console (`session.openExternal`). Watched through the terminal service: an
+   * unknown terminal (closed, server restarted) counts as ended.
+   */
+  terminalId: terminalIdSchema.nullable().default(null),
 });
 export type ExternalHandoff = z.infer<typeof externalHandoffSchema>;
 
@@ -2109,13 +2388,14 @@ export const sessionSummarySchema = z.object({
   lastResultExcerpt: z.string().nullable(),
   /**
    * Phase 2 (ADR-104): external console; null = not handed off. `running: false` = the console
-   * ended, the return is pending.
+   * ended, the return is pending. 102e: `terminalId` = "Continue in terminal" (the panel shows it).
    */
   external: z
     .object({
       since: isoDateTimeSchema,
       pid: z.number().int().positive().nullable(),
       running: z.boolean(),
+      terminalId: terminalIdSchema.nullable().default(null),
     })
     .nullable()
     .default(null),

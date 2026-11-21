@@ -1,7 +1,7 @@
 /**
  * Who owns an entry (WP-86 §3, plan §8.1 "Marker"): the autostart shortcut, the start menu
  * shortcut and the protocol handler are judged by their command line (shortcut arguments,
- * `shell\open\command`), case-insensitive.
+ * `shell\open\command`; Linux: the `Exec` line of the `.desktop` file), case-insensitive.
  *
  * - own: contains `launcher\main.ts` (a clone or the development repo) or – only for a server of
  *   an installation (`installRoot`) – `<installRoot>\start.mjs`. Own entries are replaced and
@@ -10,17 +10,27 @@
  *   when creating and when removing – no failure, no warning (plan §8.5: an updated clone must not
  *   bend anything back).
  * - foreign: anything else (the user's or another program's); never replaced, never removed.
+ *
+ * Linux (WP-106): the same rules with `/` (`launcher/main.ts`, `/start.mjs`); paths are joined the
+ * way the root is written (`C:\…` → Windows, `/…` → POSIX), so Windows stays exactly as before.
  */
 import path from 'node:path';
+import { pathFlavorOfShape, type PathFlavor } from '@shared/paths';
 
 /** Marks a start command of a clone/the repo: the launcher's `main.ts` (R4-11, CR2-03). */
 export const LAUNCHER_MARKER = 'launcher\\main.ts';
+/** The same on Linux (WP-106). */
+export const POSIX_LAUNCHER_MARKER = 'launcher/main.ts';
 /** The stable start script in the root folder of an installation (plan §8.1). */
 export const INSTALL_START_SCRIPT = 'start.mjs';
 /** The icon of the start menu shortcut in the root folder of an installation. */
 export const INSTALL_ICON = 'parallax.ico';
+/** WP-106: the icon of the `.desktop` program entry in the root folder of a Linux installation. */
+export const POSIX_INSTALL_ICON = 'parallax.svg';
 /** Marks the start command of any installation (`<root>\start.mjs`). */
 export const INSTALL_MARKER = `\\${INSTALL_START_SCRIPT}`;
+/** The same on Linux (`<root>/start.mjs`). */
+export const POSIX_INSTALL_MARKER = `/${INSTALL_START_SCRIPT}`;
 
 /** Markers (substrings, compared case-insensitively) for the own and the deferred entries. */
 export interface EntryMarkers {
@@ -31,24 +41,34 @@ export interface EntryMarkers {
 /** Without explicit markers: only `launcher\main.ts` is own, nothing is deferred (before WP-86). */
 export const LAUNCHER_ONLY_MARKERS: EntryMarkers = { own: [LAUNCHER_MARKER], defer: [] };
 
-/** `<installRoot>\start.mjs` – the script the entries of this installation start. */
-export function installStartScript(installRoot: string): string {
-  return path.win32.join(installRoot, INSTALL_START_SCRIPT);
+/** `path.win32` for a Windows-shaped root, `path.posix` for `/…`. */
+function joinerOf(root: string): typeof path.posix {
+  return pathFlavorOfShape(root) === 'posix' ? path.posix : path.win32;
 }
 
-/** `<installRoot>\parallax.ico`. */
+/** `<installRoot>\start.mjs` (`<installRoot>/start.mjs` on Linux) – the script the entries start. */
+export function installStartScript(installRoot: string): string {
+  return joinerOf(installRoot).join(installRoot, INSTALL_START_SCRIPT);
+}
+
+/** `<installRoot>\parallax.ico`; Linux `<installRoot>/parallax.svg` (WP-106). */
 export function installIconPath(installRoot: string): string {
-  return path.win32.join(installRoot, INSTALL_ICON);
+  const posix = pathFlavorOfShape(installRoot) === 'posix';
+  return joinerOf(installRoot).join(installRoot, posix ? POSIX_INSTALL_ICON : INSTALL_ICON);
 }
 
 /**
  * The markers of a server: a clone (`installRoot` null) owns `launcher\main.ts` and defers to any
  * installation; an installation owns `launcher\main.ts` (bent over) and its own `start.mjs` – the
- * entry of another installation is foreign.
+ * entry of another installation is foreign. `flavor` (WP-106): which separator the commands of
+ * this host use (default Windows).
  */
-export function entryMarkers(installRoot: string | null): EntryMarkers {
-  if (installRoot === null) return { own: [LAUNCHER_MARKER], defer: [INSTALL_MARKER] };
-  return { own: [LAUNCHER_MARKER, installStartScript(installRoot)], defer: [] };
+export function entryMarkers(installRoot: string | null, flavor: PathFlavor = 'win32'): EntryMarkers {
+  const launcher = flavor === 'posix' ? POSIX_LAUNCHER_MARKER : LAUNCHER_MARKER;
+  if (installRoot === null) {
+    return { own: [launcher], defer: [flavor === 'posix' ? POSIX_INSTALL_MARKER : INSTALL_MARKER] };
+  }
+  return { own: [launcher, installStartScript(installRoot)], defer: [] };
 }
 
 /** The uninstaller (WP-86 §3): only the entries of exactly this installation, nothing else. */

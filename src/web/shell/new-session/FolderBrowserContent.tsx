@@ -24,15 +24,16 @@ import type { ErrorPayload } from '@shared/errors';
 import type { FsEntry, FsListing } from '@shared/model';
 import {
   NAME_MAX_CHARS,
-  windowsNameIssue,
-  windowsPathIssue,
-  windowsPathKey,
+  POSIX_NAME_MAX_BYTES,
+  WIN32_PATHS,
   type PathIssue,
+  type PathRules,
 } from '@shared/paths';
 import { useI18n } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { splitPathTail } from '@web/lib/path-display';
 import { errorPayloadOf } from '@web/state/connection';
+import { useHostPaths } from '@web/state/host-platform';
 import { sendHostCommand } from '@web/state/hosts';
 import { Alert } from '@web/ui/alert';
 import { Badge } from '@web/ui/badge';
@@ -51,10 +52,23 @@ export interface Breadcrumb {
 }
 
 /**
- * Breadcrumbs of a listed folder: drive root, then one step per segment, in the separator style
- * of the path; the last step is exactly `path` (the server's spelling).
+ * Breadcrumbs of a listed folder: drive root (Linux: `/`, WP-104), then one step per segment, in the
+ * separator style of the path; the last step is exactly `path` (the server's spelling).
  */
-export function breadcrumbs(path: string): Breadcrumb[] {
+export function breadcrumbs(path: string, rules: PathRules = WIN32_PATHS): Breadcrumb[] {
+  if (rules.flavor === 'posix') {
+    if (!path.startsWith('/')) return [{ label: path, path }];
+    const crumbs: Breadcrumb[] = [{ label: '/', path: '/' }];
+    let current = '';
+    for (const segment of path.split('/')) {
+      if (segment === '') continue;
+      current = `${current}/${segment}`;
+      crumbs.push({ label: segment, path: current });
+    }
+    const last = crumbs.at(-1);
+    if (last !== undefined) last.path = path;
+    return crumbs;
+  }
   const match = /^([A-Za-z]:)[\\/]*(.*)$/s.exec(path);
   if (match === null) return [{ label: path, path }];
   const separator = path.includes('\\') ? '\\' : '/';
@@ -79,11 +93,11 @@ const KIND_ICON: Readonly<Record<FsEntry['kind'], LucideIcon>> = {
 };
 
 /** Comparison key of an open folder (null = the roots). */
-function openKey(path: string | null): string {
-  return path === null ? '' : windowsPathKey(path);
+function openKey(path: string | null, rules: PathRules): string {
+  return path === null ? '' : rules.key(path);
 }
 
-/** Text of a name the server would reject (`windowsNameIssue`; an empty name is never shown). */
+/** Text of a name the server would reject (`rules.nameIssue`; an empty name is never shown). */
 function nameIssueKey(issue: PathIssue): 'tooLong' | 'invalidChar' | 'dots' | 'trailingDot' | 'reserved' {
   switch (issue) {
     case 'too_long':
@@ -135,6 +149,8 @@ export default function FolderBrowserContent({
   onCancel: () => void;
 }) {
   const { t, tError } = useI18n();
+  const rules = useHostPaths(hostId);
+  const posix = rules.flavor === 'posix';
   const listId = useId();
   const hiddenId = useId();
   const listRef = useRef<HTMLDivElement>(null);
@@ -171,7 +187,7 @@ export default function FolderBrowserContent({
       });
       if (request !== requestRef.current) return false;
       // The name field belongs to the folder it was opened in.
-      if (openKey(result.path) !== openKey(openRef.current)) {
+      if (openKey(result.path, rules) !== openKey(openRef.current, rules)) {
         setNewName(null);
         setCreateError(null);
       }
@@ -182,7 +198,7 @@ export default function FolderBrowserContent({
       const index =
         highlight === null
           ? -1
-          : result.entries.findIndex((entry) => windowsPathKey(entry.path) === windowsPathKey(highlight));
+          : result.entries.findIndex((entry) => rules.key(entry.path) === rules.key(highlight));
       setActive(Math.max(0, index));
       setSelected(options.select === true && index >= 0);
       setLoading(false);
@@ -201,7 +217,7 @@ export default function FolderBrowserContent({
 
   const loadStart = useEffectEvent(() => {
     const start = initialPath?.trim() ?? '';
-    const safe = start !== '' && windowsPathIssue(start) === null;
+    const safe = start !== '' && rules.issue(start) === null;
     void load(safe ? start : null, { fallbackToRoots: true });
   });
   // Mount only: the dialog content is mounted anew for every opening.
@@ -226,8 +242,17 @@ export default function FolderBrowserContent({
     setSelected(true);
   };
 
+  /** WP-104: a Linux name may hold anything but `/` and control characters, at most 255 bytes. */
+  const nameIssueText = (issue: PathIssue): string => {
+    const key = nameIssueKey(issue);
+    if (posix && key === 'tooLong')
+      return t('newSession.browser.posix.tooLong', { count: POSIX_NAME_MAX_BYTES });
+    if (posix && key === 'invalidChar') return t('newSession.browser.posix.invalidChar');
+    return t(`newSession.browser.nameIssues.${key}`, { count: NAME_MAX_CHARS });
+  };
+
   const trimmedName = newName?.trim() ?? '';
-  const nameIssue = trimmedName === '' ? null : windowsNameIssue(trimmedName);
+  const nameIssue = trimmedName === '' ? null : rules.nameIssue(trimmedName);
 
   const closeNewFolder = () => {
     setNewName(null);
@@ -254,7 +279,7 @@ export default function FolderBrowserContent({
     setCreating(false);
     setNewName(null);
     // The user went elsewhere while it was created: leave them there.
-    if (openKey(openRef.current) !== openKey(parent)) return;
+    if (openKey(openRef.current, rules) !== openKey(parent, rules)) return;
     // A dot name is hidden: show hidden folders so the new one can be selected.
     const reveal = trimmedName.startsWith('.') && !showHidden;
     if (reveal) setShowHidden(true);
@@ -276,7 +301,7 @@ export default function FolderBrowserContent({
 
   const goRoots = () => {
     void load(null, {
-      highlight: current === null ? null : (breadcrumbs(current)[0]?.path ?? null),
+      highlight: current === null ? null : (breadcrumbs(current, rules)[0]?.path ?? null),
       focusList: true,
     });
   };
@@ -377,9 +402,9 @@ export default function FolderBrowserContent({
     if (bar !== null) bar.scrollLeft = bar.scrollWidth;
   }, [current, t]);
 
-  const crumbs = current === null ? [] : breadcrumbs(current);
-  const listLabel =
-    current === null ? t('newSession.browser.listRoots') : t('newSession.browser.list', { path: current });
+  const crumbs = current === null ? [] : breadcrumbs(current, rules);
+  const rootsLabel = posix ? t('newSession.browser.posix.listRoots') : t('newSession.browser.listRoots');
+  const listLabel = current === null ? rootsLabel : t('newSession.browser.list', { path: current });
   const optionId = (index: number) => `${listId}-option-${String(index)}`;
   // The whole path split before its last name (`splitPathTail` with every segment).
   const footerPath = target === null ? null : splitPathTail(target, Number.MAX_SAFE_INTEGER);
@@ -431,7 +456,7 @@ export default function FolderBrowserContent({
                 onClick={goRoots}
               >
                 <MonitorIcon aria-hidden />
-                {t('newSession.browser.roots')}
+                {posix ? t('newSession.browser.posix.roots') : t('newSession.browser.roots')}
               </Button>
             </li>
             {crumbs.map((crumb, index) => {
@@ -530,9 +555,7 @@ export default function FolderBrowserContent({
             className="text-destructive text-2xs not-empty:pt-1.5"
             data-name-issue={nameIssue ?? undefined}
           >
-            {nameIssue === null
-              ? null
-              : t(`newSession.browser.nameIssues.${nameIssueKey(nameIssue)}`, { count: NAME_MAX_CHARS })}
+            {nameIssue === null ? null : nameIssueText(nameIssue)}
           </p>
           {createError === null ? null : (
             <Alert tone="error" className="mt-1.5" data-folder-create-error={createError.code}>
@@ -630,7 +653,9 @@ export default function FolderBrowserContent({
           })}
           {!loading && listing !== null && entries.length === 0 ? (
             <p role="presentation" className="text-muted-foreground px-2 py-6 text-center text-xs">
-              {atRoots ? t('newSession.browser.emptyRoots') : t('newSession.browser.empty')}
+              {atRoots
+                ? t(posix ? 'newSession.browser.posix.emptyRoots' : 'newSession.browser.emptyRoots')
+                : t('newSession.browser.empty')}
             </p>
           ) : null}
         </div>
@@ -654,7 +679,9 @@ export default function FolderBrowserContent({
           title={target ?? undefined}
         >
           {footerPath === null ? (
-            <span className="truncate">{t('newSession.browser.nothingChosen')}</span>
+            <span className="truncate">
+              {t(posix ? 'newSession.browser.posix.nothingChosen' : 'newSession.browser.nothingChosen')}
+            </span>
           ) : (
             // The parent gives way first: the chosen folder's name stays readable. Two flex parts
             // would read as two words – assistive tech gets the plain path.

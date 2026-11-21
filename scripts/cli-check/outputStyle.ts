@@ -126,9 +126,9 @@ export async function probeOutputStyle(
 ): Promise<OutputStyleCheck> {
   const fs = o.fs ?? nodeProbeFs;
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  const dir = path.win32.join(o.cwd, '.claude');
-  const file = path.win32.join(dir, 'settings.local.json');
-  const gitignore = path.win32.join(o.cwd, '.gitignore');
+  const dir = path.join(o.cwd, '.claude');
+  const file = path.join(dir, 'settings.local.json');
+  const gitignore = path.join(o.cwd, '.gitignore');
   const result: OutputStyleCheck = {
     available: false,
     detail: null,

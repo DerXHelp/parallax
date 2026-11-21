@@ -15,12 +15,18 @@ describe('replaceEnv', () => {
   it('replaces ${VAR}, keeps unknown ones, empties ${VAR?} and honours escapes', () => {
     const env = { NPM_TOKEN: 'tok-1', Mixed_Case: 'm' };
     expect(replaceEnv('a${NPM_TOKEN}b', env)).toBe('atok-1b');
-    expect(replaceEnv('${npm_token}', env)).toBe('tok-1');
-    expect(replaceEnv('${MIXED_CASE}', env)).toBe('m');
+    expect(replaceEnv('${npm_token}', env, 'win32')).toBe('tok-1');
+    expect(replaceEnv('${MIXED_CASE}', env, 'win32')).toBe('m');
     expect(replaceEnv('${MISSING}', env)).toBe('${MISSING}');
     expect(replaceEnv('x${MISSING?}y', env)).toBe('xy');
     expect(replaceEnv('\\${NPM_TOKEN}', env)).toBe('${NPM_TOKEN}');
     expect(replaceEnv('\\\\${NPM_TOKEN}', env)).toBe('\\tok-1');
+  });
+
+  it('matches variable names exactly on POSIX', () => {
+    const env = { NPM_TOKEN: 'tok-1' };
+    expect(replaceEnv('${NPM_TOKEN}', env, 'linux')).toBe('tok-1');
+    expect(replaceEnv('${npm_token}', env, 'linux')).toBe('${npm_token}');
   });
 });
 
@@ -56,28 +62,42 @@ describe('parseNpmrc', () => {
 describe('readNpmrc', () => {
   it('reads NPM_CONFIG_USERCONFIG, else %USERPROFILE%\\.npmrc', async () => {
     const readFile = vi.fn((file: string) => Promise.resolve(`registry=https://r.example/ # ${file}`));
-    const fromVar = await readNpmrc({ npm_config_userconfig: 'C:\\cfg\\my.npmrc' }, readFile);
+    const fromVar = await readNpmrc({ npm_config_userconfig: 'C:\\cfg\\my.npmrc' }, readFile, 'win32');
     expect(readFile).toHaveBeenLastCalledWith('C:\\cfg\\my.npmrc');
     expect(fromVar.get('registry')).toBe('https://r.example/');
-    await readNpmrc({ USERPROFILE: 'C:\\Users\\someone' }, readFile);
+    await readNpmrc({ USERPROFILE: 'C:\\Users\\someone' }, readFile, 'win32');
     expect(readFile).toHaveBeenLastCalledWith('C:\\Users\\someone\\.npmrc');
-    expect(userNpmrcPath({})).toBeNull();
+    expect(userNpmrcPath({}, 'win32')).toBeNull();
+  });
+
+  it('reads npm_config_userconfig, else $HOME/.npmrc on Linux', async () => {
+    const readFile = vi.fn(() => Promise.resolve('registry=https://r.example/'));
+    await readNpmrc({ NPM_CONFIG_USERCONFIG: '/etc/demo/npmrc', HOME: '/home/demo' }, readFile, 'linux');
+    expect(readFile).toHaveBeenLastCalledWith('/etc/demo/npmrc');
+    await readNpmrc({ HOME: '/home/demo', USERPROFILE: 'C:\\Users\\someone' }, readFile, 'linux');
+    expect(readFile).toHaveBeenLastCalledWith('/home/demo/.npmrc');
+    expect(userNpmrcPath({ home: '/home/demo' }, 'linux')).toBeNull();
+    readFile.mockClear();
+    for (const file of ['relative/.npmrc', '/proc/self/environ', 'C:\\cfg\\my.npmrc']) {
+      expect((await readNpmrc({ npm_config_userconfig: file }, readFile, 'linux')).size).toBe(0);
+    }
+    expect(readFile).not.toHaveBeenCalled();
   });
 
   it('treats a missing file as empty and rethrows other errors', async () => {
     const env = { USERPROFILE: 'C:\\Users\\someone' };
-    expect((await readNpmrc(env, () => Promise.reject(enoent()))).size).toBe(0);
+    expect((await readNpmrc(env, () => Promise.reject(enoent()), 'win32')).size).toBe(0);
     await expect(
-      readNpmrc(env, () => Promise.reject(Object.assign(new Error('denied'), { code: 'EACCES' }))),
+      readNpmrc(env, () => Promise.reject(Object.assign(new Error('denied'), { code: 'EACCES' })), 'win32'),
     ).rejects.toThrow('denied');
   });
 
   it('never touches a UNC, device or relative path', async () => {
     const readFile = vi.fn(() => Promise.resolve('registry=https://r.example/'));
     for (const file of ['\\\\server\\share\\.npmrc', '\\\\?\\C:\\x\\.npmrc', 'relative\\.npmrc']) {
-      expect((await readNpmrc({ NPM_CONFIG_USERCONFIG: file }, readFile)).size).toBe(0);
+      expect((await readNpmrc({ NPM_CONFIG_USERCONFIG: file }, readFile, 'win32')).size).toBe(0);
     }
-    expect((await readNpmrc({ USERPROFILE: '\\\\server\\home' }, readFile)).size).toBe(0);
+    expect((await readNpmrc({ USERPROFILE: '\\\\server\\home' }, readFile, 'win32')).size).toBe(0);
     expect(readFile).not.toHaveBeenCalled();
   });
 });

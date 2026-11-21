@@ -1,7 +1,7 @@
 /**
  * `--uninstall` (WP-86, docs/wp/WP-83.md §8.1 "Deinstallieren"): removes autostart, protocol handler
  * and Start menu shortcut of this installation (only own entries), then exactly the names the
- * installer writes into the root (`ROOT_ENTRIES`) and the root itself when it is empty – a file the
+ * installer writes into the root (`rootEntries()`) and the root itself when it is empty – a file the
  * user put there stays. The data directory stays; the caller names its path.
  *
  * Refused while a server of this installation runs (its version folder is in use). The caller
@@ -14,15 +14,18 @@ import { fsErrorCode } from '../lib/paths';
 import {
   CURRENT_FILE,
   InstallError,
-  ROOT_ENTRIES,
   START_SCRIPT,
   VERSIONS_DIR,
   assertNotRealUserFolder,
+  rootEntries,
 } from './layout';
 import { listInstalledVersions, versionOfBuild } from './versions';
 
 export interface UninstallDeps {
-  /** Removes autostart, protocol handler and Start menu shortcut of `root`; resolves with problems. */
+  /**
+   * Removes autostart, protocol handler and Start menu shortcut of `root` (Linux: also the
+   * application menu entry, the user service and the `parallax` command); resolves with problems.
+   */
   removeEntries: (root: string) => Promise<string[]>;
   /** Build id of the server running on the data directory, or null. */
   runningBuildId: () => Promise<string | null>;
@@ -61,7 +64,7 @@ export async function uninstall(root: string, deps: UninstallDeps): Promise<Unin
     );
   }
   const problems = await deps.removeEntries(root);
-  for (const name of ROOT_ENTRIES) {
+  for (const name of rootEntries()) {
     try {
       await rm(path.join(root, name), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     } catch (error) {

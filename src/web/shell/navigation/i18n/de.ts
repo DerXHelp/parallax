@@ -111,16 +111,24 @@ export const de: typeof en = {
     outputStyle: 'Ausgabestil…',
     openShell: 'Shell im Ordner öffnen',
     openTerminal: 'Terminal im Panel',
+    openFolderFileManager: 'Ordner im Dateimanager öffnen',
   },
   shells: {
     cmd: 'Eingabeaufforderung (cmd)',
     powershell: 'PowerShell',
     gitbash: 'Git Bash',
+    login: 'Login-Shell',
+    bash: 'Bash',
+    zsh: 'Zsh',
+    fish: 'fish',
+    pwsh: 'PowerShell 7',
     default: 'Standard',
     open: '{shell} im Projektordner öffnen',
     choose: 'Shell wählen',
     group: 'Shell im Projektordner',
     settings: 'Konsolen-Einstellungen…',
+    /** WP-105: SHELL_NOT_FOUND of a Linux shell (`{shell}` = the shell's menu text). */
+    missing: '{shell} ist auf diesem Rechner nicht installiert.',
   },
   quickAsk: {
     title: 'Kurz fragen · {title}',
@@ -189,6 +197,10 @@ export const de: typeof en = {
     copied:
       'Konsolenbefehl kopiert. Geheime Werte des Profils stehen nicht darin – die Konsole fragt sie ab. Nutze diese Session nicht in Parallax, solange claude in der Konsole läuft – zwei Schreiber würden die Unterhaltung durcheinanderbringen.',
     copyFailed: 'Der Konsolenbefehl konnte nicht in die Zwischenablage kopiert werden.',
+    /** WP-105 (102e): `claude --resume` in the embedded terminal of the session's computer. */
+    continueInTerminal: 'Im Terminal fortsetzen',
+    /** WP-105: claude runs in an embedded terminal – the panel at that terminal. */
+    showTerminal: 'Terminal mit claude zeigen',
   },
   switcher: {
     title: 'Session wechseln',
@@ -267,6 +279,10 @@ export const de: typeof en = {
     externalTitle: 'In externer Konsole geöffnet (seit {time})',
     externalRunning: 'Beende claude dort, Parallax holt die Session dann automatisch zurück.',
     externalEnded: 'Die Konsole wurde geschlossen – Parallax holt die Session zurück.',
+    terminalTitle: 'Läuft im Terminal (seit {time})',
+    terminalRunning: 'Beende claude im Terminal, Parallax holt die Session dann automatisch zurück.',
+    terminalEnded: 'claude im Terminal ist beendet – Parallax holt die Session zurück.',
+    showTerminal: 'Terminal zeigen',
     reclaim: 'Zurückholen',
     archivedTitle: 'Archiviert',
     archivedDescription: 'Diese Session ist schreibgeschützt, bis du sie wiederherstellst.',

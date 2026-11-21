@@ -1,5 +1,5 @@
-import { windowsPathKey } from '@shared/paths';
 import type { ToolCallItem, TranscriptItem } from '@shared/model';
+import { WIN32_PATHS, type PathRules } from '@shared/paths';
 import { getToolRenderer } from '../renderers';
 
 /**
@@ -8,6 +8,7 @@ import { getToolRenderer } from '../renderers';
  * synthetic ones of `/rename`, `/clear`), changed files (Write/Edit/MultiEdit/NotebookEdit that
  * succeeded, in order, each once), answered and open decisions, the cost of those turns and the
  * first new top-level item (target of "To the first new message"). Nothing without a new turn.
+ * WP-104: "each once" compares with the path rules of the session's host (`rules`).
  */
 export interface SinceFacts {
   turns: number;
@@ -28,7 +29,11 @@ function changedFile(item: ToolCallItem): string | null {
   return getToolRenderer(item.toolName).file?.(item)?.path ?? null;
 }
 
-export function sinceFacts(items: readonly TranscriptItem[], since: string): SinceFacts | null {
+export function sinceFacts(
+  items: readonly TranscriptItem[],
+  since: string,
+  rules: PathRules = WIN32_PATHS,
+): SinceFacts | null {
   const sinceMs = Date.parse(since);
   if (!Number.isFinite(sinceMs)) return null;
   const facts: SinceFacts = { turns: 0, files: [], answered: 0, open: 0, costUsd: null, firstItemId: null };
@@ -46,8 +51,8 @@ export function sinceFacts(items: readonly TranscriptItem[], since: string): Sin
       if (item.costUsdTurn !== null) facts.costUsd = (facts.costUsd ?? 0) + item.costUsdTurn;
     } else if (item.kind === 'tool_call') {
       const file = changedFile(item);
-      if (file !== null && !seenFiles.has(windowsPathKey(file))) {
-        seenFiles.add(windowsPathKey(file));
+      if (file !== null && !seenFiles.has(rules.key(file))) {
+        seenFiles.add(rules.key(file));
         facts.files.push(file);
       }
       const decision = item.decision;

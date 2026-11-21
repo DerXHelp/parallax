@@ -2,6 +2,7 @@ import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { LOCAL_HOST_ID } from '@shared/common';
 import { getSelectedSession } from '@web/state/selection';
 import { selectSummary } from '@web/state/hooks';
+import { getSessionCapabilities } from '@web/state/host-platform';
 import { selectTerminalAvailable, sessionAllows } from '@web/state/hosts';
 import { clientStore } from '@web/state/store';
 import { focusSessionInput } from '../NewSessionForm';
@@ -144,6 +145,8 @@ export function NavigationLayer() {
       const key = row?.getAttribute('data-session-row') ?? getSelectedSession();
       const summary = selectSummary(clientStore.getState(), key);
       if (key === null || summary === null || !sessionAllows(key, 'session.openShell')) return false;
+      // WP-104: no shell windows on that computer (a Linux server).
+      if (!getSessionCapabilities(key).shellWindow) return false;
       openShellIn(key, summary);
       return true;
     },

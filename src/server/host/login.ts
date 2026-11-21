@@ -25,7 +25,7 @@ import { deleteEnvVar } from '../claude/env';
 import type { ClaudeIntegration } from '../claude/ports';
 import { toError } from '../lib/async';
 import { logger as rootLogger } from '../lib/logger';
-import { CommandError, type HostCommandHandler } from '../sync/ports';
+import { CommandError, type CommandContext, type HostCommandHandler } from '../sync/ports';
 import type { LinkOpener } from './linkCommands';
 
 /** Working directory of login processes below PARALLAX_HOME (empty; the CLI writes nothing there). */
@@ -206,7 +206,7 @@ export function createLoginService(deps: LoginServiceDeps): LoginService {
     }
   };
 
-  const begin = async (profileId: ProfileId, generation: number): Promise<void> => {
+  const begin = async (profileId: ProfileId, generation: number, openHere: boolean): Promise<void> => {
     let session: LoginSession;
     try {
       await ensureDir(deps.cwd);
@@ -248,15 +248,22 @@ export function createLoginService(deps: LoginServiceDeps): LoginService {
     flow.timer.unref();
     setState(profileId, { ...IDLE_PROFILE_LOGIN, state: 'waiting', url, manualUrl: start.manualUrl });
     log.info({ profileId, automatic: start.automaticUrl !== null }, 'login waiting for the browser');
-    await openLink(url);
+    if (openHere) await openLink(url);
     const result = await session.waitForCompletion();
     // A pasted code is being checked: its own answer decides (same end, a more precise reason).
     if (state(profileId).state === 'verifying' && current(profileId, generation) !== null) return;
     finish(profileId, generation, result);
   };
 
-  const login = (cmd: CommandOf<'profile.login'>): CommandResult<'profile.login'> => {
+  const login = (
+    cmd: CommandOf<'profile.login'>,
+    ctx: CommandContext | undefined,
+  ): CommandResult<'profile.login'> => {
     const profileId = cmd.profileId;
+    // Security review WP-109: a paired computer (`manage`) signs in in ITS browser (the link reaches it
+    // through HostState, sync/hub.ts redactForRemote) – never a browser on this computer's desktop,
+    // where one click would hand the local account to the remote side.
+    const openHere = (ctx?.access ?? 'local') === 'local';
     if (deps.claude.profiles.get(profileId) === undefined) {
       throw new CommandError(makeError('PROFILE_NOT_FOUND', { profileId }));
     }
@@ -264,14 +271,14 @@ export function createLoginService(deps: LoginServiceDeps): LoginService {
     if (running !== undefined) {
       // One process per profile: a second click keeps it (and shows the link again).
       const shown = state(profileId);
-      if (shown.state === 'waiting' && shown.url !== null) track(openLink(shown.url));
+      if (openHere && shown.state === 'waiting' && shown.url !== null) track(openLink(shown.url));
       return {};
     }
     generations += 1;
     const flow: Flow = { generation: generations, session: null, manualUrl: null, timer: null };
     flows.set(profileId, flow);
     setState(profileId, { ...IDLE_PROFILE_LOGIN, state: 'starting' });
-    track(begin(profileId, flow.generation));
+    track(begin(profileId, flow.generation, openHere));
     return {};
   };
 
@@ -305,11 +312,11 @@ export function createLoginService(deps: LoginServiceDeps): LoginService {
     return {};
   };
 
-  const dispatch = (cmd: HostCommand): unknown => {
+  const dispatch = (cmd: HostCommand, ctx: CommandContext | undefined): unknown => {
     if (disposed) throw new CommandError(makeError('SERVER_SHUTTING_DOWN'));
     switch (cmd.name) {
       case 'profile.login':
-        return login(cmd);
+        return login(cmd, ctx);
       case 'profile.loginCode':
         return loginCode(cmd);
       case 'profile.loginCancel':
@@ -321,9 +328,9 @@ export function createLoginService(deps: LoginServiceDeps): LoginService {
 
   return {
     names: ['profile.login', 'profile.loginCode', 'profile.loginCancel'],
-    handle(cmd: HostCommand): Promise<unknown> {
+    handle(cmd: HostCommand, ctx?: CommandContext): Promise<unknown> {
       try {
-        return Promise.resolve(dispatch(cmd));
+        return Promise.resolve(dispatch(cmd, ctx));
       } catch (error) {
         return Promise.reject(toError(error));
       }

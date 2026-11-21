@@ -33,6 +33,7 @@ export class FakeEngine implements TerminalEngine {
   theme: ITheme;
   font: TerminalFont;
   screenReaderMode: boolean;
+  conpty: boolean;
   keyHandler: TerminalKeyHandler | null = null;
   private current: TerminalSize = { cols: 80, rows: 24 };
   private readonly decoder = new TextDecoder();
@@ -42,6 +43,7 @@ export class FakeEngine implements TerminalEngine {
     this.theme = options.theme;
     this.font = options.font;
     this.screenReaderMode = options.screenReaderMode;
+    this.conpty = options.conpty;
   }
 
   open(host: HTMLElement): void {

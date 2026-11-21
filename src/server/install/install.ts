@@ -13,7 +13,9 @@
  *    release.json, every file, the SDK) is kept as is.
  * 4. Root files (`start.mjs`, `parallax.cmd` from the version's `root\` or the own templates,
  *    `parallax.ico`; only when changed), `current.json` (`previous` = the version before), the
- *    Start menu shortcut, the cleanup (versions.ts).
+ *    Start menu shortcut, the cleanup (versions.ts). Linux (WP-108): `parallax` (POSIX sh, mode
+ *    755) and `parallax.svg` instead of the `.cmd` and the `.ico`, and the `parallax` command in
+ *    `~/.local/bin` (install/command.ts).
  *
  * The parts are shared with the update (WP-87, docs/wp/WP-87.md §1.9): `stageVersion` = steps 1–3
  * without switching, `switchVersion`/`restoreCurrent` = the root files and current.json of step 4
@@ -22,7 +24,7 @@
  * A running Parallax does not stop the installation: its version folder stays untouched (the
  * cleanup protects it) and the caller tells the user to restart.
  */
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { compareVersions } from '@shared/version';
@@ -39,27 +41,30 @@ import {
   verifyReleaseSignature,
   type ReleaseInfo,
 } from '../launcher/release';
+import { SCRIPT_MODE, type CommandResult } from './command';
 import {
   CACHE_DIR,
   CURRENT_FILE,
   DOWNLOADS_DIR,
-  ICON_FILE,
   InstallError,
   PACKAGE_ROOT_DIR,
   START_CMD,
   START_SCRIPT,
+  START_SH,
   STAGING_PREFIX,
   TRASH_PREFIX,
   VERSIONS_DIR,
   assertNotRealUserFolder,
+  iconFile,
   readCurrent,
+  startCommandFile,
   versionDir,
   writeCurrent,
   type CurrentFile,
   type InstallErrorReason,
 } from './layout';
 import { SdkError } from './sdk';
-import { startCmd, startScript } from './templates';
+import { startCmd, startScript, startShell } from './templates';
 import {
   cleanupVersions,
   folderStamp,
@@ -84,6 +89,11 @@ export interface InstallDeps {
   provideSdk: (request: SdkRequest) => Promise<string>;
   /** Creates or refreshes the Start menu shortcut on `<root>\start.mjs`: null = done, else why not. */
   startMenu: (root: string) => Promise<string | null>;
+  /**
+   * Linux (WP-108): writes the `parallax` command (`~/.local/bin/parallax`, install/command.ts) for
+   * `root`. Missing (Windows, tests) = no command.
+   */
+  command?: (root: string) => Promise<CommandResult>;
   /** Build id of the server running on the data directory (lock file + health), or null. */
   runningBuildId: () => Promise<string | null>;
   /** One line for the user. */
@@ -117,6 +127,8 @@ export interface InstallResult {
   cleanup: CleanupResult;
   /** Why the Start menu shortcut is missing, or null. */
   startMenuProblem: string | null;
+  /** Linux: the `parallax` command (written or why not); null without that step (Windows). */
+  command: CommandResult | null;
 }
 
 const SDK_PREFIX = `node_modules/${AGENT_SDK_PACKAGE}/`.toLowerCase();
@@ -363,37 +375,55 @@ async function readIfThere(file: string): Promise<Buffer | null> {
 }
 
 /**
- * `root/start.mjs` and `root/parallax.cmd` of a package (`/`-separated path → content):
- * scripts/release-pack.ts writes them, so they are listed in release.json and signed (WP-87).
+ * `root/start.mjs`, `root/parallax.cmd` and (WP-108) `root/parallax` of a package (`/`-separated
+ * path → content): scripts/release-pack.ts writes them, so they are listed in release.json and
+ * signed (WP-87). One package serves Windows and Linux; each takes its own start script.
  */
 export function packageRootFiles(minNode: string): Record<string, string> {
   return {
     [`${PACKAGE_ROOT_DIR}/${START_SCRIPT}`]: startScript(),
     [`${PACKAGE_ROOT_DIR}/${START_CMD}`]: startCmd(minNode),
+    [`${PACKAGE_ROOT_DIR}/${START_SH}`]: startShell(minNode),
   };
 }
 
+/** The start script template of this code for `platform` (parallax.cmd or parallax). */
+function startCommandTemplate(platform: NodeJS.Platform, minNode: string): string {
+  return platform === 'win32' ? startCmd(minNode) : startShell(minNode);
+}
+
 /**
- * start.mjs and parallax.cmd from `versions\<v>\root\` (each, when the package has it – else the
- * templates of this code) and parallax.ico (from the version folder, when it has one).
+ * start.mjs and the start script of the platform (`parallax.cmd`, Linux `parallax` with mode 755)
+ * from `versions\<v>\root\` (each, when the package has it – else the templates of this code) and
+ * the icon of the platform (`parallax.ico`, Linux `parallax.svg`; from the version folder, when it
+ * has one).
  */
-export async function writeRootFiles(root: string, version: string, minNode: string): Promise<void> {
+export async function writeRootFiles(
+  root: string,
+  version: string,
+  minNode: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
   const own = path.join(versionDir(root, version), PACKAGE_ROOT_DIR);
   await writeIfChanged(
     path.join(root, START_SCRIPT),
     (await readIfThere(path.join(own, START_SCRIPT))) ?? startScript(),
   );
+  const command = startCommandFile(platform);
+  const commandFile = path.join(root, command);
   await writeIfChanged(
-    path.join(root, START_CMD),
-    (await readIfThere(path.join(own, START_CMD))) ?? startCmd(minNode),
+    commandFile,
+    (await readIfThere(path.join(own, command))) ?? startCommandTemplate(platform, minNode),
   );
-  let icon: Buffer | null = null;
+  if (platform !== 'win32') await chmod(commandFile, SCRIPT_MODE);
+  const icon = iconFile(platform);
+  let bytes: Buffer | null = null;
   try {
-    icon = await readFile(path.join(versionDir(root, version), ICON_FILE));
+    bytes = await readFile(path.join(versionDir(root, version), icon));
   } catch {
     // a package without an icon: the shortcut shows node's
   }
-  if (icon !== null) await writeIfChanged(path.join(root, ICON_FILE), icon);
+  if (bytes !== null) await writeIfChanged(path.join(root, icon), bytes);
 }
 
 /** current.json, or null when it is missing or damaged (logged). */
@@ -628,6 +658,7 @@ export async function installPackage(options: InstallOptions, deps: InstallDeps)
   const { release, reused } = await stageVersion(options, deps);
   const { previous } = await switchVersion(root, release.version, { log: deps.log });
   const startMenuProblem = await deps.startMenu(root);
+  const command = deps.command === undefined ? null : await deps.command(root);
   const state = await runningState(root, release.version, deps);
   const cleanup = await cleanupVersions(root, [release.version, previous, state.running], now());
   return {
@@ -638,6 +669,7 @@ export async function installPackage(options: InstallOptions, deps: InstallDeps)
     runningForeign: state.runningForeign,
     cleanup,
     startMenuProblem,
+    command,
   };
 }
 

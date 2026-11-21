@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from '@shared/common';
 import { EDITOR_BLOCKED_EXECUTABLES, editorSettingsSchema } from '@shared/model';
+import { POSIX_PATHS } from '@shared/paths';
 import { sampleEditorSettings } from '@shared/samples';
 import {
   argLines,
@@ -57,6 +58,21 @@ describe('editor form (WP-58, ADR-144)', () => {
     // An own path of a preset is checked as well; empty is fine there.
     expect(editorIssues({ preset: 'vscode', executable: 'code', args: '' }).executable).toBe('path');
     expect(editorIssues({ preset: 'vscode', executable: '', args: '' })).toEqual({
+      executable: null,
+      args: null,
+    });
+  });
+
+  it('the path must fit the rules of the edited host (WP-102)', () => {
+    // Default = Windows host: a POSIX path passes the shared schema, the host rules reject it.
+    expect(editorIssues(custom('/usr/bin/code', '{file}')).executable).toBe('path');
+    expect(editorIssues(custom('/usr/bin/code', '{file}'), POSIX_PATHS)).toEqual({
+      executable: null,
+      args: null,
+    });
+    expect(editorIssues(custom('/usr/bin/fish', '{file}'), POSIX_PATHS).executable).toBe('blocked');
+    expect(editorIssues(custom('C:\\Tools\\ed.exe', '{file}'), POSIX_PATHS).executable).toBe('path');
+    expect(editorIssues({ preset: 'system', executable: '', args: '' }, POSIX_PATHS)).toEqual({
       executable: null,
       args: null,
     });

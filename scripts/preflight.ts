@@ -14,8 +14,13 @@
  * call, no tokens. Then "Several computers" (WP-82, remote/preflight.ts): TLS self-test, Windows key
  * store and – for the role "Share" – port and addresses (the firewall only as a reminder), read-only
  * like the rest.
+ *
+ * Both platforms (WP-108): the archiver of in-app updates and the installer (`System32\tar.exe`,
+ * Linux `/usr/bin/tar`); Linux also the OpenSSL of this Node ("Several computers" needs 3.5, the
+ * official build brings it). The key store line names the Windows store until the server mode adds
+ * the Linux one (WP-107).
  */
-import { readFileSync } from 'node:fs';
+import { accessSync, constants, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -25,18 +30,21 @@ import {
   loadPreflightProfiles,
   preflightExitCode,
   runPreflight,
+  type PreflightCheck,
 } from '../src/server/claude/preflight';
 import { profileIssues } from '../src/server/claude/profileIssues';
 import { defaultProfileIssueContext } from '../src/server/claude/profileStore';
 import { createProfileStore } from '../src/server/claude/profiles';
 import { readSdkManifest } from '../src/server/claude/resolveClaude';
 import { loadConfig } from '../src/server/config';
+import { opensslNote } from '../src/server/install/cli';
 import { createLogger } from '../src/server/lib/logger';
 import { listenerAddresses } from '../src/server/remote/addresses';
 import { probePort } from '../src/server/remote/checks';
 import { multiHostPreflight } from '../src/server/remote/preflight';
 import { createDpapiKeyStore } from '../src/server/secure/keyStore';
 import { tlsSelfTest } from '../src/server/secure/selfTest';
+import { archiveTool } from '../src/server/update/zip';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -55,6 +63,35 @@ function dataHome(): string | null {
     );
     return null;
   }
+}
+
+/** The archiver of in-app updates and of the installer's SDK step (WP-108). */
+function archiverCheck(): PreflightCheck {
+  const tool = archiveTool().file;
+  try {
+    accessSync(tool, constants.X_OK);
+    return { id: 'archiver', title: 'tar', level: 'ok', detail: tool };
+  } catch {
+    return {
+      id: 'archiver',
+      title: 'tar',
+      level: 'warn',
+      detail: `${tool} is missing`,
+      hint: 'In-app updates and the installer unpack with it.',
+    };
+  }
+}
+
+/** Linux: the OpenSSL of this Node ("Several computers" needs 3.5 or newer). */
+function opensslCheck(): PreflightCheck[] {
+  if (process.platform === 'win32') return [];
+  const version = process.versions.openssl;
+  const note = opensslNote(version);
+  return [
+    note === null
+      ? { id: 'openssl', title: 'openssl', level: 'ok', detail: version }
+      : { id: 'openssl', title: 'openssl', level: 'warn', detail: version, hint: note },
+  ];
 }
 
 async function main(): Promise<number> {
@@ -86,7 +123,7 @@ async function main(): Promise<number> {
     addresses: (bindAddress) => listenerAddresses(bindAddress),
     probe: probePort,
   });
-  const checks = [...report.checks, ...multiHost];
+  const checks = [...report.checks, archiverCheck(), ...opensslCheck(), ...multiHost];
   process.stdout.write(formatPreflight(checks));
   return Math.max(report.exitCode, preflightExitCode(checks));
 }

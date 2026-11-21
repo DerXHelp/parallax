@@ -1,18 +1,19 @@
 /**
  * Command line of the installer (`install.cmd` / `node dist\install.js`, and `start.mjs --install
  * | --uninstall | --use` of an installation; WP-86, docs/wp/WP-83.md §8.3). Options take their
- * value as `--name value` or `--name=value`.
+ * value as `--name value` or `--name=value`. Linux (WP-108): `sh install.sh`, paths after the POSIX
+ * rules.
  */
 import path from 'node:path';
-import { windowsPathIssue } from '@shared/paths';
 import { releaseVersionSchema } from '../launcher/release';
+import { installPathRules } from './layout';
 
 export type InstallerAction =
   { kind: 'install'; packageDir: string | null } | { kind: 'use'; version: string } | { kind: 'uninstall' };
 
 export interface InstallerArgs {
   action: InstallerAction;
-  /** `--dir`: the installation root (default `%LOCALAPPDATA%\Programs\Parallax`). */
+  /** `--dir`: the installation root (default `%LOCALAPPDATA%\Programs\Parallax`, Linux `~/.local/lib/parallax`). */
   dir: string | null;
   /** `--install-root` (set by start.mjs): runs as the installed version of this root. */
   installRoot: string | null;
@@ -25,7 +26,7 @@ export interface InstallerArgs {
 const VALUE_FLAGS = ['--dir', '--install-root', '--install', '--use', '--registry', '--sdk-tarball'] as const;
 type ValueFlag = (typeof VALUE_FLAGS)[number];
 
-export const INSTALLER_USAGE = [
+const WINDOWS_USAGE = [
   'Usage: install.cmd [--dir <folder>] [--registry <url>] [--sdk-tarball <file>]',
   '       install.cmd --use <version> | --uninstall [--dir <folder>]',
   '       parallax.cmd --install <unpacked package> | --use <version> | --uninstall',
@@ -40,10 +41,43 @@ export const INSTALLER_USAGE = [
   '  --uninstall            remove the installation, its Start menu entry, autostart and link',
   '                         handler; the data in %LOCALAPPDATA%\\Parallax stay',
   '  --help                 this text',
-].join('\n');
+];
 
-/** `cwd`: base of relative paths (`--dir`, `--install`, `--sdk-tarball`; default `process.cwd()`). */
-export function parseInstallerArgs(argv: readonly string[], cwd: string = process.cwd()): InstallerArgs {
+const LINUX_USAGE = [
+  'Usage: sh install.sh [--dir <folder>] [--registry <url>] [--sdk-tarball <file>]',
+  '       sh install.sh --use <version> | --uninstall [--dir <folder>]',
+  '       parallax --install <unpacked package> | --use <version> | --uninstall',
+  '',
+  'Installs Parallax from this unpacked package into ~/.local/lib/parallax (or --dir) with the',
+  'command ~/.local/bin/parallax. With an installation there, the installed version checks and',
+  'installs the package.',
+  '',
+  '  --dir <folder>         installation folder (absolute, local)',
+  '  --registry <url>       npm registry for the Agent SDK (default: npm configuration, .npmrc)',
+  '  --sdk-tarball <file>   the Agent SDK from this file (when no registry can be reached)',
+  '  --use <version>        switch to another installed version',
+  '  --uninstall            remove the installation, its command, menu entry, autostart, user',
+  '                         service and link handler; the data in ~/.local/share/parallax stay',
+  '  --help                 this text',
+];
+
+/** The usage text of the installer on `platform`. */
+export function installerUsage(platform: NodeJS.Platform = process.platform): string {
+  return (platform === 'win32' ? WINDOWS_USAGE : LINUX_USAGE).join('\n');
+}
+
+/** The usage text of this platform. */
+export const INSTALLER_USAGE = installerUsage();
+
+/**
+ * `cwd`: base of relative paths (`--dir`, `--install`, `--sdk-tarball`; default `process.cwd()`);
+ * `platform` decides the path rules (default `process.platform`).
+ */
+export function parseInstallerArgs(
+  argv: readonly string[],
+  cwd: string = process.cwd(),
+  platform: NodeJS.Platform = process.platform,
+): InstallerArgs {
   const args: InstallerArgs = {
     action: { kind: 'install', packageDir: null },
     dir: null,
@@ -78,13 +112,15 @@ export function parseInstallerArgs(argv: readonly string[], cwd: string = proces
   }
   if (args.problem !== null || args.help) return args;
 
+  const rules = installPathRules(platform);
+  const paths = platform === 'win32' ? path.win32 : path.posix;
   for (const flag of ['--dir', '--install-root', '--install', '--sdk-tarball'] as const) {
     const given = values.get(flag);
     if (given === undefined) continue;
     // start.mjs passes its root absolute; the others may be relative to the console's folder.
-    const value = flag === '--install-root' ? given : path.win32.resolve(cwd, given);
+    const value = flag === '--install-root' ? given : paths.resolve(cwd, given);
     values.set(flag, value);
-    const issue = windowsPathIssue(value);
+    const issue = rules.issue(value);
     if (issue !== null) {
       args.problem = `${flag} needs an absolute local path (${issue})`;
       return args;

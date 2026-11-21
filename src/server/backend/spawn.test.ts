@@ -2,6 +2,7 @@ import type { SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
 import { ChildProcess } from 'node:child_process';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
+import { POSIX_PATHS, WIN32_PATHS, type PathRules } from '@shared/paths';
 import { spawnHidden, type SpawnHiddenOptions } from '../lib/process';
 import { createSpawner, definedEnv, type SpawnerOptions } from './spawn';
 
@@ -42,7 +43,13 @@ interface Calls {
 }
 
 function setup(
-  p: { pid?: number | undefined; throws?: Error; expectedCommand?: string; kill?: () => Promise<void> } = {},
+  p: {
+    pid?: number | undefined;
+    throws?: Error;
+    expectedCommand?: string;
+    kill?: () => Promise<void>;
+    rules?: PathRules;
+  } = {},
 ) {
   const child = new FakeChild('pid' in p ? p.pid : 4711);
   const calls: Calls[] = [];
@@ -65,6 +72,7 @@ function setup(
     killProcessTree,
     now: () => STARTED,
     ...(p.expectedCommand === undefined ? {} : { expectedCommand: p.expectedCommand }),
+    rules: p.rules ?? WIN32_PATHS,
     onSpawned,
     onStderr: (text: string) => events.push(`stderr ${text}`),
     onExit: (code: number | null, signal: string | null) => events.push(`exit ${code} ${signal}`),
@@ -188,6 +196,17 @@ describe('createSpawner', () => {
     ).toThrow(TypeError);
     expect(other.spawn).not.toHaveBeenCalled();
     expect(other.onError).toHaveBeenCalledOnce();
+  });
+
+  it('POSIX (WP-103): the command compare is case-sensitive', () => {
+    const claude = '/home/u/.local/bin/claude';
+    const s = setup({ expectedCommand: claude, rules: POSIX_PATHS });
+    expect(s.spawner({ ...s.spawnOptions, command: claude })).toBe(s.child);
+    const other = setup({ expectedCommand: claude, rules: POSIX_PATHS });
+    expect(() => other.spawner({ ...other.spawnOptions, command: '/home/u/.local/bin/Claude' })).toThrow(
+      TypeError,
+    );
+    expect(other.spawn).not.toHaveBeenCalled();
   });
 
   it.each(['claude', 'claude.cmd', 'bin\\claude.exe'])(

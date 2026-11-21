@@ -4,15 +4,21 @@
  * Who uses it:
  * - `terminal/service.ts` implements `TerminalService`.
  * - `terminal/socket.ts` (route `API_PATHS.terminalWs`) bridges one WebSocket to a `TerminalConnection`.
- * - The composition (`app/compose.ts`) builds the service with `conpty.ts` (SDK backend) or `fakePty.ts`
- *   (FakeBackend), closes an entry's terminals on archive/remove and all of them on shutdown.
+ * - The composition (`app/compose.ts`) builds the service with `conpty.ts` (SDK backend on Windows; Linux:
+ *   WP-105) or `fakePty.ts` (FakeBackend), closes an entry's terminals on archive/remove and all of them on
+ *   shutdown; 102e: the engine starts `claude` through `openClaude` ("Continue in terminal").
  *
  * Protocol and limits: `src/shared/terminal.ts`.
  */
 import type { EntryId } from '@shared/common';
 import type { ErrorPayload } from '@shared/errors';
 import type { ConsoleSettings } from '@shared/model';
-import type { TerminalClientMessage, TerminalInfo, TerminalServerMessage } from '@shared/terminal';
+import type {
+  TerminalClientMessage,
+  TerminalId,
+  TerminalInfo,
+  TerminalServerMessage,
+} from '@shared/terminal';
 
 /** One shell in a pseudo console. Every method returns quickly; none throws after `spawn`. */
 export interface PtyProcess {
@@ -30,7 +36,7 @@ export interface PtyProcess {
 }
 
 export interface PtySpawnOptions {
-  /** Absolute `.exe`. */
+  /** Absolute program path (`.exe` on Windows). */
   executablePath: string;
   args: readonly string[];
   cwd: string;
@@ -54,7 +60,7 @@ export interface TerminalEntryInfo {
 
 /** Dependencies of `createTerminalService` (the composition wires them). */
 export interface TerminalServiceDeps {
-  /** null = no pseudo console here (`node:ffi` missing, not Windows) → `available: false`. */
+  /** null = no pseudo console here (`node:ffi` missing, unsupported platform) → `available: false`. */
   pty: PtyFactory | null;
   /** Why `pty` is null (`TERMINAL_UNAVAILABLE.params.reason`). */
   unavailableReason?: string;
@@ -83,15 +89,68 @@ export interface TerminalConnection {
 
 export type TerminalEndReason = 'archived' | 'removed';
 
+/**
+ * WP-76 §B.13: where a terminal was started – from a window of this computer, or through remote access
+ * (a socket of the relay, or `session.openInTerminal` from a paired computer). Unpairing, a level change,
+ * "Share off" … end the remote ones (`closeRemote`); local ones stay.
+ */
+export type TerminalOrigin = 'local' | 'remote';
+
+/**
+ * 102e "Continue in terminal": what starts in the terminal – the handoff's console spec
+ * (`ConsoleLaunchSpec` of `claude/ports.ts`: absolute `claude`, `--resume <id>` …, the built env with
+ * the profile's values). The env holds secrets: never logged, never in an error.
+ */
+export interface TerminalClaudeLaunch {
+  executablePath: string;
+  args: readonly string[];
+  env: Readonly<Record<string, string>>;
+}
+
+export type TerminalClaudeOpenResult =
+  { kind: 'opened'; terminalId: TerminalId; pid: number | null } | { kind: 'failed'; error: ErrorPayload };
+
+/** `running` while the process of the terminal runs; exited, closed or unknown (server restarted) → `ended`. */
+export type TerminalClaudeState = 'running' | 'ended';
+
 export interface TerminalService {
   /** True when shells can start here (`HostState.terminalAvailable`). */
   readonly available: boolean;
-  /** Binds a socket to an entry and sends `welcome` + `terminals`; an error for an unknown entry. */
-  connect(entryId: EntryId, sink: TerminalSink): TerminalConnection | ErrorPayload;
+  /**
+   * Binds a socket to an entry and sends `welcome` + `terminals`; an error for an unknown entry. `origin`
+   * (default `local`): terminals this socket opens remember it (WP-107: `remote` for the relay).
+   */
+  connect(entryId: EntryId, sink: TerminalSink, origin?: TerminalOrigin): TerminalConnection | ErrorPayload;
   /** The entry's terminals (oldest first). */
   list(entryId: EntryId): TerminalInfo[];
+  /**
+   * 102e: starts `launch` as a new terminal of the entry in its `cwd` (`command: 'claude'`, `shell` = the
+   * host's default shell for "Restart") with the limits and checks of `open`, and pushes `terminals` to
+   * the entry's sockets. Never throws; errors: TERMINAL_UNAVAILABLE, TERMINAL_LIMIT_REACHED,
+   * TERMINAL_START_FAILED {reason}, ENTRY_NOT_FOUND, SESSION_ARCHIVED, CWD_*. `remoteEpoch` (origin
+   * `remote`): the value of `remoteEpoch()` when the command arrived – changed since → HOST_REVOKED.
+   */
+  openClaude(
+    entryId: EntryId,
+    launch: TerminalClaudeLaunch,
+    origin?: TerminalOrigin,
+    remoteEpoch?: number,
+  ): Promise<TerminalClaudeOpenResult>;
+  /**
+   * Security review WP-109: counts `closeRemote`. A remote start that began before the last one (unpaired,
+   * level changed, sharing off while it waited) does not start any more (HOST_REVOKED).
+   */
+  remoteEpoch(): number;
+  /** 102e: state of a terminal started by `openClaude` (the watch of the handoff). */
+  claudeState(terminalId: TerminalId): TerminalClaudeState;
   /** Ends every terminal of the entry (`exit` with the reason) and forgets them. */
   closeEntry(entryId: EntryId, reason: TerminalEndReason): void;
+  /**
+   * WP-76 §B.13: ends every terminal started through remote access (`exit` reason `closed`, a new list
+   * for each entry concerned); terminals started on this computer stay. Sockets are not closed here (the
+   * relay closes its own).
+   */
+  closeRemote(): void;
   /** Ends every terminal (`exit` reason `shutdown`); resolves once all consoles are closed. */
   closeAll(): Promise<void>;
 }

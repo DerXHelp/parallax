@@ -284,6 +284,8 @@ export const shellDemos: readonly PlaygroundDemo[] = [
   shellDemo('offline'),
   shellDemo('signed-out'),
   shellDemo('outdated'),
+  // WP-104: a Linux computer without desktop.
+  shellDemo('linux'),
   ...navigationDemos,
   // WP-58 / FIX-R5: the shell's Phase 3 parts (header buttons, menu, drop overlay, narrow window,
   // slot errors) – formerly listed by the preferences playground.

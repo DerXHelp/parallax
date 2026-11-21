@@ -174,7 +174,7 @@ describe('disabled composer (WP-37 §7)', () => {
     act(() => {
       h.host.patchSummary(DEMO_ENTRIES.idle, {
         archived: false,
-        external: { since: sampleExternalHandoff().since, pid: 52_000, running: true },
+        external: { since: sampleExternalHandoff().since, pid: 52_000, running: true, terminalId: null },
       });
     });
     expect(screen.queryByRole('textbox')).toBeNull();

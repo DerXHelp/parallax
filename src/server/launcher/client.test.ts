@@ -1,6 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import { rm, writeFile } from 'node:fs/promises';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { makeError } from '@shared/errors';
 import { authCodeSchema } from '@shared/http';
 import { sampleHealthResponse, sampleToken, sampleUuid } from '@shared/samples';
 import { makeTempHome, startTestServer, type TestServer } from '../http/testServer';
@@ -8,6 +9,7 @@ import {
   checkHealth,
   findRunningServer,
   requestLauncherCode,
+  requestLauncherRemote,
   type HealthCheck,
   type HttpJson,
   type HttpJsonRequest,
@@ -194,5 +196,61 @@ describe('launcher client parsing (fake transport)', () => {
     } finally {
       await close(silent);
     }
+  });
+});
+
+describe('WP-107: POST /api/launcher/remote from the launcher', () => {
+  const answer =
+    (status: number, body: unknown): HttpJson =>
+    () =>
+      Promise.resolve({ status, body });
+
+  it('sends the action with the bearer token, no Origin, no cookie', async () => {
+    const seen: HttpJsonRequest[] = [];
+    const http: HttpJson = (request) => {
+      seen.push(request);
+      return Promise.resolve({ status: 200, body: { remoteAccess: null, code: null, expiresAt: null } });
+    };
+    expect(
+      await requestLauncherRemote(4711, sampleToken(5), { action: 'pair', level: 'manage' }, { http }),
+    ).toEqual({
+      kind: 'ok',
+      response: { remoteAccess: null, code: null, expiresAt: null },
+    });
+    expect(seen).toEqual([
+      expect.objectContaining({
+        port: 4711,
+        method: 'POST',
+        path: '/api/launcher/remote',
+        body: JSON.stringify({ action: 'pair', level: 'manage' }),
+        headers: { authorization: `Bearer ${sampleToken(5)}`, 'content-type': 'application/json' },
+      }),
+    ]);
+  });
+
+  it('401 → token_invalid, an ErrorPayload → refused, anything else → failed', async () => {
+    const status = { action: 'status' } as const;
+    expect(await requestLauncherRemote(1, sampleToken(1), status, { http: answer(401, null) })).toEqual({
+      kind: 'token_invalid',
+    });
+    const refusal = makeError('REMOTE_ROLE_CONFLICT');
+    expect(await requestLauncherRemote(1, sampleToken(1), status, { http: answer(409, refusal) })).toEqual({
+      kind: 'refused',
+      error: refusal,
+    });
+    expect(await requestLauncherRemote(1, sampleToken(1), status, { http: answer(502, 'x') })).toEqual({
+      kind: 'failed',
+      reason: 'HTTP 502',
+    });
+    expect(
+      await requestLauncherRemote(1, sampleToken(1), status, { http: answer(200, { code: 1 }) }),
+    ).toEqual({
+      kind: 'failed',
+      reason: 'answer',
+    });
+    expect(await requestLauncherRemote(await deadPort(), sampleToken(1), status)).toEqual({
+      kind: 'failed',
+      reason: 'ECONNREFUSED',
+    });
   });
 });

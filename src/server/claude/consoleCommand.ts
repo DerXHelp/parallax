@@ -20,6 +20,17 @@
  * Known limit (5.1 only): an argument in which EVERY whitespace follows an odd number of `"`
  * (e.g. `"a b"` with its quotes) is re-quoted by PowerShell and arrives split – the external
  * console itself (WP-33, Start-Process with a complete command line) is not affected.
+ *
+ * POSIX hosts (WP-106, WP-100 §5.5): one line for sh, bash and zsh (`posixConsoleCommandText`) –
+ *
+ *   cd -- '<cwd>' && PARALLAX=1 PARALLAX_ENTRY_ID=<id> NAME='<value>' … '<exe>' '<arg>' …
+ *
+ * like the console the terminal emulator opens (`PARALLAX=1` and the entry id of the spec, then the
+ * profile's explicit env). Words are single-quoted (`'` as `'\''`) unless they are plain; a word with
+ * a control character (line break, tab …) becomes `$'…'` so the line stays one line. A name that is
+ * no shell identifier goes through `env -- 'NAME=value'`. Secret names (ADR-123) are read hidden
+ * from the terminal when the line runs (`stty -echo`, `read -r`) – never part of the copied text.
+ * `consoleCommandFor` picks the line of the host's platform.
  */
 import { isSecretEnvKey } from '@shared/secrets';
 import { quotedArgBody } from '../lib/cmdline';
@@ -97,4 +108,71 @@ export function consoleCommandText(spec: ConsoleLaunchSpec): string {
   ];
   parts.push(`& { $PSNativeCommandArgumentPassing='Legacy'; & ${call.join(' ')} }`);
   return parts.join('; ');
+}
+
+// ---- POSIX shells (WP-106) ----
+
+/** Characters that never need quoting in sh, bash or zsh (a leading `=` would be zsh's `=cmd`). */
+const PLAIN_POSIX_WORD = /^[A-Za-z0-9_@%+:,./-][A-Za-z0-9_@%+:,./=-]*$/;
+// eslint-disable-next-line no-control-regex -- control characters are exactly what is searched for
+const POSIX_CONTROL = /[\u0000-\u001f\u007f]/;
+const POSIX_ESCAPES: Readonly<Record<string, string>> = { '\n': '\\n', '\r': '\\r', '\t': '\\t' };
+
+/** One shell word with exactly the value `text` (see the module comment). */
+export function posixShellWord(text: string): string {
+  if (PLAIN_POSIX_WORD.test(text)) return text;
+  if (!POSIX_CONTROL.test(text)) return `'${text.replace(/'/g, `'\\''`)}'`;
+  let body = '';
+  for (const char of text) {
+    if (char === '\\' || char === "'") body += `\\${char}`;
+    else if (POSIX_CONTROL.test(char)) {
+      body += POSIX_ESCAPES[char] ?? `\\x${char.charCodeAt(0).toString(16).padStart(2, '0')}`;
+    } else body += char;
+  }
+  return `$'${body}'`;
+}
+
+/**
+ * ADR-123 on POSIX: the value of a secret variable, read hidden from the terminal when the line runs
+ * (the prompt goes to `/dev/tty`; the substitution's output is the value).
+ */
+export function posixSecretPrompt(name: string): string {
+  return (
+    `"$(stty -echo; printf '%s: ' ${posixShellWord(name)} >/dev/tty; IFS= read -r v; ` +
+    `stty echo; printf '\\n' >/dev/tty; printf '%s' "$v")"`
+  );
+}
+
+/** The two Parallax markers of the console env (`PARALLAX=1`, `PARALLAX_ENTRY_ID`), in this order. */
+const PARALLAX_MARKERS = ['PARALLAX', 'PARALLAX_ENTRY_ID'] as const;
+
+/** One line for sh/bash/zsh: cwd, Parallax markers, the explicit env, then the program (see above). */
+export function posixConsoleCommandText(spec: ConsoleLaunchSpec): string {
+  const assignments: string[] = [];
+  const envWords: string[] = [];
+  const add = (name: string, value: string, secret: boolean): void => {
+    const assigned = secret ? posixSecretPrompt(name) : posixShellWord(value);
+    if (SIMPLE_ENV_NAME.test(name)) assignments.push(`${name}=${assigned}`);
+    else envWords.push(`${posixShellWord(`${name}=`)}${assigned}`);
+  };
+  for (const name of PARALLAX_MARKERS) {
+    const value = spec.env[name];
+    if (value !== undefined) add(name, value, false);
+  }
+  for (const [name, value] of Object.entries(spec.explicitEnv)) {
+    if ((PARALLAX_MARKERS as readonly string[]).includes(name)) continue;
+    add(name, value, isSecretEnvKey(name));
+  }
+  const words = [
+    ...assignments,
+    ...(envWords.length === 0 ? [] : ['env', '--', ...envWords]),
+    posixShellWord(spec.executablePath),
+    ...spec.args.map(posixShellWord),
+  ];
+  return `cd -- ${posixShellWord(spec.cwd)} && ${words.join(' ')}`;
+}
+
+/** The console line of a host platform: PowerShell on Windows, the POSIX line elsewhere. */
+export function consoleCommandFor(spec: ConsoleLaunchSpec, platform: NodeJS.Platform): string {
+  return platform === 'win32' ? consoleCommandText(spec) : posixConsoleCommandText(spec);
 }

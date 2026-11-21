@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LIMITS, LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
 import { makeError } from '@shared/errors';
 import type { FileStatResult } from '@shared/model';
+import { POSIX_PATHS } from '@shared/paths';
 import { SAMPLE_IDS, sampleFileInfo, sampleId } from '@shared/samples';
 import { STAT_BATCH_MS, STAT_RETRY_MS, STAT_TTL_MS, StatCache, type StatSender } from './stat-cache';
 
@@ -247,5 +248,27 @@ describe('StatCache (WP-54 C.10)', () => {
     await vi.runAllTimersAsync();
     // One answer (one batch) → one more notification.
     expect(listener).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('StatCache on a Linux host (WP-104)', () => {
+  it('checks and compares with the rules of the session host: POSIX paths, case-sensitive', async () => {
+    const calls: (readonly string[])[] = [];
+    const cache = new StatCache({
+      send: (_sessionKey, paths) => {
+        calls.push(paths);
+        return Promise.resolve(paths.map(ok));
+      },
+      pathsOf: () => POSIX_PATHS,
+    });
+    cache.ensure(KEY, '/home/a/README.md');
+    cache.ensure(KEY, '/home/a/readme.md');
+    cache.ensure(KEY, '/home/a//README.md');
+    cache.ensure(KEY, 'D:\\work\\a.md');
+    cache.ensure(KEY, '/proc/self/environ');
+    cache.flush();
+    await vi.runAllTimersAsync();
+    expect(calls).toEqual([['/home/a/README.md', '/home/a/readme.md']]);
+    expect(cache.peek(KEY, '/home/a//README.md')).toMatchObject({ result: { ok: true } });
   });
 });

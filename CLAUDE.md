@@ -67,6 +67,35 @@ die Web-UI (Chrome im App-Modus) zeigt Status, Context, Chat und nicht-modale En
   - 82 (Koordinator): `src/server/{app,main}`, `e2e/**`, README, CHANGELOG.
 - **Konsole und Terminal (WP-97…99, `docs/wp/WP-97.md`):** Koordinator `src/shared/**`, `src/server/terminal/**`,
   Komposition; WP-99a `src/server/terminal/**` (Terminal), WP-99b `src/web/features/terminal/**`.
+- **Linux (WP-100…109, `docs/wp/WP-100.md` §6, `docs/wp/WP-102.md`):** zwei Wellen, je Welle disjunkt; eine Datei
+  kann in L1 und L2 verschiedenen Paketen gehören (L2 beginnt erst nach dem Merge von L1). Immer Koordinator:
+  `src/shared/**`, alle `ports.ts`, `backend/{types,fixture}.ts`, `src/server/{main.ts,app/**}`, `src/web/{App,main}.tsx`,
+  `e2e/**`, `package.json`, Lockfile, `CHANGELOG.md`, `docs/wp/WP-76.md`.
+  - **L1, WP-103 (Plattformschicht Server):** `src/server/lib/**` (ohne `chrome.ts`, `toast.ts`), `src/server/config.ts`,
+    `src/server/claude/**` (ohne `consoleCommand.ts`), `src/server/files/**` (ohne `editors.ts`, `open.ts`),
+    `src/server/host/{fsCommands,login}.ts`, `src/server/http/**`, `src/server/store/{attachments,settings}.ts`,
+    `src/server/sessions/{recovery,processStore,commands}.ts`, `src/server/backend/{spawn.ts,fake/**}`, `test/**`; Tests der
+    Integration in `src/server/sessions/*.integration.test.ts`.
+  - **L1, WP-104 (Web):** `src/web/**` (Pfade je Host, `file-refs.ts`, Windows-Optionen nach `HostState.capabilities`
+    ausblenden).
+  - **L2, WP-105 (Terminal Linux):** `src/server/terminal/**`, `src/web/features/terminal/**`,
+    `src/web/shell/navigation/{ConsoleButton,session-actions}.tsx`, `src/web/features/preferences/sections/ConsoleSection.tsx`.
+  - **L2, WP-106 (Desktop):** `src/server/system/**`, `src/server/lib/{chrome,toast}.ts`,
+    `src/server/files/{editors,open}.ts`, `src/server/host/linkCommands.ts`, `src/server/claude/consoleCommand.ts`,
+    `src/server/sessions/{external,nativeToasts}.ts`, `src/server/launcher/chromeWindow.ts`,
+    `src/web/features/preferences/sections/FilesSection.tsx`, `src/web/features/files/lib/actions.ts`.
+  - **L2, WP-107 (Server-Modus, Mehrere Rechner):** `src/server/{secure,remote,hosts,multihost}/**`,
+    `src/server/sync/hub.ts`, `src/server/http/{hostRoutes,hostSocket,origin}.ts` und neu `http/launcherRemote.ts`,
+    `src/server/launcher/{args,cli,client,lockFile,main,serverProcess}.ts`, `src/server/sessions/{commands,manager}.ts`,
+    `src/web/features/preferences/sections/multi-host/**`, `src/web/state/hosts.ts`, Verwalten-Ansicht in
+    `src/web/features/preferences/**` (ohne die Sektionen von WP-105/106). Dazu das Terminal über den Vermittler (E3; in
+    WP-100 §6 bei WP-105, liegt aber in diesen Dateien).
+  - **L2, WP-108 (Paket, Installer, Update, CI):** `src/server/{install,update}/**`,
+    `src/server/launcher/{applyUpdate,backupStep,build,packageFiles,release}.ts`, `src/server/store/backup.ts`,
+    `scripts/**`, `.github/**`.
+  - Gemeinsame Wörterbücher in L2 (`features/preferences/i18n/*`, `shell/navigation/i18n/*`): jedes Paket ändert nur
+    die Unterbäume seiner Bereiche (WP-105 `console`, `shells`; WP-106 `files`; WP-107 `multiHost` und neue Schlüssel
+    der Verwalten-Ansicht), neue Unterbäume am Ende. Merge-Konflikte löst der Koordinator.
 - Keine Datei wird von zwei Paketen bearbeitet; nichts in fremden Ordnern anlegen. `README.md` von
   Ordnern mit mehreren Ownern (`src/server`, `server/lib`, `server/sessions`, `server/backend`,
   `src/web`, `web/shell`, `web/features`, `web/ui`) pflegt der Koordinator.
@@ -139,15 +168,35 @@ Besitz-Pfade ändern.
 - Dependabot-PRs nie auf GitHub mergen: in den laufenden Feature-Branch übernehmen und den üblichen Weg gehen.
   `pnpm audit` läuft wöchentlich (`.github/workflows/audit.yml`) und vor jedem Release.
 
-## Windows
-- Pfadregeln nur aus `@shared/paths` (Server: `lib/paths.ts`): case-insensitiv vergleichen,
-  `cwd`-String exakt behalten, UNC/Device/ADS vor jedem Dateizugriff ablehnen. Nie duplizieren.
-- Prozessbäume mit `taskkill /PID <pid> /T /F` beenden; **jeder** Spawn mit `windowsHide: true`
-  und ohne Shell (Argument-Array). **Ausnahme:** sichtbare GUI-Programme nach einem Nutzerklick
-  (Editor, Explorer, Standardprogramm) nur über `spawnGui` aus `lib/process.ts` (absolute `.exe`,
-  PE-Subsystem GUI geprüft, Blockliste, `detached`, ADR-144). Nie `cmd /c start`. Nur **absolute `.exe`-Pfade** starten
-  (`resolveExecutable` aus `lib/windows.ts`), nie nackte Namen wie `git` – sonst gewinnt das `cwd`.
-- Gestartete Hintergrundprozesse (Dev-Server, Vite, Tests) am Ende immer beenden.
+## Plattformen (Windows und Linux, WP-100…109)
+Parallax läuft unter Windows und Ubuntu (24.04/26.04 x64, mit Desktop oder im Server-Modus). Plattform-Code
+fragt nie `process.platform` verstreut ab, sondern nimmt die Regelsätze und Nähte unten (Parameter `platform`/`rules`
+mit Default des Rechners, damit Tests beide Zweige auf jeder Plattform prüfen).
+- **Pfadregeln** nur aus `@shared/paths` (`WIN32_PATHS`, `POSIX_PATHS`, `pathRules`, `pathFlavorOf`; Server
+  `HOST_PATH_RULES` und `lib/paths.ts`, Web je Host der Session). `cwd`-String immer exakt behalten. Nie duplizieren.
+  - Windows: case-insensitiv vergleichen, UNC/Device/ADS vor jedem Dateizugriff ablehnen.
+  - Linux: exakt vergleichen (nur doppelte und abschließende `/` zählen nicht), nie `/proc`, `/sys`, `/dev`;
+    Links nach den POSIX-Regeln auflösen; Dateien nur regulär öffnen (`openRegularFile`, kein FIFO).
+- **Spawns:** **jeder** ohne Shell (Argument-Array) über `spawnHidden`/`runFile` aus `lib/process.ts`
+  (`windowsHide: true`; unter Linux eigene Prozessgruppe). Nur **absolute Programmpfade** (`resolveExecutable` aus
+  `lib/windows.ts`, `systemTool`: System32 bzw. `/usr/bin`, `/bin`), nie nackte Namen wie `git` – sonst gewinnt das
+  `cwd` bzw. ein fremder `PATH`-Eintrag. Windows: nur `.exe`; Linux: ausführbare Datei, `claude` nur als native
+  ELF-Datei.
+- **Ausnahme:** sichtbare GUI-Programme nach einem Nutzerklick (Editor, Explorer/Dateimanager, Standardprogramm) nur
+  über `spawnGui` aus `lib/process.ts` (absolut, Blockliste, `detached`; Windows zusätzlich PE-Subsystem GUI,
+  ADR-144). Nie `cmd /c start`, nie `sh -c`.
+- **Prozessbäume** nur mit `killProcessTree` beenden: Windows `taskkill /PID <pid> /T /F`; Linux Baum aus `/proc`
+  mit Gruppen und Sitzungen, `SIGTERM`, nach 2 s `SIGKILL`. Prozess-Identität unter Linux ist PID + Startzeit
+  (`lib/procfs.ts`), nie der Name (node benennt seinen Haupt-Thread um).
+- **Umgebung:** Variablennamen unter Windows case-insensitiv, unter Linux exakt (`http_proxy` ≠ `HTTP_PROXY`);
+  `PATH`-Trenner aus `envPathDelimiter`.
+- **Fähigkeiten:** Was ein Rechner kann (externe Konsole, Shell-Fenster, Editor, native Benachrichtigungen …), meldet
+  `HostState.capabilities`; die Web-UI blendet danach aus, nie nach dem Browser-Betriebssystem.
+- **Linux prüfen:** `bash scripts/linux/run.sh [--cpus N --memory M] -- <befehl>` startet den Befehl im Container
+  `parallax-linux:24.04` (Arbeitsbaum ohne `node_modules`, ein Lauf zur Zeit auf der Maschine) und zählt als schwerer
+  Lauf. Ohne Desktop: kein echtes Chrome-Fenster, keine Benachrichtigung, kein Schlüsselbund der Anmeldung – das prüft
+  die Live-Abnahme auf einem echten Ubuntu.
+- Gestartete Hintergrundprozesse (Dev-Server, Vite, Tests, Container) am Ende immer beenden.
 - **Session-Variablen der aufrufenden Claude-Session** (`CLAUDECODE`, `CLAUDE_CODE_*`,
   `CLAUDE_PID`, `CLAUDE_EFFORT`, `CLAUDE_AGENT_SDK_*`, `AI_AGENT`, Hook-Marker …) dürfen nie in gestartete
   `claude`-Prozesse lecken: Env immer über `buildEnv()` bauen (Review C.2). `buildEnv` entfernt auch

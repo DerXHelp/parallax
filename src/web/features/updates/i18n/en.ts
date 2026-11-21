@@ -142,7 +142,7 @@ export const en = {
     httpError: 'The server answered with an error.',
     signature: 'Affected file: {file}',
     package: {
-      zip: 'The file is not a readable zip archive.',
+      zip: 'The file is not a readable package archive.',
       layout: 'The archive does not have the layout of a Parallax package.',
       files: 'Files in the package are missing or changed.',
       version: 'The version inside the package does not match.',

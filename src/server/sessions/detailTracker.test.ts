@@ -242,14 +242,17 @@ describe('todos from TaskCreate / TaskUpdate / TaskList (source tasks)', () => {
 describe('planFile (ADR-148)', () => {
   const write = (path: string, tool = 'Write') => call(tool, { file_path: path, content: '# Plan' });
 
-  it('(a) the plan file of the newest plan decision (case-insensitive, also Edit), in any mode', () => {
+  it('(a) the plan file of the newest plan decision (Windows: case-insensitive; also Edit), in any mode', () => {
     const t = new DetailTracker();
     const context = { planFilePath: PLAN_FILE, planMode: false };
     expect(t.apply(write('D:\\work\\notes.md'), context)).toBe(false);
-    const edit = write(PLAN_FILE.toUpperCase(), 'Edit');
+    // The host's rules (WP-103): another case is the same file only on Windows.
+    const spelling = process.platform === 'win32' ? PLAN_FILE.toUpperCase() : PLAN_FILE;
+    if (process.platform !== 'win32') expect(t.apply(write(PLAN_FILE.toUpperCase()), context)).toBe(false);
+    const edit = write(spelling, 'Edit');
     expect(t.apply(edit, context)).toBe(true);
     expect(t.current().planFile).toEqual({
-      path: PLAN_FILE.toUpperCase(),
+      path: spelling,
       updatedAt: edit.result?.at,
       toolUseId: edit.toolUseId,
     });

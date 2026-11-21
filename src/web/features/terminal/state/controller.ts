@@ -25,7 +25,8 @@ import { assignNumbers, pickActive, resetConnection, terminalStore, type Termina
  *   terminal with the default shell – once per start: after the user closed all terminals the panel
  *   shows the empty state instead.
  * - `open` → the new terminal becomes active (and takes the focus) when `opened` names our request.
- * - Restart = `close`, then `open` with the same shell.
+ * - Restart = `close`, then `open` with the same shell (WP-105: after claude of "Continue in terminal"
+ *   the shell named by `TerminalInfo.shell`).
  * - Views register with `attachView`; the registration survives a stop/start (a new connection
  *   attaches them again).
  */
@@ -54,6 +55,11 @@ export class TerminalController {
 
   constructor(private readonly options: TerminalControllerOptions) {
     this.store = terminalStore(options.sessionKey);
+  }
+
+  /** The session whose terminals this controller runs (WP-104: its host decides the pty kind). */
+  get sessionKey(): string {
+    return this.options.sessionKey;
   }
 
   /** The shell of the automatic first terminal (settings `console.defaultShell`). */

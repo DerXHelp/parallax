@@ -1,4 +1,4 @@
-import { KeyRoundIcon, LoaderCircleIcon, UnlinkIcon } from 'lucide-react';
+import { KeyRoundIcon, LoaderCircleIcon, ShieldIcon, UnlinkIcon } from 'lucide-react';
 import { useRef, useState } from 'react';
 import type { ErrorPayload } from '@shared/errors';
 import type { RemoteAccessState } from '@shared/model';
@@ -11,12 +11,21 @@ import { useMultiHostCommands } from './commands';
 import { Part } from './Part';
 
 /** The question that is open below the paired computer (lifted: the role conflict can open it). */
-export type PeerConfirm = 'unpair' | 'renew' | null;
+export type PeerConfirm = 'unpair' | 'renew' | 'level' | null;
+
+type PeerAction = Exclude<PeerConfirm, null>;
+const DONE: Readonly<Record<PeerAction, 'unpaired' | 'renewed' | 'levelChanged'>> = {
+  unpair: 'unpaired',
+  renew: 'renewed',
+  level: 'levelChanged',
+};
 
 /**
  * The paired computer (name, since, last contact, connected yes/no, version) with "Remove pairing"
  * (`remoteAccess.unpair`) and "Renew key" (`remoteAccess.renewKey`), each after an inline question.
- * Both close the other computer's connections at once (WP-76 §B.8).
+ * Both close the other computer's connections at once (WP-76 §B.8). WP-107 (§B.13): shows the
+ * access of the pairing and changes it after a question (`remoteAccess.setPeerLevel`, locally
+ * either way; the other computer's connections close once and come back with the new access).
  */
 export function PeerPanel({
   state,
@@ -31,22 +40,31 @@ export function PeerPanel({
   const commands = useMultiHostCommands();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ErrorPayload | null>(null);
-  const [done, setDone] = useState<'unpaired' | 'renewed' | null>(null);
+  const [done, setDone] = useState<'unpaired' | 'renewed' | 'levelChanged' | null>(null);
   const unpairRef = useRef<HTMLButtonElement>(null);
   const renewRef = useRef<HTMLButtonElement>(null);
+  const levelRef = useRef<HTMLButtonElement>(null);
   const peer = state.peer;
   // A pairing removed elsewhere leaves nothing to ask about.
-  const asking: PeerConfirm = confirm === 'unpair' && peer === null ? null : confirm;
+  const asking: PeerConfirm = (confirm === 'unpair' || confirm === 'level') && peer === null ? null : confirm;
+  /** The access a change would set: the other one. */
+  const nextLevel = peer?.level === 'manage' ? 'control' : 'manage';
 
-  const run = (action: 'unpair' | 'renew') => {
+  const start = (action: PeerAction): Promise<void> => {
+    if (action === 'unpair') return commands.unpair();
+    if (action === 'renew') return commands.renewKey();
+    return commands.setPeerLevel(nextLevel);
+  };
+
+  const run = (action: PeerAction) => {
     setBusy(true);
     setError(null);
     setDone(null);
-    (action === 'unpair' ? commands.unpair() : commands.renewKey())
+    start(action)
       .then(
         () => {
           onConfirmChange(null);
-          setDone(action === 'unpair' ? 'unpaired' : 'renewed');
+          setDone(DONE[action]);
         },
         (caught: unknown) => {
           setError(errorPayloadOf(caught));
@@ -58,17 +76,27 @@ export function PeerPanel({
   };
 
   const keep = () => {
-    const trigger = asking === 'unpair' ? unpairRef.current : renewRef.current;
+    const trigger =
+      asking === 'unpair' ? unpairRef.current : asking === 'level' ? levelRef.current : renewRef.current;
     onConfirmChange(null);
     trigger?.focus();
   };
 
-  let question: { title: string; body: string; confirm: string } | null = null;
+  let question: { title: string; body: string; confirm: string; safe?: boolean } | null = null;
   if (asking === 'unpair' && peer !== null) {
     question = {
       title: t('preferences.multiHost.share.peer.unpairTitle', { name: peer.name }),
       body: t('preferences.multiHost.share.peer.unpairBody'),
       confirm: t('preferences.multiHost.share.peer.unpairConfirm'),
+    };
+  } else if (asking === 'level' && peer !== null) {
+    const direction = nextLevel === 'manage' ? 'raise' : 'lower';
+    question = {
+      title: t(`preferences.multiHost.share.peer.${direction}Title`, { name: peer.name }),
+      body: t(`preferences.multiHost.share.peer.${direction}Body`, { name: peer.name }),
+      confirm: t(`preferences.multiHost.share.peer.${direction}Confirm`),
+      // Lowering the access is the safe direction.
+      safe: direction === 'lower',
     };
   } else if (asking === 'renew') {
     question = {
@@ -121,6 +149,10 @@ export function PeerPanel({
             </p>
           )}
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+            <dt className="text-muted-foreground">{t('preferences.multiHost.share.peer.level')}</dt>
+            <dd data-slot="peer-level" data-level={peer.level}>
+              {t(`preferences.multiHost.levels.${peer.level}`)}
+            </dd>
             <dt className="text-muted-foreground">{t('preferences.multiHost.share.peer.pairedAt')}</dt>
             <dd>
               <time dateTime={peer.pairedAt}>{format.dateTime(peer.pairedAt)}</time>
@@ -160,7 +192,7 @@ export function PeerPanel({
               </Button>
               <Button
                 size="sm"
-                variant="destructive"
+                variant={question.safe === true ? 'default' : 'destructive'}
                 data-action="peer-confirm"
                 disabled={busy}
                 onClick={() => {
@@ -196,6 +228,24 @@ export function PeerPanel({
           >
             <UnlinkIcon aria-hidden />
             {t('preferences.multiHost.share.peer.unpair')}
+          </Button>
+        )}
+        {peer === null ? null : (
+          <Button
+            ref={levelRef}
+            variant="outline"
+            size="sm"
+            data-action="peer-level"
+            disabled={busy}
+            onClick={() => {
+              setDone(null);
+              onConfirmChange('level');
+            }}
+          >
+            <ShieldIcon aria-hidden />
+            {nextLevel === 'manage'
+              ? t('preferences.multiHost.share.peer.raise')
+              : t('preferences.multiHost.share.peer.lower')}
           </Button>
         )}
         <Button

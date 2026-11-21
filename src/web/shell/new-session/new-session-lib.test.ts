@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { makeError } from '@shared/errors';
+import { POSIX_PATHS, WIN32_PATHS } from '@shared/paths';
 import { sampleClaudeInstallStatus } from '@shared/samples';
 import { breadcrumbs } from './FolderBrowserContent';
-import { listDemoFolder } from './demo-folders';
+import { cloneDemoFolders, createDemoFolder, LINUX_DEMO_FOLDERS, listDemoFolder } from './demo-folders';
 import { issueArgIndex, issueDetail, issueEnvKey, issueField } from './profile-issues';
 import { profileStatusText } from './profile-status';
 import { RECENT_PROJECTS_MAX, filterRecentProjects, recentProjects } from './recent-projects';
@@ -133,5 +134,65 @@ describe('profile findings', () => {
       profileStatusText(sampleClaudeInstallStatus({ version: '2.1.330', testedVersion: '2.1.322', versionStatus: 'too_old' }))
         .key,
     ).toBe('newSession.status.tooOld');
+  });
+});
+
+describe('Linux hosts (WP-104)', () => {
+  it('recent projects compare folders case-sensitively on Linux, as before on Windows', () => {
+    const entries = [
+      entry('/home/alice/Work', 1),
+      entry('/home/alice/work', 2),
+      entry('/home/alice/work/', 3),
+    ];
+    expect(recentProjects(entries, undefined, POSIX_PATHS)).toEqual([
+      '/home/alice/work/',
+      '/home/alice/Work',
+    ]);
+    expect(recentProjects(entries, undefined, WIN32_PATHS)).toEqual(['/home/alice/work/']);
+    // An exact name shows every project; on Linux only the exact case is exact (else: search).
+    const projects = ['/home/alice/Work', '/srv/data'];
+    expect(filterRecentProjects(projects, '/home/alice/Work', POSIX_PATHS)).toEqual(projects);
+    expect(filterRecentProjects(projects, '/home/alice/work', WIN32_PATHS)).toEqual(projects);
+    expect(filterRecentProjects(projects, '/home/alice/work', POSIX_PATHS)).toEqual(['/home/alice/Work']);
+  });
+
+  it('breadcrumbs start at / and keep the listed spelling', () => {
+    expect(breadcrumbs('/', POSIX_PATHS)).toEqual([{ label: '/', path: '/' }]);
+    expect(breadcrumbs('/home/alice/Projects/', POSIX_PATHS)).toEqual([
+      { label: '/', path: '/' },
+      { label: 'home', path: '/home' },
+      { label: 'alice', path: '/home/alice' },
+      { label: 'Projects', path: '/home/alice/Projects/' },
+    ]);
+    expect(breadcrumbs('D:\\work', WIN32_PATHS)[0]).toEqual({ label: 'D:\\', path: 'D:\\' });
+  });
+
+  it('the example of a full claude path follows the host', () => {
+    const issue = makeError('PROFILE_INVALID', { field: 'executable', reason: 'not_absolute' });
+    expect(issueDetail(issue, 'posix')?.key).toBe('newSession.issues.executable.not_absolute_posix');
+    expect(issueDetail(issue, 'win32')?.key).toBe('newSession.issues.executable.not_absolute');
+  });
+
+  it('the Linux demo tree lists home, / and mounts, names case-sensitive', () => {
+    const roots = listDemoFolder(null, false, LINUX_DEMO_FOLDERS, POSIX_PATHS);
+    expect(roots.ok && roots.listing.entries.map((item) => item.path)).toEqual([
+      '/home/alice',
+      '/',
+      '/media/alice/USB-STICK',
+      '/mnt/data',
+    ]);
+    const home = listDemoFolder('/home/alice', false, LINUX_DEMO_FOLDERS, POSIX_PATHS);
+    expect(home.ok && home.listing.parent).toBe('/home');
+    expect(home.ok && home.listing.entries.map((item) => item.path)).toEqual([
+      '/home/alice/Projects',
+      '/home/alice/projects',
+    ]);
+    expect(listDemoFolder('C:\\Users', false, LINUX_DEMO_FOLDERS, POSIX_PATHS).ok).toBe(false);
+    const folders = cloneDemoFolders(LINUX_DEMO_FOLDERS);
+    expect(createDemoFolder('/home/alice', 'PROJECTS', folders, POSIX_PATHS)).toEqual({
+      ok: true,
+      path: '/home/alice/PROJECTS',
+    });
+    expect(createDemoFolder('/home/alice', 'Projects', folders, POSIX_PATHS).ok).toBe(false);
   });
 });

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { LIMITS } from '@shared/common';
 import type { ErrorPayload } from '@shared/errors';
 import { fsListingSchema, type FsListing } from '@shared/model';
+import { POSIX_PATHS } from '@shared/paths';
 import { SAMPLE_IDS } from '@shared/samples';
 import { makeTempHome } from '../http/testServer';
 import { CommandError } from '../sync/ports';
@@ -19,6 +20,8 @@ import {
 } from './fsCommands';
 
 const CTX = { clientId: SAMPLE_IDS.client, cmdId: SAMPLE_IDS.cmdId };
+/** Tests on the real file system of this host: Windows-only and POSIX-only cases (WP-103). */
+const WIN = process.platform === 'win32';
 
 async function listing(
   handler: ReturnType<typeof createFsCommands>,
@@ -91,35 +94,44 @@ async function tree(): Promise<string> {
 }
 
 describe('fs.listDirectory: a folder (ADR-119)', () => {
-  it('lists folders and junctions to folders, sorted case-insensitively, paths = input + name', async () => {
-    const root = await tree();
-    const result = await listing(createFsCommands(), root);
-    expect(result).toEqual({
-      path: root,
-      parent: path.dirname(root),
-      entries: [
-        { name: 'alpha', path: `${root}\\alpha`, kind: 'directory', hidden: false },
-        { name: 'Beta', path: `${root}\\Beta`, kind: 'directory', hidden: false },
-        { name: 'gamma', path: `${root}\\gamma`, kind: 'directory', hidden: false },
-        { name: 'junction', path: `${root}\\junction`, kind: 'link', hidden: false },
-      ],
-      truncated: false,
-    });
-  });
+  it.runIf(WIN)(
+    'lists folders and junctions to folders, sorted case-insensitively, paths = input + name',
+    async () => {
+      const root = await tree();
+      const result = await listing(createFsCommands(), root);
+      expect(result).toEqual({
+        path: root,
+        parent: path.dirname(root),
+        entries: [
+          { name: 'alpha', path: `${root}\\alpha`, kind: 'directory', hidden: false },
+          { name: 'Beta', path: `${root}\\Beta`, kind: 'directory', hidden: false },
+          { name: 'gamma', path: `${root}\\gamma`, kind: 'directory', hidden: false },
+          { name: 'junction', path: `${root}\\junction`, kind: 'link', hidden: false },
+        ],
+        truncated: false,
+      });
+    },
+  );
 
-  it('showHidden adds dot folders and system folders, marked hidden', async () => {
+  it.runIf(WIN)('showHidden adds dot folders and system folders, marked hidden', async () => {
     const root = await tree();
     const names = (await listing(createFsCommands(), root, true)).entries
       .filter((e) => e.hidden)
       .map((e) => e.name);
     expect(names).toEqual(['$Recycle.Bin', '.git', 'System Volume Information']);
+  });
+
+  it('hidden names: dot names everywhere, the Explorer system folders only on Windows', () => {
     expect(isHiddenName('Recovery')).toBe(true);
     expect(isHiddenName('config.msi')).toBe(true);
     expect(isHiddenName('$WinREAgent')).toBe(true);
     expect(isHiddenName('Projects')).toBe(false);
+    expect(isHiddenName('.config', POSIX_PATHS)).toBe(true);
+    expect(isHiddenName('Recovery', POSIX_PATHS)).toBe(false);
+    expect(isHiddenName('$Recycle.Bin', POSIX_PATHS)).toBe(false);
   });
 
-  it('keeps the spelling of the input (trailing separator, forward slashes)', async () => {
+  it.runIf(WIN)('keeps the spelling of the input (trailing separator, forward slashes)', async () => {
     const root = await tree();
     const slashed = root.replace(/\\/g, '/');
     const result = await listing(createFsCommands(), slashed);
@@ -128,7 +140,7 @@ describe('fs.listDirectory: a folder (ADR-119)', () => {
     expect((await listing(createFsCommands(), `${root}\\`)).entries[0]?.path).toBe(`${root}\\alpha`);
   });
 
-  it('R1-17: a symlink to \\\\server\\share is left out and never followed', async () => {
+  it.runIf(WIN)('R1-17: a symlink to \\\\server\\share is left out and never followed', async () => {
     const root = await tree();
     const share = `${root}\\share`;
     const fs = layered(root, [dirent('share', 'link')], { [share]: '\\\\server\\share' });
@@ -137,7 +149,7 @@ describe('fs.listDirectory: a folder (ADR-119)', () => {
     expect(fs.touched).toEqual([`readlink ${share}`]);
   });
 
-  it('R1-17: listing a path through a link to a share is PATH_REJECTED link_target', async () => {
+  it.runIf(WIN)('R1-17: listing a path through a link to a share is PATH_REJECTED link_target', async () => {
     const root = await tree();
     const share = `${root}\\share`;
     const fs = layered(root, [], { [share]: '\\\\server\\share' });
@@ -148,7 +160,7 @@ describe('fs.listDirectory: a folder (ADR-119)', () => {
     expect(fs.touched).toEqual([`readlink ${share}`]);
   });
 
-  it('error codes: missing, file, unsafe string, no permission', async () => {
+  it.runIf(WIN)('error codes: missing, file, unsafe string, no permission', async () => {
     const root = await tree();
     const handler = createFsCommands();
     expect(await rejection(listing(handler, `${root}\\missing`))).toEqual({
@@ -189,11 +201,25 @@ describe('fs.listDirectory: a folder (ADR-119)', () => {
       stat: () => Promise.resolve({ isDirectory: () => true }),
       readdir: () => Promise.resolve([...many].reverse()),
     };
-    const result = await listing(createFsCommands({ fs }), 'D:\\big');
+    const result = await listing(createFsCommands({ fs, platform: 'win32' }), 'D:\\big');
     expect(result.truncated).toBe(true);
     expect(result.entries).toHaveLength(LIMITS.fsListMax);
     expect(result.entries[0]?.name).toBe('d00000');
     expect(result.parent).toBe('D:\\');
+  });
+});
+
+describe('fs.listDirectory on a Linux host (review WP-109)', () => {
+  it('"/" never offers proc, sys or dev (the rules refuse them)', async () => {
+    const fs: DirFs = {
+      lstat: () => Promise.resolve({ isSymbolicLink: () => false }),
+      readlink: () => Promise.reject(new Error('no link')),
+      stat: () => Promise.resolve({ isDirectory: () => true }),
+      readdir: () =>
+        Promise.resolve(['dev', 'etc', 'home', 'proc', 'sys', 'usr'].map((name) => dirent(name, 'dir'))),
+    };
+    const result = await listing(createFsCommands({ fs, platform: 'linux' }), '/');
+    expect(result.entries.map((entry) => entry.name)).toEqual(['etc', 'home', 'usr']);
   });
 });
 
@@ -296,11 +322,28 @@ describe('fs.listDirectory: roots (path null)', () => {
     expect(maxInFlight).toBeLessThanOrEqual(DRIVE_PROBE_LIMIT);
   });
 
-  it('no drives off Windows; an unsafe user folder (roaming share) is left out', async () => {
+  it('POSIX (WP-103): the user folder, / and the answering /media/<user> and /mnt; no drives', async () => {
+    const fs = drives({ 'C:\\': 'dir', '/mnt': 'dir', '/media/u': 'hang' });
+    const handler = createFsCommands({
+      fs,
+      home: '/home/u',
+      platform: 'linux',
+      userName: 'u',
+      driveTimeoutMs: 50,
+    });
+    expect((await listing(handler, null)).entries).toEqual([
+      { name: 'u', path: '/home/u', kind: 'home', hidden: false },
+      { name: '/', path: '/', kind: 'drive', hidden: false },
+      { name: '/mnt', path: '/mnt', kind: 'drive', hidden: false },
+    ]);
+    expect([...fs.stats.keys()].sort()).toEqual(['/media/u', '/mnt']);
+    // A Windows user folder is no POSIX path; a user name that is no file name adds no /media root.
+    const odd = createFsCommands({ fs, home: 'C:\\Users\\u', platform: 'linux', userName: '../x' });
+    expect((await listing(odd, null)).entries.map((e) => e.path)).toEqual(['/', '/mnt']);
+  });
+
+  it('an unsafe user folder (roaming share) is left out', async () => {
     const fs = drives({ 'C:\\': 'dir' });
-    expect(
-      (await listing(createFsCommands({ fs, home: 'C:\\Users\\u', platform: 'linux' }), null)).entries,
-    ).toEqual([{ name: 'u', path: 'C:\\Users\\u', kind: 'home', hidden: false }]);
     const roaming = createFsCommands({
       fs,
       home: '\\\\server\\profiles\\u',
@@ -319,18 +362,23 @@ describe('fs.createDirectory (WP-94)', () => {
   const create = (handler: ReturnType<typeof createFsCommands>, parent: string, folderName: string) =>
     handler.handle({ name: 'fs.createDirectory', parent, folderName }, CTX);
 
-  it('creates one folder in the parent and answers its path in the spelling of the parent', async () => {
-    const root = await tree();
-    const handler = createFsCommands();
-    expect(await create(handler, root, 'foobar')).toEqual({ path: `${root}\\foobar` });
-    expect((await stat(path.join(root, 'foobar'))).isDirectory()).toBe(true);
-    const slashed = root.replaceAll('\\', '/');
-    expect(await create(handler, `${slashed}/`, 'Neuer Ordner')).toEqual({ path: `${slashed}/Neuer Ordner` });
-    // The new folder is listed like any other.
-    expect((await listing(handler, root)).entries.map((e) => e.name)).toContain('foobar');
-  });
+  it.runIf(WIN)(
+    'creates one folder in the parent and answers its path in the spelling of the parent',
+    async () => {
+      const root = await tree();
+      const handler = createFsCommands();
+      expect(await create(handler, root, 'foobar')).toEqual({ path: `${root}\\foobar` });
+      expect((await stat(path.join(root, 'foobar'))).isDirectory()).toBe(true);
+      const slashed = root.replaceAll('\\', '/');
+      expect(await create(handler, `${slashed}/`, 'Neuer Ordner')).toEqual({
+        path: `${slashed}/Neuer Ordner`,
+      });
+      // The new folder is listed like any other.
+      expect((await listing(handler, root)).entries.map((e) => e.name)).toContain('foobar');
+    },
+  );
 
-  it('never creates more than the named folder: missing parent, file, existing name', async () => {
+  it.runIf(WIN)('never creates more than the named folder: missing parent, file, existing name', async () => {
     const root = await tree();
     const handler = createFsCommands();
     expect(await rejection(create(handler, `${root}\\missing`, 'x'))).toEqual({
@@ -362,6 +410,7 @@ describe('fs.createDirectory (WP-94)', () => {
     const made: string[] = [];
     const handler = createFsCommands({
       fs: { ...nodeDirFs, stat: () => Promise.reject(new Error('no fs call expected')) },
+      platform: 'win32',
       mkdir: (dir) => {
         made.push(dir);
         return Promise.resolve();
@@ -374,16 +423,29 @@ describe('fs.createDirectory (WP-94)', () => {
     expect(made).toEqual([]);
   });
 
-  it('rejects an unsafe parent and a parent behind a link to a share (R1-17)', async () => {
+  it('rejects an unsafe parent (R1-17)', async () => {
     const made: string[] = [];
     const mkdirSpy = (dir: string) => {
       made.push(dir);
       return Promise.resolve();
     };
-    expect(await rejection(create(createFsCommands({ mkdir: mkdirSpy }), '\\\\server\\share', 'x'))).toEqual({
+    expect(
+      await rejection(
+        create(createFsCommands({ mkdir: mkdirSpy, platform: 'win32' }), '\\\\server\\share', 'x'),
+      ),
+    ).toEqual({
       code: 'PATH_REJECTED',
       params: { reason: 'unc' },
     });
+    expect(made).toEqual([]);
+  });
+
+  it.runIf(WIN)('rejects a parent behind a link to a share (R1-17)', async () => {
+    const made: string[] = [];
+    const mkdirSpy = (dir: string) => {
+      made.push(dir);
+      return Promise.resolve();
+    };
     const root = await tree();
     const share = `${root}\\share`;
     const fs = layered(root, [], { [share]: '\\\\server\\share' });
@@ -397,6 +459,7 @@ describe('fs.createDirectory (WP-94)', () => {
   it(`a new path longer than LIMITS.pathChars (${String(LIMITS.pathChars)}) is rejected before mkdir`, async () => {
     const made: string[] = [];
     const handler = createFsCommands({
+      platform: 'win32',
       mkdir: (dir) => {
         made.push(dir);
         return Promise.resolve();
@@ -436,5 +499,125 @@ describe('path helpers', () => {
     expect(childPath('D:\\work', 'x')).toBe('D:\\work\\x');
     expect(childPath('D:/work', 'x')).toBe('D:/work/x');
     expect(childPath('D:/work\\a', 'x')).toBe('D:/work\\a\\x');
+  });
+});
+
+describe('POSIX hosts (WP-103)', () => {
+  it('path helpers: / separators, parent null at /', () => {
+    expect(parentPath('/', POSIX_PATHS)).toBeNull();
+    expect(parentPath('/home', POSIX_PATHS)).toBe('/');
+    expect(parentPath('/home/u/', POSIX_PATHS)).toBe('/home');
+    expect(childPath('/', 'home', POSIX_PATHS)).toBe('/home');
+    expect(childPath('/home/u', 'x', POSIX_PATHS)).toBe('/home/u/x');
+    expect(childPath('/home/u/', 'a:b', POSIX_PATHS)).toBe('/home/u/a:b');
+  });
+
+  it.each([
+    ['a/b', 'invalid_char'],
+    ['..', 'dot_segment'],
+    ['.', 'dot_segment'],
+  ])('rejects the name %j (%s) before any file system call', async (folderName, reason) => {
+    const made: string[] = [];
+    const handler = createFsCommands({
+      fs: { ...nodeDirFs, stat: () => Promise.reject(new Error('no fs call expected')) },
+      platform: 'linux',
+      mkdir: (dir) => {
+        made.push(dir);
+        return Promise.resolve();
+      },
+    });
+    expect(
+      await rejection(handler.handle({ name: 'fs.createDirectory', parent: '/srv', folderName }, CTX)),
+    ).toEqual({
+      code: 'PATH_REJECTED',
+      params: { reason },
+    });
+    expect(made).toEqual([]);
+  });
+
+  it('a Windows path, a relative path and /proc are refused before any file system call', async () => {
+    const handler = createFsCommands({
+      fs: { ...nodeDirFs, stat: () => Promise.reject(new Error('no fs call expected')) },
+      platform: 'linux',
+    });
+    for (const [dir, reason] of [
+      ['D:\\work', 'not_absolute'],
+      ['relative/x', 'not_absolute'],
+      ['/proc/self', 'pseudo_fs'],
+      ['/home/u/../x', 'dot_segment'],
+    ] as const) {
+      expect(await rejection(listing(handler, dir))).toEqual({ code: 'PATH_REJECTED', params: { reason } });
+    }
+  });
+});
+
+describe.runIf(!WIN)('POSIX hosts on the real file system (WP-103)', () => {
+  async function posixTree(): Promise<string> {
+    const root = await makeTempHome('fs-list-posix-');
+    for (const name of ['alpha', 'Beta', 'gamma', '.git', '$Recycle.Bin']) {
+      await mkdir(path.join(root, name));
+    }
+    await writeFile(path.join(root, 'file.txt'), 'x', 'utf8');
+    await symlink(path.join(root, 'gamma'), path.join(root, 'link'));
+    await symlink('/proc/self', path.join(root, 'proc-link'));
+    await symlink('missing-target', path.join(root, 'dangling'));
+    return root;
+  }
+
+  it('lists folders and links to folders (case-insensitive order), dot names hidden only, / separators', async () => {
+    const root = await posixTree();
+    const result = await listing(createFsCommands(), root);
+    expect(result).toEqual({
+      path: root,
+      parent: path.dirname(root),
+      entries: [
+        { name: '$Recycle.Bin', path: `${root}/$Recycle.Bin`, kind: 'directory', hidden: false },
+        { name: 'alpha', path: `${root}/alpha`, kind: 'directory', hidden: false },
+        { name: 'Beta', path: `${root}/Beta`, kind: 'directory', hidden: false },
+        { name: 'gamma', path: `${root}/gamma`, kind: 'directory', hidden: false },
+        { name: 'link', path: `${root}/link`, kind: 'link', hidden: false },
+      ],
+      truncated: false,
+    });
+    expect((await listing(createFsCommands(), `${root}/`)).entries[0]?.path).toBe(`${root}/$Recycle.Bin`);
+    const hidden = (await listing(createFsCommands(), root, true)).entries.filter((e) => e.hidden);
+    expect(hidden.map((e) => e.name)).toEqual(['.git']);
+  });
+
+  it('R1-17: a link into /proc is left out; listing through it is PATH_REJECTED link_target', async () => {
+    const root = await posixTree();
+    expect((await listing(createFsCommands(), root)).entries.map((e) => e.name)).not.toContain('proc-link');
+    expect(await rejection(listing(createFsCommands(), `${root}/proc-link`))).toEqual({
+      code: 'PATH_REJECTED',
+      params: { reason: 'link_target' },
+    });
+  });
+
+  it('error codes: missing, file', async () => {
+    const root = await posixTree();
+    expect(await rejection(listing(createFsCommands(), `${root}/missing`))).toEqual({
+      code: 'CWD_NOT_FOUND',
+      params: {},
+    });
+    expect(await rejection(listing(createFsCommands(), `${root}/file.txt`))).toEqual({
+      code: 'CWD_NOT_DIRECTORY',
+      params: {},
+    });
+  });
+
+  it('creates folders case-sensitively; names Windows forbids are fine', async () => {
+    const root = await posixTree();
+    const handler = createFsCommands();
+    const create = (folderName: string) =>
+      handler.handle({ name: 'fs.createDirectory', parent: root, folderName }, CTX);
+    expect(await create('ALPHA')).toEqual({ path: `${root}/ALPHA` });
+    expect(await create('CON')).toEqual({ path: `${root}/CON` });
+    expect(await create('a:b')).toEqual({ path: `${root}/a:b` });
+    expect(await create('x.')).toEqual({ path: `${root}/x.` });
+    expect((await stat(path.join(root, 'ALPHA'))).isDirectory()).toBe(true);
+    expect(await rejection(create('alpha'))).toEqual({
+      code: 'FOLDER_EXISTS',
+      params: { path: `${root}/alpha` },
+    });
   });
 });

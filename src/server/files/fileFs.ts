@@ -3,9 +3,9 @@
  * tests can count calls (L15: a rejected path never reaches the file system), fake links and hang
  * a drive. `guardFileFs` puts the 3 s timeout of ADR-141 on every call but `readWhole` (see there).
  */
-import { open, readdir, stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import type { FsCallGuard } from '../lib/fsTimeout';
-import { readFileHead } from '../lib/fileRead';
+import { openRegularFile, readFileHead } from '../lib/fileRead';
 import { assertSafePath, nodeAccessFs, type AccessFs } from '../lib/paths';
 
 export interface FileStats {
@@ -42,7 +42,9 @@ const GROWTH_CHUNK_BYTES = 64 * 1024;
 /** `FileFs.readWhole` on the real file system (size from the open handle, then up to the end). */
 export async function readWholeFile(file: string, max: number): Promise<Buffer | null> {
   assertSafePath(file);
-  const handle = await open(file, 'r');
+  // Security review WP-109: a FIFO swapped in after the head was read must not block a libuv thread
+  // (POSIX: O_NONBLOCK + regular file only, like readHead).
+  const handle = await openRegularFile(file);
   try {
     const { size } = await handle.stat();
     if (size > max) return null;

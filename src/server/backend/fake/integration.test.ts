@@ -71,10 +71,26 @@ describe('createFakeClaudeIntegration', () => {
         CLAUDECODE: '1',
         UNSET: undefined,
       },
+      platform: 'win32',
     });
     const spec = await claude.launchSpecFor('standard', SAMPLE_IDS.entry);
     expect(spec.env).toEqual({ PATH: 'C:\\Program Files\\Git\\cmd;C:\\Windows', SystemRoot: 'C:\\Windows' });
     expect(FAKE_LAUNCH_ENV_KEYS).toContain('PATH');
+  });
+
+  it('WP-103: POSIX takes PATH, HOME and TMPDIR in their exact spelling', async () => {
+    const claude = createFakeClaudeIntegration({
+      launchEnv: {
+        PATH: '/usr/local/bin:/usr/bin',
+        Path: '/never',
+        HOME: '/home/u',
+        SystemRoot: 'C:\\Windows',
+        ANTHROPIC_API_KEY: 'never-copied',
+      },
+      platform: 'linux',
+    });
+    const spec = await claude.launchSpecFor('standard', SAMPLE_IDS.entry);
+    expect(spec.env).toEqual({ PATH: '/usr/local/bin:/usr/bin', HOME: '/home/u' });
   });
 
   it('unknown profile → PROFILE_NOT_FOUND; invalid args → PROFILE_INVALID; setLaunchError', async () => {

@@ -56,8 +56,8 @@ describe('settings section "Console" (WP-97)', () => {
     await user.click(screen.getByRole('radio', { name: 'Default terminal of Windows' }));
     await waitFor(() => {
       expect(consoleUpdates(scenario)).toEqual([
-        { defaultShell: 'gitbash', gitBashWindow: 'mintty', gitDir: null },
-        { defaultShell: 'gitbash', gitBashWindow: 'terminal', gitDir: null },
+        { defaultShell: 'gitbash', gitBashWindow: 'mintty', gitDir: null, terminalEmulator: null },
+        { defaultShell: 'gitbash', gitBashWindow: 'terminal', gitDir: null, terminalEmulator: null },
       ]);
     });
   });
@@ -80,7 +80,7 @@ describe('settings section "Console" (WP-97)', () => {
     await user.type(field, 'D:\\PortableGit{Enter}');
     await waitFor(() => {
       expect(consoleUpdates(scenario)).toEqual([
-        { defaultShell: 'cmd', gitBashWindow: 'mintty', gitDir: 'D:\\PortableGit' },
+        { defaultShell: 'cmd', gitBashWindow: 'mintty', gitDir: 'D:\\PortableGit', terminalEmulator: null },
       ]);
     });
     await user.clear(field);
@@ -90,6 +90,7 @@ describe('settings section "Console" (WP-97)', () => {
         defaultShell: 'cmd',
         gitBashWindow: 'mintty',
         gitDir: null,
+        terminalEmulator: null,
       });
     });
   });

@@ -19,6 +19,7 @@ import {
   DEFAULT_UPDATE_STATE,
   IDLE_PROFILE_LOGIN,
   KEY_FILE_SCHEMA_VERSION,
+  WINDOWS_HOST_CAPABILITIES,
   defaultEditorSettings,
 } from './model';
 import type {
@@ -274,6 +275,7 @@ export function sampleHostState(p: Partial<HostState> = {}): HostState {
     sdkVersion: '0.3.296',
     sdkClaudeCodeVersion: '2.1.296',
     platform: 'win32',
+    capabilities: { ...WINDOWS_HOST_CAPABILITIES },
     dataDirLabel: 'dev',
     dev: true,
     backend: 'fake',
@@ -293,6 +295,7 @@ export function sampleHostState(p: Partial<HostState> = {}): HostState {
     remoteHosts: [],
     remoteAccess: null,
     terminalAvailable: false,
+    homeDir: null,
     ...p,
   };
 }
@@ -354,6 +357,7 @@ export function sampleRemoteAccessCheck(p: Partial<RemoteAccessCheck> = {}): Rem
 export function sampleRemotePeer(p: Partial<RemotePeer> = {}): RemotePeer {
   return {
     name: 'Computer A',
+    level: 'control',
     pairedAt: sampleTime(),
     connected: true,
     connections: 2,
@@ -371,6 +375,7 @@ export function sampleRemotePeerRecord(p: Partial<RemotePeerRecord> = {}): Remot
     pin: samplePin(1),
     certificate: sampleCertificate(1),
     authKey: 'AQAAANCMnd8BFdERjHoAwE/Cl+s=',
+    level: 'control',
     pairedAt: sampleTime(),
     lastSeenAt: null,
     lastAddress: null,
@@ -403,6 +408,7 @@ export function sampleRemoteEvent(p: Partial<RemoteEvent> = {}): RemoteEvent {
     address: '192.0.2.99',
     port: 51234,
     claimedName: null,
+    detail: null,
     rejected: true,
     ...p,
   };
@@ -414,6 +420,7 @@ export function sampleKeyFile(p: Partial<KeyFile> = {}): KeyFile {
     purpose: 'identity',
     algorithm: 'ml-dsa-87',
     protected: 'AQAAANCMnd8BFdERjHoAwE/Cl+s=',
+    scheme: 'dpapi',
     certificate: sampleCertificate(1),
     createdAt: sampleTime(),
     ...p,
@@ -543,6 +550,7 @@ export function sampleExternalHandoff(p: Partial<ExternalHandoff> = {}): Externa
     processStartedAt: sampleTime(120),
     since: sampleTime(120),
     conversationId: SAMPLE_IDS.conversation,
+    terminalId: null,
     ...p,
   };
 }
@@ -1206,6 +1214,7 @@ export function sampleHello(p: Partial<HelloMessage> = {}): HelloMessage {
     serverInstanceId: SAMPLE_IDS.serverInstanceId,
     serverVersion: '0.0.0',
     serverStartedAt: sampleTime(),
+    access: 'local',
     ...p,
   };
 }

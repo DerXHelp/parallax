@@ -1,16 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import { RELEASE_PUBLIC_KEYS } from '../launcher/release';
-import { RELEASES_URL, isUpdateTestBuild, releaseZipName, testEndpoints, updateEndpoints } from './endpoints';
+import {
+  RELEASES_URL,
+  isUpdateTestBuild,
+  releaseAssetName,
+  releaseTarget,
+  releaseZipName,
+  testEndpoints,
+  updateEndpoints,
+} from './endpoints';
 
 const KEY = 'A'.repeat(43);
 
 describe('update endpoints (WP-87 §1.7, E7)', () => {
   it('a normal build uses the GitHub downloads and the release keys, whatever the environment says', () => {
     expect(isUpdateTestBuild()).toBe(false);
-    const endpoints = updateEndpoints({
-      PARALLAX_TEST_UPDATE_BASE: 'http://127.0.0.1:9/releases',
-      PARALLAX_TEST_RELEASE_KEYS: KEY,
-    });
+    const endpoints = updateEndpoints(
+      {
+        PARALLAX_TEST_UPDATE_BASE: 'http://127.0.0.1:9/releases',
+        PARALLAX_TEST_RELEASE_KEYS: KEY,
+      },
+      'win',
+    );
     expect(endpoints.latestUrl).toBe(`${RELEASES_URL}/latest/download/latest.json`);
     expect(endpoints.latestSignatureUrl).toBe(`${RELEASES_URL}/latest/download/latest.json.sig`);
     expect(endpoints.assetUrl('1.0.1')).toBe(`${RELEASES_URL}/download/v1.0.1/parallax-1.0.1-win.zip`);
@@ -22,11 +33,14 @@ describe('update endpoints (WP-87 §1.7, E7)', () => {
   });
 
   it('a test build reads a local release server, test keys and a registry', () => {
-    const endpoints = testEndpoints({
-      PARALLAX_TEST_UPDATE_BASE: 'http://127.0.0.1:4800/releases/',
-      PARALLAX_TEST_RELEASE_KEYS: `${KEY},${'B'.repeat(43)}`,
-      PARALLAX_TEST_REGISTRY: 'http://localhost:4801/',
-    });
+    const endpoints = testEndpoints(
+      {
+        PARALLAX_TEST_UPDATE_BASE: 'http://127.0.0.1:4800/releases/',
+        PARALLAX_TEST_RELEASE_KEYS: `${KEY},${'B'.repeat(43)}`,
+        PARALLAX_TEST_REGISTRY: 'http://localhost:4801/',
+      },
+      'win',
+    );
     expect(endpoints.latestUrl).toBe('http://127.0.0.1:4800/releases/latest/download/latest.json');
     expect(endpoints.assetUrl('9.9.1')).toBe(
       'http://127.0.0.1:4800/releases/download/v9.9.1/parallax-9.9.1-win.zip',
@@ -35,6 +49,22 @@ describe('update endpoints (WP-87 §1.7, E7)', () => {
     expect(endpoints.registry).toBe('http://localhost:4801/');
     expect(endpoints.allowLoopbackHttp).toBe(true);
     expect(testEndpoints({}).releaseKeys).toBe(RELEASE_PUBLIC_KEYS);
+  });
+
+  it('names one asset per platform (WP-108) and knows the one of this host', () => {
+    expect(releaseTarget('win32', 'arm64')).toBe('win');
+    expect(releaseTarget('linux', 'x64')).toBe('linux-x64');
+    expect(releaseTarget('linux', 'arm64')).toBeNull();
+    expect(releaseTarget('darwin', 'x64')).toBeNull();
+    expect(releaseAssetName('1.2.0', 'linux-x64')).toBe('parallax-1.2.0-linux-x64.tar.gz');
+    expect(releaseAssetName('1.2.0')).toBe('parallax-1.2.0-win.zip');
+    const linux = updateEndpoints({}, 'linux-x64');
+    expect(linux.target).toBe('linux-x64');
+    expect(linux.assetUrl('1.2.0')).toBe(`${RELEASES_URL}/download/v1.2.0/parallax-1.2.0-linux-x64.tar.gz`);
+    expect(linux.assetUrl('1.2.0', 'win')).toBe(`${RELEASES_URL}/download/v1.2.0/parallax-1.2.0-win.zip`);
+    const none = updateEndpoints({}, null);
+    expect(none.target).toBeNull();
+    expect(updateEndpoints().target).toBe(releaseTarget());
   });
 
   it('a test build refuses a non-loopback base and malformed keys', () => {

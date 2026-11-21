@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import type { ErrorPayload } from '@shared/errors';
-import { BLOCKED_PROFILE_FLAGS, isBroadToolRule, parseProfileArgs, splitToolList } from './profileArgs';
+import { POSIX_PATHS, WIN32_PATHS } from '@shared/paths';
+import { HOST_PATH_RULES } from '../lib/paths';
+import {
+  BLOCKED_PROFILE_FLAGS,
+  isBroadToolRule,
+  parseProfileArgs,
+  profileArgsParser,
+  splitToolList,
+} from './profileArgs';
 import type { ParseProfileArgs, ProfileArgsResult } from './ports';
 
-// Implements the frozen port type.
-const parse: ParseProfileArgs = parseProfileArgs;
+// Implements the frozen port type; the samples are Windows paths (WP-103: rules pinned).
+const parse: ParseProfileArgs = profileArgsParser(WIN32_PATHS);
 
 const EMPTY: ProfileArgsResult = {
   sdkOptions: {},
@@ -385,5 +393,23 @@ describe('splitToolList', () => {
     ['', []],
   ])('%j', (value, tools) => {
     expect(splitToolList(value)).toEqual(tools);
+  });
+});
+
+describe('path flags by host (WP-103)', () => {
+  it('POSIX rules: absolute POSIX directories pass, Windows and pseudo-fs paths are invalid_value', () => {
+    const posix = profileArgsParser(POSIX_PATHS);
+    expect(posix(['--add-dir', '/srv/a', '--plugin-dir', '/home/u/p'], false).sdkOptions).toEqual({
+      additionalDirectories: ['/srv/a'],
+      plugins: ['/home/u/p'],
+    });
+    for (const value of ['D:/a', 'relative/dir', '/proc/1', '/srv/../etc']) {
+      expect(posix(['--add-dir', value], false).errors).toEqual([invalid(0, '--add-dir', 'invalid_value')]);
+    }
+  });
+
+  it('parseProfileArgs uses the rules of this host', () => {
+    const sample = HOST_PATH_RULES.flavor === 'win32' ? 'D:/a' : '/srv/a';
+    expect(parseProfileArgs(['--add-dir', sample], false).errors).toEqual([]);
   });
 });

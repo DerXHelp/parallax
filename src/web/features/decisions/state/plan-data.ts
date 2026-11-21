@@ -6,6 +6,7 @@ import type { SessionViewState } from '@shared/sync';
 import { sessionFileUrl } from '@web/lib/host-urls';
 import { SizedLru } from '@web/lib/sized-cache';
 import { errorPayloadOf } from '@web/state/connection';
+import { useSessionPaths } from '@web/state/host-platform';
 import { sendCommand, useSessionSelector } from '@web/state/hooks';
 import { planFileActivity, type PlanFileActivity, type PlanFileRule } from '../lib/plan-file';
 
@@ -29,9 +30,10 @@ const NO_ACTIVITY: PlanFileActivity = { liveItemId: null, path: null, writtenAt:
 /** Plan file calls of the session's transcript (re-renders only when one of the values changes). */
 export function usePlanFileActivity(sessionKey: string, rule: PlanFileRule): PlanFileActivity {
   const { planPath, planMode } = rule;
+  const rules = useSessionPaths(sessionKey);
   const select = useCallback(
-    (view: SessionViewState) => planFileActivity(view.items, { planPath, planMode }),
-    [planPath, planMode],
+    (view: SessionViewState) => planFileActivity(view.items, { planPath, planMode, rules }),
+    [planPath, planMode, rules],
   );
   return useSessionSelector(sessionKey, select, NO_ACTIVITY);
 }

@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { LOCAL_HOST_ID } from '@shared/common';
 import { sidebarLayout, type SidebarGrouping, type SidebarLayout } from '@web/lib/session-order';
 import type { SummaryEntry } from '@web/state/hooks';
+import { useHostPathKey } from '@web/state/host-platform';
 import { useRemoteHosts } from '@web/state/hosts';
 import { effectiveGrouping, useSidebarGrouping } from './sidebar-view';
 
@@ -25,9 +26,10 @@ export function useSidebarLayout(entries: readonly SummaryEntry[], now: number):
   const hasRemoteHosts = remoteHosts.length > 0;
   const grouping = useMemo(() => effectiveGrouping(stored, hasRemoteHosts), [stored, hasRemoteHosts]);
   const hostOrder = useMemo(() => [LOCAL_HOST_ID, ...remoteHosts.map((host) => host.hostId)], [remoteHosts]);
+  const pathKey = useHostPathKey();
   const layout = useMemo(
-    () => sidebarLayout(entries, new Date(now), grouping, hostOrder),
-    [entries, now, grouping, hostOrder],
+    () => sidebarLayout(entries, new Date(now), grouping, hostOrder, pathKey),
+    [entries, now, grouping, hostOrder, pathKey],
   );
   return { layout, grouping, hostOrder, hasRemoteHosts };
 }

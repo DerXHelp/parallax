@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { EditorSettings } from '@shared/model';
+import { POSIX_PATHS } from '@shared/paths';
 import type { RegView } from '../lib/registry';
 import { createMemoryFs } from '../lib/windows';
 import { CommandError } from '../sync/ports';
 import {
+  LINUX_EDITOR_NAMES,
   createEditorFinder,
   detectEditors,
   editorArguments,
+  effectiveEditorPreset,
   findEditor,
   resolveEditorExecutable,
   type EditorLocatorDeps,
@@ -40,7 +43,15 @@ function deps(
     asked.push(`${key}@${String(view)}`);
     return Promise.resolve(table[`${key}@${String(view)}`] ?? null);
   };
-  return { regQuery: query(values), regKeyQuery: query(keys), fs, env: ENV, asked, touched: fs.touched };
+  return {
+    regQuery: query(values),
+    regKeyQuery: query(keys),
+    fs,
+    env: ENV,
+    platform: 'win32',
+    asked,
+    touched: fs.touched,
+  };
 }
 
 const editor = (p: Partial<EditorSettings> = {}): EditorSettings => ({
@@ -175,7 +186,11 @@ describe('createEditorFinder (R5-04)', () => {
     const asked = d.asked.length;
     expect(await resolveEditorExecutable(editor(), d, finder.find)).toBe(NPP);
     expect(d.asked).toHaveLength(asked);
-    expect(await detectEditors(editor(), d, finder.refresh)).toEqual({ notepadpp: NPP, vscode: null, custom: null });
+    expect(await detectEditors(editor(), d, finder.refresh)).toEqual({
+      notepadpp: NPP,
+      vscode: null,
+      custom: null,
+    });
     expect(d.asked.length).toBeGreaterThan(asked);
   });
 });
@@ -265,5 +280,111 @@ describe('detectEditors (editor.detect)', () => {
       custom: { executable: 'D:\\gone\\notepad++.exe', exists: false },
     });
     expect(await detectEditors(editor(), deps({}))).toEqual({ notepadpp: null, vscode: null, custom: null });
+  });
+});
+
+describe('Linux editor presets on PATH (WP-106, WP-100 §5.6)', () => {
+  const noRegistry = () => Promise.reject(new Error('no registry on Linux'));
+  function linux(files: readonly string[], notExecutable: readonly string[] = []) {
+    const fs = createMemoryFs(Object.fromEntries(files.map((file) => [file, ''])), {
+      rules: POSIX_PATHS,
+      notExecutable,
+    });
+    const locator: EditorLocatorDeps = {
+      regQuery: noRegistry,
+      regKeyQuery: noRegistry,
+      fs,
+      env: { PATH: '/home/demo/.local/bin:/usr/bin' },
+      platform: 'linux',
+    };
+    return { locator, fs };
+  }
+  const linuxEditor = (p: Partial<EditorSettings> = {}): EditorSettings => ({
+    preset: 'vscode',
+    executable: null,
+    args: [],
+    ...p,
+  });
+
+  it('each preset by its program names, first PATH entry first; executable files only', async () => {
+    expect(LINUX_EDITOR_NAMES.zed).toEqual(['zed', 'zeditor']);
+    const { locator } = linux(
+      [
+        '/home/demo/.local/bin/code',
+        '/usr/bin/code',
+        '/usr/bin/codium',
+        '/usr/bin/zeditor',
+        '/usr/bin/subl',
+        '/usr/bin/kate',
+        '/usr/bin/gnome-text-editor',
+        '/usr/bin/gedit',
+      ],
+      ['/home/demo/.local/bin/code'],
+    );
+    expect(await findEditor('vscode', locator)).toBe('/usr/bin/code');
+    expect(await findEditor('vscodium', locator)).toBe('/usr/bin/codium');
+    expect(await findEditor('zed', locator)).toBe('/usr/bin/zeditor');
+    expect(await findEditor('sublime', locator)).toBe('/usr/bin/subl');
+    expect(await findEditor('kate', locator)).toBe('/usr/bin/kate');
+    expect(await findEditor('gnome_text_editor', locator)).toBe('/usr/bin/gnome-text-editor');
+    expect(await findEditor('gedit', locator)).toBe('/usr/bin/gedit');
+    // Not offered on Linux.
+    expect(await findEditor('notepadpp', locator)).toBeNull();
+    expect(await findEditor('vscode', linux([]).locator)).toBeNull();
+  });
+
+  it('resolve: override, preset, custom; a preset the platform does not offer counts as system', async () => {
+    const { locator } = linux(['/usr/bin/kate', '/opt/editor/bin/myedit', '/usr/bin/bash']);
+    expect(await resolveEditorExecutable(linuxEditor({ preset: 'kate' }), locator)).toBe('/usr/bin/kate');
+    expect(
+      await resolveEditorExecutable(
+        linuxEditor({ preset: 'custom', executable: '/opt/editor/bin/myedit', args: ['{file}'] }),
+        locator,
+      ),
+    ).toBe('/opt/editor/bin/myedit');
+    // A shell is never an editor (block list), a relative path never.
+    for (const executable of ['/usr/bin/bash', 'myedit']) {
+      expect(
+        await errorPayload(resolveEditorExecutable(linuxEditor({ preset: 'custom', executable }), locator)),
+      ).toEqual({ code: 'EDITOR_NOT_FOUND', params: { preset: 'custom' } });
+    }
+    expect(effectiveEditorPreset('notepadpp', 'linux')).toBe('system');
+    expect(effectiveEditorPreset('gedit', 'linux')).toBe('gedit');
+    expect(effectiveEditorPreset('gedit', 'win32')).toBe('system');
+    expect(effectiveEditorPreset('notepadpp', 'win32')).toBe('notepadpp');
+    expect(
+      await errorPayload(resolveEditorExecutable(linuxEditor({ preset: 'notepadpp' }), locator)),
+    ).toEqual({
+      code: 'EDITOR_NOT_FOUND',
+      params: { preset: 'notepadpp' },
+    });
+    expect(await errorPayload(resolveEditorExecutable(linuxEditor({ preset: 'zed' }), locator))).toEqual({
+      code: 'EDITOR_NOT_FOUND',
+      params: { preset: 'zed' },
+    });
+  });
+
+  it('the finder caches a Linux hit; editor.detect answers no Notepad++ and VS Code from PATH', async () => {
+    const { locator, fs } = linux(['/usr/bin/code', '/opt/editor/bin/myedit']);
+    const finder = createEditorFinder({ now: () => 0 });
+    expect(await finder.find('vscode', locator)).toBe('/usr/bin/code');
+    const asked = fs.touched.length;
+    expect(await finder.find('vscode', locator)).toBe('/usr/bin/code');
+    // One existence check of the cached hit, no new PATH search.
+    expect(fs.touched.length).toBe(asked + 1);
+    expect(
+      await detectEditors(linuxEditor({ preset: 'custom', executable: '/opt/editor/bin/myedit' }), locator),
+    ).toEqual({
+      notepadpp: null,
+      vscode: '/usr/bin/code',
+      custom: { executable: '/opt/editor/bin/myedit', exists: true },
+    });
+    expect(editorArguments(linuxEditor({ preset: 'kate' }), '/home/demo/a b.ts', 3, 4)).toEqual([
+      '--line',
+      '3',
+      '--column',
+      '4',
+      '/home/demo/a b.ts',
+    ]);
   });
 });

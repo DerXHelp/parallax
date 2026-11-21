@@ -4,6 +4,7 @@ import type { SessionSummary, TranscriptItem, TurnSummary } from '@shared/model'
 import type { SessionViewState } from '@shared/sync';
 import { useI18n } from '@web/i18n';
 import { shortPath } from '@web/lib/path-display';
+import { useSessionPaths } from '@web/state/host-platform';
 import { useSessionSelector, useSummarySelector } from '@web/state/hooks';
 import { Button } from '@web/ui/button';
 import { IconButton } from '@web/ui/icon-button';
@@ -42,7 +43,8 @@ export function SinceLastVisit({
   const turnSummary = useSummarySelector(sessionKey, selectTurnSummary, null);
   const cwd = useSessionCwd(sessionKey);
   const settings = useTranscriptSettings();
-  const facts = useMemo(() => sinceFacts(items, since), [items, since]);
+  const rules = useSessionPaths(sessionKey);
+  const facts = useMemo(() => sinceFacts(items, since, rules), [items, since, rules]);
   if (facts === null) return null;
   const summary =
     turnSummary !== null && Date.parse(turnSummary.at) > Date.parse(since) ? turnSummary.text : null;

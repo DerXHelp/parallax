@@ -9,7 +9,7 @@
  *   limits (`perEntry` counts running and exited terminals until closed, plus opens in flight;
  *   `total` → TERMINAL_LIMIT_REACHED {scope, max}), `checkCwd`, the launch (`resolveShellLaunch`
  *   in mode `embedded`; SHELL_NOT_FOUND passes through), `pty.spawn` (a throw → TERMINAL_START_FAILED
- *   {reason}: the failed ConPTY step and code or a generic word, never a path). Errors go to the
+ *   {reason}: the failed ConPTY or Linux pty step and code or a generic word, never a path). Errors go to the
  *   requesting socket only (`error {requestId}`); success answers `opened` and pushes `terminals`
  *   to every socket of the entry. The client attaches explicitly afterwards.
  * - `attach`: lowest free channel 0–255 on that socket (a re-attach keeps its channel), `attached`,
@@ -43,6 +43,7 @@ import {
   TERMINAL_PROTOCOL_VERSION,
   encodeTerminalFrame,
   type TerminalClientMessage,
+  type TerminalCommand,
   type TerminalExitReason,
   type TerminalId,
   type TerminalInfo,
@@ -59,10 +60,12 @@ import { ConPtyError } from './conpty';
 import { createPoller } from './poller';
 import type {
   PtyProcess,
+  TerminalClaudeOpenResult,
   TerminalConnection,
   TerminalEndReason,
   TerminalService,
   TerminalServiceDeps,
+  TerminalOrigin,
   TerminalSink,
 } from './ports';
 import { createByteRing, type ByteRing } from './ring';
@@ -73,6 +76,10 @@ import {
   type GitLocatorDeps,
   type ShellLaunch,
 } from './shells';
+import { UnixPtyError } from './unixPty';
+
+/** Size of a terminal started by `openClaude` until a panel attaches with its own size (`attach` resizes). */
+export const CLAUDE_TERMINAL_SIZE = { cols: 120, rows: 30 } as const;
 
 /** Payload bytes of one binary output frame (the frame adds the channel byte). */
 export const TERMINAL_FRAME_BYTES = 64 * 1024 - 1;
@@ -115,9 +122,11 @@ export interface TerminalServiceOptions extends TerminalServiceDeps {
   launch?: TerminalLaunch;
   /** Default `checkCwd` of `lib/paths.ts`. */
   checkCwd?: (cwd: string) => Promise<void>;
-  /** For the default launch: base environment (default `process.env`), Git lookup seams. */
+  /** For the default launch: base environment (default `process.env`), Git and POSIX lookup seams. */
   env?: NodeJS.ProcessEnv;
   fs?: FsProbe;
+  /** WP-105: platform of the default launch (default `process.platform`). */
+  platform?: NodeJS.Platform;
   regKeyQuery?: RegKeyQuery;
   /** Shared with `createShellCommands` to reuse one Git cache. */
   gitFinder?: GitFinder;
@@ -125,6 +134,8 @@ export interface TerminalServiceOptions extends TerminalServiceDeps {
 
 interface Terminal {
   info: TerminalInfo;
+  /** WP-76 §B.13: started through remote access → ended by `closeRemote`. */
+  readonly origin: TerminalOrigin;
   readonly pty: PtyProcess;
   readonly ring: ByteRing;
   /** Sockets receiving its output → their channel for it. */
@@ -137,6 +148,8 @@ interface Terminal {
 
 interface Conn {
   readonly entryId: EntryId;
+  /** Terminals opened from this socket get it (WP-107: `remote` for the relay). */
+  readonly origin: TerminalOrigin;
   readonly sink: TerminalSink;
   closed: boolean;
   /** Attached terminals → channel. */
@@ -156,9 +169,11 @@ export function terminalTitle(raw: string | null): string | null {
   return title === '' ? null : title.slice(0, TERMINAL_LIMITS.titleMaxChars);
 }
 
-/** The failed step of a ConPTY start, or a generic word – never a path. */
+/** The failed step of a ConPTY or Linux pty start (WP-105), or a generic word – never a path. */
 export function startFailureReason(error: unknown): string {
-  if (error instanceof ConPtyError) return `${error.step} (${String(error.code)})`;
+  if (error instanceof ConPtyError || error instanceof UnixPtyError) {
+    return `${error.step} (${String(error.code)})`;
+  }
   return 'spawn';
 }
 
@@ -180,6 +195,8 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     ((kind, cwd, settings) =>
       resolveShellLaunch(kind, cwd, settings, 'embedded', {
         ...(options.env === undefined ? {} : { env: options.env }),
+        ...(options.fs === undefined ? {} : { fs: options.fs }),
+        ...(options.platform === undefined ? {} : { platform: options.platform }),
         gitDir: () => finder.find(settings.gitDir, locator()),
       }));
 
@@ -189,6 +206,8 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
   /** Opens in flight (reserved against the limits). */
   const pendingOpens = new Map<EntryId, number>();
   let pendingTotal = 0;
+  /** Security review WP-109: +1 per `closeRemote` (remote starts in flight compare it). */
+  let remoteEpoch = 0;
   /** Bumped by `closeEntry`: an open in flight for an older epoch fails. */
   const epochs = new Map<EntryId, { epoch: number; reason: TerminalEndReason }>();
   /** Liveness watches after `close()` (awaited by `closeAll`). */
@@ -493,17 +512,38 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     return null;
   };
 
-  const startTerminal = async (conn: Conn, message: OpenMessage): Promise<void> => {
-    const { requestId } = message;
-    const entryId = conn.entryId;
-    const fail = (error: ErrorPayload): void => {
-      sendError(conn, error, { requestId });
-    };
+  /** What a start needs besides the entry: how to resolve the program, and the terminal's facts. */
+  interface StartPlan {
+    readonly entryId: EntryId;
+    readonly resolve: (cwd: string) => Promise<ShellLaunch>;
+    readonly shell: ShellKind;
+    readonly command: TerminalCommand;
+    readonly origin: TerminalOrigin;
+    readonly cols: number;
+    readonly rows: number;
+    /** False once nobody waits for the result any more (the socket closed): nothing starts, no error. */
+    readonly wanted: () => boolean;
+    /** Origin `remote`: `remoteEpoch` when the request arrived (default: at the start of this call). */
+    readonly remoteSince?: number;
+  }
+
+  type StartOutcome =
+    | { kind: 'opened'; info: TerminalInfo; pid: number | null }
+    | { kind: 'failed'; error: ErrorPayload }
+    | { kind: 'dropped' };
+
+  /**
+   * Checks 1–7 of `open` and the spawn: admission, `checkCwd`, the launch, the state again after the
+   * awaits, `pty.spawn`; registers the terminal and pushes the list. Never throws.
+   */
+  const startTerminal = async (plan: StartPlan): Promise<StartOutcome> => {
+    const { entryId } = plan;
+    // Security review WP-109: a remote start from before the last `closeRemote` never starts.
+    const remoteSince = plan.remoteSince ?? remoteEpoch;
+    const revoked = (): boolean => plan.origin === 'remote' && remoteEpoch !== remoteSince;
+    if (revoked()) return { kind: 'failed', error: makeError('HOST_REVOKED') };
     const refused = admission(entryId);
-    if (refused !== null) {
-      fail(refused);
-      return;
-    }
+    if (refused !== null) return { kind: 'failed', error: refused };
     // admission() saw the entry; a null here would be a race with removal (checked again below).
     const cwd = options.entry(entryId)?.cwd ?? '';
     const epoch = epochs.get(entryId)?.epoch ?? 0;
@@ -512,22 +552,18 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
       try {
         await checkCwd(cwd);
       } catch (error) {
-        fail(checkFailure(error, 'cwd'));
-        return;
+        return { kind: 'failed', error: checkFailure(error, 'cwd') };
       }
       let launch: ShellLaunch;
       try {
-        launch = await launchShell(message.shell, cwd, options.settings());
+        launch = await plan.resolve(cwd);
       } catch (error) {
-        fail(checkFailure(error, 'launch'));
-        return;
+        return { kind: 'failed', error: checkFailure(error, 'launch') };
       }
       const late = stillAllowed(entryId, epoch);
-      if (late !== null) {
-        fail(late);
-        return;
-      }
-      if (conn.closed || factory === null) return;
+      if (late !== null) return { kind: 'failed', error: late };
+      if (revoked()) return { kind: 'failed', error: makeError('HOST_REVOKED') };
+      if (!plan.wanted() || factory === null) return { kind: 'dropped' };
       let pty: PtyProcess;
       try {
         pty = factory.spawn({
@@ -535,42 +571,75 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
           args: launch.args,
           cwd,
           env: launch.env,
-          cols: message.cols,
-          rows: message.rows,
+          cols: plan.cols,
+          rows: plan.rows,
         });
       } catch (error) {
         const reason = startFailureReason(error);
-        log.warn({ err: error, shell: message.shell, reason }, 'terminal start failed');
-        fail(makeError('TERMINAL_START_FAILED', { reason }));
-        return;
+        // A claude start carries the profile's env: its error text stays out of the log (only the step).
+        const err = plan.command === 'shell' ? { err: error } : {};
+        log.warn({ ...err, shell: plan.shell, command: plan.command, reason }, 'terminal start failed');
+        return { kind: 'failed', error: makeError('TERMINAL_START_FAILED', { reason }) };
       }
       const info: TerminalInfo = {
         terminalId: newId('tm'),
         entryId,
-        shell: message.shell,
+        shell: plan.shell,
         cwd,
         createdAt: new Date(now()).toISOString(),
-        cols: message.cols,
-        rows: message.rows,
+        cols: plan.cols,
+        rows: plan.rows,
         state: 'running',
         exitCode: null,
         title: null,
+        command: plan.command,
       };
       terminals.set(info.terminalId, {
         info,
+        origin: plan.origin,
         pty,
         ring: createByteRing(),
         attached: new Map(),
         ending: null,
         drained: false,
       });
-      log.info({ terminalId: info.terminalId, entryId, shell: info.shell, pid: pty.pid }, 'terminal opened');
-      send(conn, { type: 'opened', requestId, terminal: { ...info } });
-      pushList(entryId);
-      poller.wake();
+      log.info(
+        {
+          terminalId: info.terminalId,
+          entryId,
+          shell: info.shell,
+          command: info.command,
+          origin: plan.origin,
+          pid: pty.pid,
+        },
+        'terminal opened',
+      );
+      return { kind: 'opened', info, pid: pty.pid };
     } finally {
       reserve(entryId, -1);
     }
+  };
+
+  /** `open` from a socket: starts the shell and answers `opened` (or `error` with the request id). */
+  const openShell = async (conn: Conn, message: OpenMessage): Promise<void> => {
+    const outcome = await startTerminal({
+      entryId: conn.entryId,
+      resolve: (cwd) => launchShell(message.shell, cwd, options.settings()),
+      shell: message.shell,
+      command: 'shell',
+      origin: conn.origin,
+      cols: message.cols,
+      rows: message.rows,
+      wanted: () => !conn.closed,
+    });
+    if (outcome.kind === 'dropped') return;
+    if (outcome.kind === 'failed') {
+      sendError(conn, outcome.error, { requestId: message.requestId });
+      return;
+    }
+    send(conn, { type: 'opened', requestId: message.requestId, terminal: { ...outcome.info } });
+    pushList(conn.entryId);
+    poller.wake();
   };
 
   /** The terminal if it belongs to the socket's entry; otherwise answers TERMINAL_NOT_FOUND. */
@@ -623,7 +692,7 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     if (conn.closed) return;
     switch (message.type) {
       case 'open':
-        startTerminal(conn, message).catch((error: unknown) => {
+        openShell(conn, message).catch((error: unknown) => {
           log.error({ err: error }, 'terminal open failed');
           sendError(conn, makeError('TERMINAL_START_FAILED', { reason: 'internal' }), {
             requestId: message.requestId,
@@ -693,9 +762,9 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
     get available() {
       return factory !== null;
     },
-    connect(entryId, sink): TerminalConnection | ErrorPayload {
+    connect(entryId, sink, origin = 'local'): TerminalConnection | ErrorPayload {
       if (options.entry(entryId) === null) return makeError('ENTRY_NOT_FOUND');
-      const conn: Conn = { entryId, sink, closed: false, channels: new Map(), pausedSince: null };
+      const conn: Conn = { entryId, origin, sink, closed: false, channels: new Map(), pausedSince: null };
       conns.add(conn);
       const available = canStart();
       send(conn, {
@@ -716,6 +785,48 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
       };
     },
     list,
+    async openClaude(entryId, launch, origin = 'local', since?: number): Promise<TerminalClaudeOpenResult> {
+      try {
+        const outcome = await startTerminal({
+          entryId,
+          // A copy: the spec's arrays and env stay the caller's.
+          resolve: () =>
+            Promise.resolve({
+              executablePath: launch.executablePath,
+              args: [...launch.args],
+              env: { ...launch.env },
+            }),
+          shell: options.settings().defaultShell,
+          command: 'claude',
+          origin,
+          ...CLAUDE_TERMINAL_SIZE,
+          wanted: () => true,
+          ...(since === undefined ? {} : { remoteSince: since }),
+        });
+        if (outcome.kind === 'failed') return outcome;
+        if (outcome.kind === 'dropped') return { kind: 'failed', error: unavailable() };
+        pushList(entryId);
+        poller.wake();
+        return { kind: 'opened', terminalId: outcome.info.terminalId, pid: outcome.pid };
+      } catch (error) {
+        // Never the launch in the log: its env holds the profile's secrets.
+        log.error({ err: error, entryId }, 'claude terminal open failed');
+        return { kind: 'failed', error: makeError('TERMINAL_START_FAILED', { reason: 'internal' }) };
+      }
+    },
+    claudeState(terminalId) {
+      const t = terminals.get(terminalId);
+      return t?.info.state === 'running' && t.ending === null ? 'running' : 'ended';
+    },
+    remoteEpoch: () => remoteEpoch,
+    closeRemote() {
+      remoteEpoch += 1;
+      const remote = [...terminals.values()].filter((t) => t.origin === 'remote');
+      const entries = new Set(remote.map((t) => t.info.entryId));
+      for (const t of remote) endTerminal(t, 'closed');
+      for (const entryId of entries) pushList(entryId);
+      if (remote.length > 0) log.info({ count: remote.length }, 'remote terminals closed');
+    },
     closeEntry(entryId, reason) {
       epochs.set(entryId, { epoch: (epochs.get(entryId)?.epoch ?? 0) + 1, reason });
       const ended = entryTerminals(entryId);

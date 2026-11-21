@@ -81,6 +81,22 @@ export const de: typeof en = {
       'Registriert den Linktyp „parallax:“ für deinen Windows-Benutzer; ein Klick öffnet die Session in einem neuen App-Fenster.',
     openOnClickForeign:
       'Für „parallax:“-Links ist bei deinem Windows-Benutzer schon ein anderes Programm registriert. Parallax ersetzt es nicht.',
+    linux: {
+      eventsHint:
+        'Je Ereignis: eine Desktop-Benachrichtigung und ein Ton. Parallax zeigt jede Benachrichtigung nur einmal.',
+      eventsHintNoDesktop:
+        'Je Ereignis: ein Ton. Dieser Rechner hat keinen Desktop, daher gibt es keine Desktop-Benachrichtigungen.',
+      toast: 'Desktop-Benachrichtigung',
+      toastFor: 'Desktop-Benachrichtigung: {event}',
+      doNotDisturbHint:
+        'Keine Desktop-Benachrichtigungen und keine Töne. Hinweise im Fenster und die Anzahl im Fenstertitel bleiben.',
+      focusedElsewhereSystem: 'Desktop-Benachrichtigung zeigen',
+      openOnClick: 'Klick auf eine Desktop-Benachrichtigung öffnet die Session',
+      openOnClickHint:
+        'Registriert den Linktyp „parallax:“ für deinen Benutzer; ein Klick öffnet die Session in einem neuen App-Fenster.',
+      openOnClickForeign:
+        'Für „parallax:“-Links ist bei deinem Benutzer schon ein anderes Programm registriert. Parallax ersetzt es nicht.',
+    },
   },
   sessions: {
     idleSleep: 'Untätige Sessions schlafen legen',
@@ -233,6 +249,8 @@ export const de: typeof en = {
         replaceConfirm: 'Neuen Rechner koppeln',
         keep: 'Kopplung behalten',
         failed: 'Das Koppeln konnte nicht starten.',
+        level: 'Zugriff des gekoppelten Rechners',
+        levelOnCard: 'Zugriff',
       },
       peer: {
         heading: 'Gekoppelter Rechner',
@@ -267,6 +285,18 @@ export const de: typeof en = {
         renewed: 'Der Schlüssel wurde erneuert.',
         cancel: 'Abbrechen',
         failed: 'Die Aktion ist fehlgeschlagen.',
+        level: 'Zugriff',
+        raise: 'Verwalten erlauben…',
+        lower: 'Nur steuern…',
+        raiseTitle: '{name} diesen Rechner verwalten lassen?',
+        raiseBody:
+          '{name} darf dann auch Einstellungen, Profile (mit ihren Umgebungswerten), Updates und den Server dieses Rechners ändern. Seine Verbindungen werden einmal getrennt und verbinden sich mit dem neuen Zugriff neu.',
+        raiseConfirm: 'Verwalten erlauben',
+        lowerTitle: '{name} diesen Rechner nur steuern lassen?',
+        lowerBody:
+          'Einstellungen, Profile, Updates und der Server lassen sich dann nur an diesem Rechner ändern. Die Verbindungen von {name} werden einmal getrennt und verbinden sich neu.',
+        lowerConfirm: 'Nur steuern',
+        levelChanged: 'Der Zugriff wurde geändert.',
       },
       listener: {
         heading: 'Port und Adresse',
@@ -310,6 +340,9 @@ export const de: typeof en = {
           connected: 'Verbunden',
           disconnected: 'Getrennt',
           unpaired: 'Kopplung aufgehoben',
+          level_changed: 'Stufe geändert',
+          manage_command: 'Verwaltung',
+          terminal_opened: 'Terminal geöffnet',
         },
       },
     },
@@ -395,6 +428,14 @@ export const de: typeof en = {
         doneUnreachable: '{name} wurde hier entfernt. Hebe die Kopplung auf {name} selbst auf.',
       },
     },
+    levels: {
+      control: 'Steuern',
+      controlHint:
+        'Sessions, Dateien und das Terminal. Über das Terminal kann der andere Rechner alles, was dein Benutzerkonto hier darf – kopple nur eigene Rechner.',
+      manage: 'Verwalten',
+      manageHint:
+        'Dazu Einstellungen, Profile (mit ihren Umgebungswerten), Updates, der Server und diese Kopplung. Nur nötig, wenn dieser Rechner ohne eigenen Desktop läuft.',
+    },
   },
   files: {
     editor: 'Editor für „Im Editor öffnen“',
@@ -405,6 +446,12 @@ export const de: typeof en = {
       vscode: 'Visual Studio Code',
       custom: 'Eigenes Programm',
       system: 'Windows-Standardprogramm',
+      vscodium: 'VSCodium',
+      zed: 'Zed',
+      sublime: 'Sublime Text',
+      kate: 'Kate',
+      gnome_text_editor: 'GNOME Text Editor',
+      gedit: 'gedit',
     },
     defaultBadge: 'Standard',
     detecting: 'Programm wird gesucht…',
@@ -438,6 +485,22 @@ export const de: typeof en = {
       too_many: 'Höchstens {max} Argumente.',
       invalid: 'Dieser Eintrag ist ungültig.',
     },
+    posix: {
+      system: 'Standardprogramm des Desktops',
+      systemHint:
+        'Öffnet eine Datei mit dem Programm, das der Desktop ihrem Typ zuordnet – nur für harmlose Typen ({extensions}). Andere Dateien lassen sich so nicht öffnen.',
+      path: 'Programm',
+      pathOptionalHint:
+        'Leer = die Installation, die Parallax gefunden hat. Gib den vollständigen Pfad eines Programms an, um ein anderes zu nutzen.',
+      customHint: 'Der vollständige Pfad des Programms auf diesem Rechner.',
+      pathPlaceholder: '/usr/bin/editor',
+      pathIssue: 'Gib einen vollständigen Pfad an (etwa /usr/bin/…) – keinen relativen Pfad.',
+      noEditor: 'Dieser Rechner hat keinen Desktop: Dateien öffnen sich im Viewer von Parallax.',
+      editorHint:
+        'Parallax öffnet eine Datei in diesem Programm an der genannten Zeile. Standard ist das Standardprogramm des Desktops; die Änderung gilt ab der nächsten geöffneten Datei.',
+      blockedIssue:
+        'Dieses Programm kann nicht der Editor sein (Shells, Interpreter, Terminal-Emulatoren und Öffner wie xdg-open sind gesperrt).',
+    },
   },
   console: {
     defaultShell: 'Standard-Shell',
@@ -447,6 +510,11 @@ export const de: typeof en = {
       cmd: 'Eingabeaufforderung (cmd)',
       powershell: 'Windows PowerShell',
       gitbash: 'Git Bash',
+      login: 'Login-Shell',
+      bash: 'Bash',
+      zsh: 'Zsh',
+      fish: 'fish',
+      pwsh: 'PowerShell 7',
     },
     defaultBadge: 'Standard',
     gitBashWindow: 'Fenster für Git Bash',
@@ -485,5 +553,11 @@ export const de: typeof en = {
     },
     locked:
       'Töne aktivieren: Klicke irgendwo in dieses Fenster oder drücke eine Taste – Browser spielen Töne erst danach ab.',
+  },
+  manage: {
+    computer: 'Rechner',
+    thisComputer: 'Dieser Rechner',
+    managed: '{name} (verwaltet)',
+    hint: 'Einstellungen von {name}: Jede Änderung wird dort gespeichert. Profile und Updates von {name} zeigt diese Ansicht noch nicht.',
   },
 };

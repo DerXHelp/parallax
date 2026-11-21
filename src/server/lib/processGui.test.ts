@@ -100,10 +100,136 @@ const EDITOR = 'C:\\Program Files\\Notepad++\\notepad++.exe';
 
 describe('guiEnvironment', () => {
   it('drops Claude session markers, every PARALLAX*, the pnpm run state and (inside a Claude session) tool-shell settings', () => {
-    expect(guiEnvironment(ENV)).toEqual(KEPT_ENV);
+    expect(guiEnvironment(ENV, 'win32')).toEqual(KEPT_ENV);
     // Outside a Claude session the tool-shell names are the user's own.
     const { CLAUDECODE: _drop, ...noSession } = ENV;
-    expect(guiEnvironment(noSession)).toMatchObject({ GIT_TERMINAL_PROMPT: '0', NO_COLOR: '1' });
+    expect(guiEnvironment(noSession, 'win32')).toMatchObject({ GIT_TERMINAL_PROMPT: '0', NO_COLOR: '1' });
+    // Windows names have no case.
+    expect(guiEnvironment({ claudecode: '1', no_color: '1', Path: 'x' }, 'win32')).toEqual({ Path: 'x' });
+  });
+
+  it('POSIX (WP-103): the session marker and the tool-shell names count in their exact spelling', () => {
+    const env = {
+      PATH: '/usr/bin',
+      HOME: '/home/u',
+      CLAUDECODE: '1',
+      PARALLAX_HOME: '/tmp/px',
+      GIT_TERMINAL_PROMPT: '0',
+      git_terminal_prompt: 'own',
+      NO_COLOR: '1',
+    };
+    expect(guiEnvironment(env, 'linux')).toEqual({
+      PATH: '/usr/bin',
+      HOME: '/home/u',
+      git_terminal_prompt: 'own',
+    });
+    // A lower-case `claudecode` is no Claude session (it is still removed: the removal rules take any spelling).
+    expect(guiEnvironment({ claudecode: '1', NO_COLOR: '1' }, 'linux')).toEqual({ NO_COLOR: '1' });
+  });
+});
+
+describe('spawnGui on POSIX (WP-103: absolute program, POSIX block list, no PE check)', () => {
+  const POSIX_ENV = {
+    PATH: '/usr/bin',
+    HOME: '/home/u',
+    CLAUDECODE: '1',
+    PARALLAX_ENTRY_ID: 'en_x',
+    DISPLAY: ':0',
+  };
+  const posix = (spawn: GuiSpawnFn, onRead?: () => void, links: Record<string, string> = {}) => ({
+    cwd: '/home/u/project',
+    env: POSIX_ENV,
+    spawn,
+    readHead: () => {
+      onRead?.();
+      return Promise.resolve(Buffer.from('#!/bin/sh'));
+    },
+    realpath: (file: string) => Promise.resolve(links[file] ?? file),
+    platform: 'linux' as const,
+  });
+  // Absolute and not on this machine in any case (a Linux host checks an existing file's x bit).
+  const GEDIT = '/opt/parallax-test/bin/gedit';
+
+  it('starts the program detached in its own session with exactly these options – no header read', async () => {
+    const spawn = fakeSpawn();
+    let reads = 0;
+    await spawnGui(
+      GEDIT,
+      ['+12', '/home/u/project/a file.txt'],
+      posix(spawn, () => (reads += 1)),
+    );
+    expect(spawn.calls).toEqual([
+      {
+        file: GEDIT,
+        args: ['+12', '/home/u/project/a file.txt'],
+        options: {
+          cwd: '/home/u/project',
+          env: { PATH: '/usr/bin', HOME: '/home/u', DISPLAY: ':0' },
+          shell: false,
+          windowsHide: false,
+          detached: true,
+          stdio: 'ignore',
+        },
+      },
+    ]);
+    expect(spawn.unrefs()).toBe(1);
+    expect(reads).toBe(0);
+  });
+
+  it.each(['gedit', 'bin/gedit', './gedit', 'C:\\x\\gedit.exe', '/proc/self/exe', '/opt/x/../gedit', ''])(
+    'OPEN_FAILED path for %j – nothing started',
+    async (file) => {
+      const spawn = fakeSpawn();
+      expect(await openFailure(spawnGui(file, [], posix(spawn)))).toEqual({
+        code: 'OPEN_FAILED',
+        params: { reason: 'path' },
+      });
+      expect(spawn.calls).toEqual([]);
+    },
+  );
+
+  it.each([
+    '/opt/parallax-test/bin/bash',
+    '/opt/parallax-test/bin/python3',
+    '/opt/parallax-test/bin/python3.12',
+    '/opt/parallax-test/bin/xdg-open',
+    '/opt/parallax-test/bin/gnome-terminal',
+    '/opt/parallax-test/bin/env',
+    '/opt/parallax-test/bin/Node',
+  ])('OPEN_FAILED blocked for %s', async (file) => {
+    const spawn = fakeSpawn();
+    expect(await openFailure(spawnGui(file, [], posix(spawn)))).toEqual({
+      code: 'OPEN_FAILED',
+      params: { reason: 'blocked' },
+    });
+    expect(spawn.calls).toEqual([]);
+  });
+
+  it('a spawn error → OPEN_FAILED {reason}', async () => {
+    const spawn = fakeSpawn(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    expect(await openFailure(spawnGui(GEDIT, [], posix(spawn)))).toEqual({
+      code: 'OPEN_FAILED',
+      params: { reason: 'ENOENT' },
+    });
+  });
+
+  it('a harmless name that links to a blocked program is blocked; a snap link starts (review WP-109)', async () => {
+    const spawn = fakeSpawn();
+    const notes = '/home/u/bin/notes';
+    expect(
+      await openFailure(spawnGui(notes, [], posix(spawn, undefined, { [notes]: '/usr/bin/python3.12' }))),
+    ).toEqual({ code: 'OPEN_FAILED', params: { reason: 'blocked' } });
+    expect(spawn.calls).toEqual([]);
+    // `/snap/bin/code` → `/usr/bin/snap`: snap starts the installed snap named like the link.
+    await spawnGui('/snap/bin/code', [], posix(spawn, undefined, { '/snap/bin/code': '/usr/bin/snap' }));
+    expect(spawn.calls.map((call) => call.file)).toEqual(['/snap/bin/code']);
+    // A link that cannot be resolved (gone meanwhile) starts nothing.
+    const gone = () => Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    expect(await openFailure(spawnGui(GEDIT, [], { ...posix(spawn), realpath: gone }))).toEqual({
+      code: 'OPEN_FAILED',
+      params: { reason: 'ENOENT' },
+    });
+    expect(spawn.calls).toHaveLength(1);
   });
 });
 

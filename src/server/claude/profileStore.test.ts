@@ -43,6 +43,7 @@ const issueContext = (): ProfileIssueContext => ({
   env: { USERPROFILE: 'C:\\Users\\u' },
   persistentEnv: new Map(),
   exists: (file) => file === EXE,
+  platform: 'win32',
 });
 
 async function open(home: string, warnings = createStoreWarnings()): Promise<PersistentProfileStore> {

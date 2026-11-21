@@ -29,6 +29,20 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
   Nachrichtenfeld; die Shells laufen weiter, wenn das Panel schließt, und zeigen beim Wiederöffnen ihren Verlauf (WP-99).
 - Terminal-Tabs lassen sich per Doppelklick, F2 oder Kontextmenü umbenennen und per Ziehen verschieben; Name und
   Reihenfolge gelten in allen Fenstern (WP-99).
+- Parallax läuft unter Ubuntu 24.04 und 26.04 (x64): eigenes Paket `parallax-<v>-linux-x64.tar.gz` mit Installer,
+  Fenster in Chrome oder Chromium und Update in der App wie unter Windows (WP-100…108).
+- Unter Linux laufen im Terminal-Tab die Login-Shell, bash, zsh oder fish; Konsolen- und Shell-Fenster öffnen im
+  Terminal-Emulator, dazu Benachrichtigungen, Eintrag im Programmmenü, Autostart und `parallax:`-Links (WP-105, WP-106).
+- „Im Terminal fortsetzen“ übergibt eine Session an `claude --resume` in einem Terminal-Tab; Parallax holt sie zurück,
+  sobald `claude` dort endet (WP-105).
+- Das Terminal gibt es auch für Sessions eines gekoppelten Rechners, über die Kopplung (WP-105).
+- Server-Modus: `parallax --server` läuft ohne Fenster und ohne Desktop-Aktionen, als systemd-Benutzerdienst mit
+  `parallax service install`, gesteuert von einem anderen Rechner über „Mehrere Rechner“; ein Update in der App lässt
+  den Dienst laufen (WP-107, WP-109).
+- `parallax remote …` schaltet „Freigeben“ ein und koppelt Rechner auf der Kommandozeile; die neue Stufe „Verwalten“
+  erlaubt einem gekoppelten Rechner zusätzlich Einstellungen und Server dieses Rechners (WP-107).
+- Unter Linux liegen die Schlüssel von „Mehrere Rechner“ im Schlüsselbund, mit `systemd-creds` oder auf Wunsch in einer
+  Datei, die nur der eigene Benutzer lesen darf (WP-107).
 
 ### Geändert
 - Die Oberfläche ist standardmäßig 10 % größer: Zoom 100 % sieht aus wie bisher 110 %. Wer bisher mit 110 % gearbeitet
@@ -36,8 +50,12 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 - Interne Hinweise von `claude`, die nur andere Programme betreffen, erscheinen nicht mehr als „Unknown event“ (WP-95).
 - Gibt Parallax einen Titel an Claude Code weiter, zeigt das Transkript eine ruhige Zeile „Titel an Claude Code
   übergeben“ statt einer Nachricht, die aussieht, als hättest du sie geschrieben (WP-95).
-- Rechner, die sich mit „Mehrere Rechner“ gegenseitig steuern, brauchen dafür beide diese Version (Protokollversion 6,
-  WP-95).
+- Rechner, die sich mit „Mehrere Rechner“ gegenseitig steuern, brauchen dafür beide diese Version (Protokollversion 7,
+  WP-95, WP-102).
+- Optionen, die ein Rechner nicht bietet (Konsolenfenster, Editor, Shell-Fenster, Benachrichtigungen), blendet Parallax
+  je Rechner aus (WP-104).
+- Ein gekoppelter Rechner kann keine Anmeldung im Browser des freigebenden Rechners mehr öffnen und dort weder Editor
+  noch Konsole einstellen; ein Terminal-Start nach dem Aufheben der Kopplung wird abgelehnt (WP-109).
 - In einem nicht maximierten Fenster schiebt das Seitenpanel das Transkript zur Seite, statt darüber zu liegen; nur in
   sehr schmalen Fenstern liegt es noch darüber (WP-99).
 - „Neue Session“ steht in der Seitenleiste vor dem Knopf für die Gruppierung (WP-99).

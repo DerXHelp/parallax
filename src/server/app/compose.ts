@@ -41,12 +41,13 @@
  * → release the home lock → close the log → `exit(code)`.
  */
 import { existsSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { Logger } from 'pino';
 import type { EntryId, ProfileId } from '@shared/common';
 import { REMOTE_PATHS, serverOrigin } from '@shared/http';
-import type { Settings } from '@shared/model';
+import { WINDOWS_HOST_CAPABILITIES, type HostCapabilities, type Settings } from '@shared/model';
 import { WS_CLOSE, type SessionOp } from '@shared/protocol';
 import { createFakeBackend } from '../backend/fakeBackend';
 import { createFakeClaudeIntegration } from '../backend/fake/integration';
@@ -87,6 +88,8 @@ import {
 import { settleWithin, toError } from '../lib/async';
 import type { HomeLock } from '../lib/homeLock';
 import { logger as rootLogger, type LoggingHandle } from '../lib/logger';
+import { HOST_PATH_RULES } from '../lib/paths';
+import { hostCapabilities } from '../lib/platform';
 import { errnoCode, killProcessTree } from '../lib/process';
 import { openCatalogStore } from '../sessions/catalogStore';
 import { createCommandCatalogStore, type CommandCatalogStore } from '../sessions/commandCatalog';
@@ -102,7 +105,8 @@ import { createMultiHostService } from '../multihost/service';
 import type { RemoteHubAttach } from '../remote/ports';
 import { createRemoteAccessService, type RemoteAccess } from '../remote/service';
 import type { KeyStore } from '../secure/ports';
-import { createDpapiKeyStore } from '../secure/keyStore';
+import { createPlatformKeyStore, type PlatformKeyStore } from '../secure/platformKeyStore';
+import { narrowPrivateDir } from '../secure/privateFiles';
 import { createDecisionStore } from '../store/decisions';
 import { StoreVersionTooNewError, createStoreWarnings, type StoreWarningRegistry } from '../store/jsonStore';
 import { openRegistryStore } from '../store/registry';
@@ -112,12 +116,13 @@ import { createSyncHub, type SyncHub } from '../sync/hub';
 import type { UpdateService } from '../update/ports';
 import { createUpdateService } from '../update/service';
 import type { AttachmentFileStore, SessionPublisher } from '../sync/ports';
-import { createConsoleLauncher } from '../system/console';
+import { consoleFailed } from '../system/console';
 import { createFakeConsoleLauncher, FAKE_CONSOLE_RUN_MS } from '../system/fakeConsole';
 import { createSystemIntegration } from '../system/index';
+import { createPlatformConsoleLauncher, linuxDesktopCapabilities } from '../system/platform';
 import type { ConsoleLauncher, SystemIntegration } from '../system/ports';
-import { conPtyUnavailableReason, createConPtyFactory } from '../terminal/conpty';
 import { createFakePtyFactory } from '../terminal/fakePty';
+import { createPlatformPty } from '../terminal/platformPty';
 import type { TerminalService } from '../terminal/ports';
 import { createTerminalService } from '../terminal/service';
 import { createRecordingShellLauncher, createShellCommands } from '../terminal/shellCommands';
@@ -299,8 +304,47 @@ async function openStores(config: ServerConfig, instance: ServerInstance, log: L
 interface Engine {
   backend: AgentBackend;
   claude: ClaudeIntegration;
-  /** `session.openExternal` (ADR-104). */
-  consoleLauncher: ConsoleLauncher;
+  /**
+   * `session.openExternal` (ADR-104) and the shell window (WP-97): PowerShell on Windows, a terminal
+   * emulator on a Linux desktop (WP-106); null without a desktop (server mode) – the engine then
+   * answers EXTERNAL_CONSOLE_FAILED {reason: 'unavailable'} and the shell window SHELL_OPEN_FAILED.
+   */
+  consoleLauncher: ConsoleLauncher | null;
+}
+
+/** The shell window's launcher where the host has no console window (server mode, WP-106). */
+const NO_CONSOLE_WINDOW: ConsoleLauncher = {
+  open: () => Promise.resolve(consoleFailed('no desktop on this computer')),
+  state: () => Promise.resolve('unknown'),
+};
+
+/**
+ * `HostState.capabilities` (WP-103/106): Windows everything; Linux with the SDK backend what the
+ * desktop offers (`linuxDesktopCapabilities`); the FakeBackend (dev, E2E) and other platforms keep
+ * `hostCapabilities()`; server mode (`--desktop=off`) nothing.
+ */
+const NO_DESKTOP_CAPABILITIES: HostCapabilities = {
+  desktop: false,
+  externalConsole: false,
+  shellWindow: false,
+  editor: false,
+  fileManager: false,
+  autostart: false,
+  protocolHandler: false,
+};
+
+export async function desktopCapabilities(
+  config: Pick<ServerConfig, 'backend' | 'desktop'>,
+  terminalEmulator: () => string | null,
+  platform: NodeJS.Platform = process.platform,
+): Promise<HostCapabilities> {
+  // Server mode (WP-109): no desktop actions at all – other computers steer this one.
+  if (config.desktop === 'off') return { ...NO_DESKTOP_CAPABILITIES };
+  // The FakeBackend records every desktop action (nothing opens): it offers all of them on every
+  // platform, so dev and E2E see the whole UI also on Linux without a desktop (WP-109).
+  if (config.backend === 'fake') return { ...WINDOWS_HOST_CAPABILITIES };
+  if (platform !== 'linux') return hostCapabilities(platform);
+  return linuxDesktopCapabilities({ terminalEmulator: terminalEmulator() });
 }
 
 /** The session id after `--resume` in a console spec (fake console), or null. */
@@ -397,6 +441,16 @@ export function observedPublisher(
   };
 }
 
+/** 102e: `HostState.homeDir` – the user's home folder if the host's path rules accept it, else null. */
+export function safeHomeDir(home: () => string = os.homedir): string | null {
+  try {
+    const dir = home();
+    return dir !== '' && HOST_PATH_RULES.isSafe(dir) ? dir : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * WP-99 (ADR-239): ends an entry's terminals when the engine archives it (a summary with `archived`)
  * or removes it (`removeSummary`); everything else passes through unchanged. `closeEntry` of an entry
@@ -446,6 +500,8 @@ async function createEngine(
   instance: ServerInstance,
   fakeSpeed: number,
   profiles: PersistentProfileStore,
+  /** Linux: `console.terminalEmulator` of the settings at the time of the click (WP-106). */
+  terminalEmulator: () => string | null,
 ): Promise<Engine> {
   if (config.backend === 'fake') {
     const fakeBackend = createFakeBackend({
@@ -470,7 +526,8 @@ async function createEngine(
   return {
     backend: createSdkBackend(),
     claude: createClaudeIntegration({ appVersion: instance.serverVersion, profiles }),
-    consoleLauncher: createConsoleLauncher(),
+    // Server mode (WP-109): no console window (EXTERNAL_CONSOLE_FAILED {reason: 'unavailable'}).
+    consoleLauncher: config.desktop === 'off' ? null : createPlatformConsoleLauncher({ terminalEmulator }),
   };
 }
 
@@ -497,6 +554,9 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   const instance = createServerInstance();
   let stores: Stores;
   try {
+    // WP-107/109 (WP-76 §B.14): on POSIX the data folder is the user's alone (keys, tokens, sessions) –
+    // narrowed BEFORE the first store writes (security review WP-109: the cookie secret of a first start).
+    await narrowPrivateDir(config.home);
     stores = await openStores(config, instance, log);
   } catch (error) {
     if (error instanceof StoreVersionTooNewError) {
@@ -521,6 +581,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   let restarting = false;
   /** WP-78a: remote access of a sharing computer and the role of "Several computers". */
   let remoteAccess: RemoteAccess | null = null;
+  let ownKeyStore: PlatformKeyStore | null = null;
   let multiHost: MultiHostService | null = null;
   /** WP-79: the computers this one controls (list, watchers, forwarder). */
   let controlHosts: Hosts | null = null;
@@ -580,6 +641,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         // WP-79: forwarder windows and watchers go before the http step (idempotent).
         await controlHosts?.close();
         await remoteAccess?.close();
+        // WP-107: the Secret Service worker of the key store.
+        ownKeyStore?.close();
       },
     },
     { name: 'http', run: () => app?.close() },
@@ -627,7 +690,13 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   };
 
   try {
-    engine = await createEngine(config, instance, options.fakeSpeed ?? DEFAULT_FAKE_SPEED, stores.profiles);
+    engine = await createEngine(
+      config,
+      instance,
+      options.fakeSpeed ?? DEFAULT_FAKE_SPEED,
+      stores.profiles,
+      () => stores.settings.get().console.terminalEmulator,
+    );
     const { backend, claude, consoleLauncher } = engine;
     const manifest = await readSdkManifest();
     // Delete protection and `profile.get`: entries of the profile, archived ones included (ADR-102).
@@ -710,8 +779,11 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       },
     };
     const loggerOption = options.logger === undefined ? {} : { logger: options.logger };
-    // One key store for both sides (DPAPI helper queue, one probe).
-    const keyStore = options.keyStore ?? createDpapiKeyStore(loggerOption);
+    // One key store for both sides (WP-107, WP-76 §B.14: Windows DPAPI; Linux Secret Service, then
+    // systemd-creds, the 0600 file only with `--key-store=file`).
+    const keyStore =
+      options.keyStore ??
+      (ownKeyStore = createPlatformKeyStore({ home: config.home, mode: config.keyStore, ...loggerOption }));
     const share = createRemoteAccessService({
       home: config.home,
       instance,
@@ -762,13 +834,13 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       ...loggerOption,
     });
     multiHost = roles;
-    // WP-99 (ADR-239): the embedded terminal – ConPTY through node:ffi (SDK backend) or an echo shell
-    // (FakeBackend: dev, E2E). One Git lookup for it and "Open shell in folder".
+    // WP-99 (ADR-239), WP-105: the embedded terminal – the pseudo console of this platform through
+    // node:ffi (ConPTY on Windows, /dev/ptmx on Linux; SDK backend) or an echo shell (FakeBackend: dev,
+    // E2E). One Git lookup for it and "Open shell in folder".
     const gitFinder = createGitFinder();
-    const pty = config.backend === 'fake' ? createFakePtyFactory() : createConPtyFactory();
+    const platformPty = config.backend === 'fake' ? { pty: createFakePtyFactory() } : createPlatformPty();
     const terminalService = createTerminalService({
-      pty,
-      ...(pty === null ? { unavailableReason: conPtyUnavailableReason() } : {}),
+      ...platformPty,
       entry: (entryId) => {
         const entry = stores.registry.get(entryId);
         return entry === undefined ? null : { cwd: entry.cwd, archived: entry.archived };
@@ -779,6 +851,15 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       ...loggerOption,
     });
     terminals = terminalService;
+    // WP-107 (E3): terminals of the coupled computer through the relay; unpairing, a level change,
+    // "Share off" … end them (`closeRemote`).
+    share.attachTerminal(terminalService);
+    // WP-106: what the desktop of this host offers, probed once at the start (Linux: terminal
+    // emulator, xdg-open, gdbus, xdg-mime; never hangs).
+    const capabilities = await desktopCapabilities(
+      config,
+      () => stores.settings.get().console.terminalEmulator,
+    );
     const sessions = createSessionManager({
       toasts,
       // WP22-06: the FakeBackend has no real process tree (fake PIDs) – no heartbeat snapshots.
@@ -805,11 +886,15 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         sdkVersion: manifest?.sdkVersion ?? 'unknown',
         sdkClaudeCodeVersion: manifest?.claudeCodeVersion ?? 'unknown',
         platform: process.platform,
+        // WP-103/106: desktop actions of this host (Windows: all; Linux: what the desktop offers).
+        capabilities,
         dataDirLabel: config.dataDirLabel,
         dev: config.dev,
         port: () => listeningPort,
         systemIntegration: system.available,
         terminalAvailable: terminalService.available,
+        // 102e: `~/…` in the transcript (web); only a home folder the host's path rules accept.
+        homeDir: safeHomeDir(),
         app: () => updateService.app(),
         update: () => updateService.state(),
         // WP-76/78a: role, host list (WP-79) and remote access – `remoteAccess` never leaves for a
@@ -851,7 +936,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
           launcher:
             config.backend === 'fake'
               ? createRecordingShellLauncher({ logger: options.logger })
-              : consoleLauncher,
+              : (consoleLauncher ?? NO_CONSOLE_WINDOW),
         }),
       ],
       loginState: (profileId) => loginService.state(profileId),
@@ -861,7 +946,9 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         updateService.settingsChanged(next);
       },
       extraWarnings: () => system.warnings(),
-      consoleLauncher,
+      ...(consoleLauncher === null ? {} : { consoleLauncher }),
+      // 102e: "Continue in terminal" (`session.openInTerminal`) starts claude in the embedded terminal.
+      terminal: terminalService,
       systemIntegration: system,
       // The engine acks `server.shutdown` first and calls this via setImmediate (WP-13b).
       onShutdownRequested: () => {
@@ -957,8 +1044,11 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       // WP-79: forwarder routes `/api/hosts/:hostId/{ws,blob,file,attachments}` (same cookie/origin
       // guards as every route; windows of it close with AUTH_REVOKED on a new launcher code).
       hosts,
-      // WP-99: GET /api/terminal/ws (guard class `ws`; never forwarded to or from another computer).
+      // WP-99: GET /api/terminal/ws (guard class `ws`); WP-107: a coupled computer reaches it only
+      // through the relay (REMOTE_PATHS.terminalWs of the remote-access listener).
       terminal: terminalService,
+      // WP-107: `parallax remote …` (launcher token, guard class `launcher`), as the local user.
+      launcherRemote: sessions,
       closeCode: () => (restarting ? WS_CLOSE.SERVER_RESTARTING : WS_CLOSE.SERVER_SHUTDOWN),
       webRoot,
     });

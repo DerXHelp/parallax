@@ -1,6 +1,7 @@
 import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
-import { windowsPathsEqual } from '@shared/paths';
+import type { PathRules } from '@shared/paths';
+import { getSessionPaths } from '@web/state/host-platform';
 import type { SidePanelTab } from '../requests';
 
 /**
@@ -119,23 +120,25 @@ export function useSidePanelHistory(sessionKey: string): readonly SidePanelFile[
   return useStore(store, (state) => state.history[sessionKey] ?? EMPTY_HISTORY);
 }
 
-function withoutPath(list: readonly SidePanelFile[], path: string): SidePanelFile[] {
-  return list.filter((entry) => !windowsPathsEqual(entry.path, path));
+function withoutPath(list: readonly SidePanelFile[], path: string, rules: PathRules): SidePanelFile[] {
+  return list.filter((entry) => !rules.equal(entry.path, path));
 }
 
 /**
  * Sets the viewer target; the caller opens the tab `file`. A different file pushes the current one
  * onto the back stack (deduplicated by path, at most SIDE_PANEL_HISTORY_MAX); the same target again
- * bumps `revision`; the same file at another line only moves the line.
+ * bumps `revision`; the same file at another line only moves the line. Paths are compared by the
+ * rules of the session's host (WP-104: case-sensitive on Linux).
  */
 export function setSidePanelFile(
   sessionKey: string,
   file: { path: string; line: number | null; col: number | null },
 ): void {
+  const rules = getSessionPaths(sessionKey);
   store.setState((state) => {
     const current = state.files[sessionKey];
     const history = state.history[sessionKey] ?? EMPTY_HISTORY;
-    if (current !== undefined && windowsPathsEqual(current.path, file.path)) {
+    if (current !== undefined && rules.equal(current.path, file.path)) {
       // Same file (any spelling) at the same position: remount, so the viewer jumps again.
       const same = current.line === file.line && current.col === file.col;
       const next: SidePanelFile = { ...file, revision: same ? current.revision + 1 : current.revision };
@@ -143,8 +146,8 @@ export function setSidePanelFile(
     }
     const nextHistory =
       current === undefined
-        ? withoutPath(history, file.path)
-        : [current, ...withoutPath(withoutPath(history, current.path), file.path)].slice(
+        ? withoutPath(history, file.path, rules)
+        : [current, ...withoutPath(withoutPath(history, current.path, rules), file.path, rules)].slice(
             0,
             SIDE_PANEL_HISTORY_MAX,
           );

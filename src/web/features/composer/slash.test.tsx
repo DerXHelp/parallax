@@ -1,6 +1,7 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { LOCAL_HOST_ID } from '@shared/common';
 import { makeError } from '@shared/errors';
 import type { SlashCommandInfo } from '@shared/model';
 import { registerShellRequestHandler, type ShellRequestKind } from '@web/shell/requests';
@@ -476,6 +477,55 @@ describe('sending a "/" draft (WP-37 §2)', () => {
     await user.clear(textbox());
     await user.type(textbox(), '/config theme=dark{Enter}');
     expect(h.commands('session.sendPrompt').map((cmd) => cmd.prompt.text)).toEqual(['/config theme=dark']);
+  });
+
+  it('terminal commands: "Continue in terminal" where the computer has a pseudo console, no console window without one (WP-105/106)', async () => {
+    const terminalId = `tm_${'c'.repeat(32)}` as const;
+    const h = await start('idle', {
+      onCommand: (cmd) => (cmd.name === 'session.openInTerminal' ? ok({ terminalId }) : undefined),
+    });
+    const current = clientStore.getState().hosts[LOCAL_HOST_ID]?.hostState;
+    if (current === undefined || current === null) throw new Error('no host state');
+    act(() => {
+      h.host.setHostState({
+        ...current,
+        terminalAvailable: true,
+        capabilities: { ...current.capabilities, externalConsole: false },
+      });
+    });
+    const user = userEvent.setup();
+    await user.type(textbox(), '/vim {Enter}');
+    const hint = screen
+      .getByText('/vim only works in the terminal of Claude Code')
+      .closest('[data-slot="terminal-hint"]');
+    if (!(hint instanceof HTMLElement)) throw new Error('no terminal hint');
+    expect(hint.textContent).toContain('Continue the session in the terminal and use the command there.');
+    expect(within(hint).queryByRole('button', { name: 'Open in external console' })).toBeNull();
+    await user.click(within(hint).getByRole('button', { name: 'Continue in terminal' }));
+    await waitFor(() => {
+      expect(document.querySelector('[data-slot="terminal-hint"]')).toBeNull();
+    });
+    expect(h.commands('session.openInTerminal')).toEqual([
+      { name: 'session.openInTerminal', entryId: DEMO_ENTRIES.idle },
+    ]);
+    expect(textbox().value).toBe('');
+
+    // Neither (a server without desktop and pseudo console): only the hint to use it on that computer.
+    act(() => {
+      h.host.setHostState({
+        ...current,
+        terminalAvailable: false,
+        capabilities: { ...current.capabilities, externalConsole: false },
+      });
+    });
+    await user.type(textbox(), '/vim {Enter}');
+    const none = screen
+      .getByText('/vim only works in the terminal of Claude Code')
+      .closest('[data-slot="terminal-hint"]');
+    if (!(none instanceof HTMLElement)) throw new Error('no terminal hint');
+    expect(none.textContent).toContain('directly on the computer of this session');
+    expect(within(none).queryByRole('button', { name: 'Continue in terminal' })).toBeNull();
+    expect(within(none).queryByRole('button', { name: 'Open in external console' })).toBeNull();
   });
 
   it('everything else goes to Claude Code as a prompt (queued while Claude works)', async () => {

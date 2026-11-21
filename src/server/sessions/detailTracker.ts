@@ -24,7 +24,7 @@ import {
   type TodoStatus,
   type ToolCallItem,
 } from '@shared/model';
-import { windowsPathExtension, windowsPathKey, windowsPathsEqual } from '@shared/paths';
+import { HOST_PATH_RULES } from '../lib/paths';
 
 /** `todoItemSchema` caps `content` and `activeForm` at 2000 characters. */
 export const TODO_TEXT_CHARS = 2000;
@@ -153,7 +153,7 @@ export class DetailTracker {
    */
   planDecision(planFilePath: string | null): boolean {
     if (planFilePath === null) return false;
-    const known = this.writes.get(windowsPathKey(planFilePath));
+    const known = this.writes.get(HOST_PATH_RULES.key(planFilePath));
     if (known === undefined || this.samePlanFile(known)) return false;
     if (this.planFile !== null && Date.parse(this.planFile.updatedAt) > Date.parse(known.updatedAt))
       return false;
@@ -165,7 +165,7 @@ export class DetailTracker {
     return (
       this.planFile !== null &&
       this.planFile.toolUseId === ref.toolUseId &&
-      windowsPathsEqual(this.planFile.path, ref.path)
+      HOST_PATH_RULES.equal(this.planFile.path, ref.path)
     );
   }
 
@@ -174,15 +174,15 @@ export class DetailTracker {
     if (!input.success) return false;
     const path = input.data.file_path;
     const ref: PlanFileRef = { path, updatedAt: at, toolUseId: item.toolUseId };
-    const key = windowsPathKey(path);
+    const key = HOST_PATH_RULES.key(path);
     this.writes.delete(key);
     this.writes.set(key, ref);
     if (this.writes.size > PLAN_FILE_CANDIDATES) {
       const oldest = this.writes.keys().next().value;
       if (oldest !== undefined) this.writes.delete(oldest);
     }
-    const planned = context.planFilePath !== null && windowsPathsEqual(path, context.planFilePath);
-    const markdown = context.planMode && windowsPathExtension(path) === 'md';
+    const planned = context.planFilePath !== null && HOST_PATH_RULES.equal(path, context.planFilePath);
+    const markdown = context.planMode && HOST_PATH_RULES.extension(path) === 'md';
     if (!planned && !markdown) return false;
     this.planFile = ref;
     return true;

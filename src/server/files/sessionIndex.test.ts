@@ -3,14 +3,26 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { LIMITS, type ConversationId } from '@shared/common';
 import { sessionFilesFileSchema, type ToolCallItem, type TranscriptItem } from '@shared/model';
-import { windowsPathKey } from '@shared/paths';
+import { POSIX_PATHS, WIN32_PATHS, windowsPathKey } from '@shared/paths';
 import type { SessionOp } from '@shared/protocol';
 import { SAMPLE_IDS, sampleId, sampleItems, sampleSystemItems, sampleTime } from '@shared/samples';
 import { makeTempHome } from '../http/testServer';
 import { entryDir } from '../store/decisions';
 import type { TranscriptStore } from '../sync/ports';
-import { SESSION_FILES_FILE, createSessionIndex, isTaskOutputFile, recordsOfItem } from './sessionIndex';
+import {
+  SESSION_FILES_FILE,
+  createSessionIndex as createHostSessionIndex,
+  isTaskOutputFile as isTaskOutputFileWith,
+  recordsOfItem as recordsOfItemWith,
+  type SessionIndexDeps,
+} from './sessionIndex';
 import { entryLookup, fakeTranscripts } from './testing';
+
+// The Windows samples below are checked with the Windows rules on every host (WP-103).
+const recordsOfItem = (item: TranscriptItem) => recordsOfItemWith(item, WIN32_PATHS);
+const isTaskOutputFile = (file: string, taskId: string) => isTaskOutputFileWith(file, taskId, WIN32_PATHS);
+const createSessionIndex = (deps: SessionIndexDeps) =>
+  createHostSessionIndex({ rules: WIN32_PATHS, ...deps });
 
 const ENTRY = SAMPLE_IDS.entry;
 const CONV = SAMPLE_IDS.conversation;
@@ -107,6 +119,21 @@ describe('recordsOfItem (ADR-145)', () => {
     ).toBe(true);
     expect(isTaskOutputFile('C:\\x\\tasks\\..\\secret.output', '..\\secret')).toBe(false);
     expect(isTaskOutputFile('C:\\x\\secret.output', 'x\\secret')).toBe(false);
+  });
+
+  it('POSIX (WP-103): the same shapes with /, case-sensitive; only absolute safe paths count', () => {
+    const cli =
+      '/tmp/claude-1000/-home-u-work/f406f5df-fee1-4f18-8d56-528330faa035/tasks/a09720160328a4872.output';
+    expect(isTaskOutputFileWith(cli, 'a09720160328a4872', POSIX_PATHS)).toBe(true);
+    expect(isTaskOutputFileWith('/tmp/x/TASKS/b575.output', 'b575', POSIX_PATHS)).toBe(false);
+    expect(isTaskOutputFileWith('/tmp/x/tasks/B575.output', 'b575', POSIX_PATHS)).toBe(false);
+    expect(isTaskOutputFileWith('/tmp/x/secret.output', 'x/secret', POSIX_PATHS)).toBe(false);
+    expect(recordsOfItemWith(tool('Read', { file_path: '/home/u/work/a.ts' }), POSIX_PATHS)).toEqual([
+      expect.objectContaining({ op: 'read', path: '/home/u/work/a.ts' }),
+    ]);
+    for (const file of ['src/a.ts', 'D:\\work\\a.ts', '/proc/self/environ', '/home/u/../etc/passwd']) {
+      expect(recordsOfItemWith(tool('Read', { file_path: file }), POSIX_PATHS), file).toEqual([]);
+    }
   });
 });
 

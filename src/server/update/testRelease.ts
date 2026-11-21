@@ -2,14 +2,24 @@
  * Test support (WP-87a, imported only by tests): a fake release server behind an injected `fetch`
  * (no network), signed `latest.json`, and release zips made with `System32\tar.exe` from a test
  * package in a temp folder of the test environment (like WP-86; install/testPackage.ts).
+ *
+ * Linux (WP-108): the archive of this host is a tar.gz made with `/usr/bin/tar` (`archiveFolders`);
+ * `serveRelease` lists it in `assets` like scripts/release/sign.ts.
  */
 import { createHash, sign } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { runFile, systemTool } from '../lib/process';
 import type { TestKey } from '../install/testPackage';
-import { testEndpoints, type UpdateEndpoints } from './endpoints';
-import type { LatestInfo } from './latest';
+import {
+  archiveFormatOf,
+  releaseAssetName,
+  releaseTarget,
+  testEndpoints,
+  type ReleaseTarget,
+  type UpdateEndpoints,
+} from './endpoints';
+import { latestForTarget, type LatestInfo } from './latest';
 
 /** Base of the fake releases (loopback: `testEndpoints` allows it; nothing is ever connected). */
 export const TEST_RELEASES = 'http://127.0.0.1:9/releases';
@@ -67,38 +77,53 @@ export function hangingResponse(init: RequestInit | undefined): Promise<Response
 }
 
 export interface ReleaseFiles {
+  /** As `checkLatest` hands it on: url, size and hash of the asset of this host. */
   latest: LatestInfo;
+  /** The served latest.json. */
   bytes: Buffer;
 }
 
-/** latest.json of `version` for `zip` bytes, signed with `key` and served with zip and changelog. */
+/**
+ * latest.json of `version` for the archive bytes `zip` (the asset of `endpoints.target`), signed
+ * with `key` and served with archive and changelog. The top level names the Windows zip like
+ * sign.ts; `latest` overrides url, size and hash of the host's asset as well.
+ */
 export function serveRelease(
   server: FakeReleaseServer,
   endpoints: UpdateEndpoints,
   key: TestKey,
   release: { version: string; zip: Buffer; changelog?: string; notes?: string; latest?: Partial<LatestInfo> },
 ): ReleaseFiles {
+  const target = endpoints.target ?? 'win';
+  const overrides = release.latest ?? {};
   const changelog =
     release.changelog ?? `# Changelog\n\n## [${release.version}] – 2026-11-28\n\n### Neu\n\n- Test.\n`;
-  const latest: LatestInfo = {
+  const asset = {
+    name: releaseAssetName(release.version, target),
+    url: overrides.url ?? endpoints.assetUrl(release.version, target),
+    size: overrides.size ?? release.zip.length,
+    sha256: overrides.sha256 ?? sha256(release.zip),
+  };
+  const served: LatestInfo = {
     schemaVersion: 1,
     version: release.version,
     prerelease: release.version.includes('-'),
     minNode: '26.9.0',
-    url: endpoints.assetUrl(release.version),
-    size: release.zip.length,
-    sha256: sha256(release.zip),
+    url: target === 'win' ? asset.url : endpoints.assetUrl(release.version, 'win'),
+    size: asset.size,
+    sha256: asset.sha256,
     changelogSha256: sha256(changelog),
     notes: release.notes ?? '### Neu\n\n- Test.',
     createdAt: '2026-11-28T10:00:00.000Z',
-    ...release.latest,
+    assets: [asset],
+    ...overrides,
   };
-  const bytes = Buffer.from(`${JSON.stringify(latest, null, 2)}\n`, 'utf8');
+  const bytes = Buffer.from(`${JSON.stringify(served, null, 2)}\n`, 'utf8');
   server.set(endpoints.latestUrl, bytes);
   server.set(endpoints.latestSignatureUrl, signBytes(bytes, key));
-  server.set(endpoints.assetUrl(release.version), release.zip);
+  server.set(endpoints.assetUrl(release.version, target), release.zip);
   server.set(endpoints.changelogUrl(release.version), changelog);
-  return { latest, bytes };
+  return { latest: latestForTarget(served, target) ?? served, bytes };
 }
 
 /** `tar.exe -a -c -f <zip> -C <parent> <folders…>` (like the release CI); returns the zip bytes. */
@@ -111,7 +136,35 @@ export async function zipFolders(parent: string, folders: readonly string[], zip
   return readFile(zip);
 }
 
+/**
+ * The release archive of `target` (default: this host): the zip with tar.exe (Windows), a tar.gz
+ * with the system tar (`tar -c -z`, Linux). Returns the bytes.
+ */
+export async function archiveFolders(
+  parent: string,
+  folders: readonly string[],
+  file: string,
+  target: ReleaseTarget = releaseTarget() ?? 'win',
+): Promise<Buffer> {
+  if (archiveFormatOf(target) === 'zip') return zipFolders(parent, folders, file);
+  const result = await runFile(systemTool('tar'), ['-c', '-z', '-f', file, '-C', parent, ...folders], {
+    cwd: parent,
+    timeoutMs: 60_000,
+  });
+  if (result.exitCode !== 0) throw new Error(`tar failed: ${result.stderr}`);
+  return readFile(file);
+}
+
 /** Path of a zip next to `parent` named like a release asset. */
 export function zipPath(parent: string, version: string): string {
   return path.join(parent, `parallax-${version}-win.zip`);
+}
+
+/** Path of the archive of `target` (default: this host) in `parent`, named like the release asset. */
+export function archivePath(
+  parent: string,
+  version: string,
+  target: ReleaseTarget = releaseTarget() ?? 'win',
+): string {
+  return path.join(parent, releaseAssetName(version, target));
 }

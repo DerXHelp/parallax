@@ -45,12 +45,34 @@ export interface RemoteEventLogOptions {
   days?: number;
 }
 
+/**
+ * WP-107 (§B.13): an observation with its `detail` – the command name of `manage_command`, the change of
+ * `level_changed` (`control>manage`); never parameters or contents. Rows merge only with the same detail.
+ */
+export interface RemoteEventRecord extends RemoteEventInput {
+  detail?: string | null;
+}
+
+/** Longest stored detail (command names and level changes are short). */
+export const EVENT_DETAIL_MAX_CHARS = 64;
+
 export interface FileRemoteEventLog extends RemoteEventLog {
+  record(event: RemoteEventRecord, at?: Date): void;
   /** Reads the file (once); records before that are kept and applied afterwards. */
   load(): Promise<void>;
   /** A row was added or the seen mark changed (not for merged repeats). */
   onChange(listener: () => void): () => void;
   close(): Promise<void>;
+}
+
+/** A short, printable detail (control and format characters removed like `sanitizeClaimedName`), or null. */
+function sanitizeDetail(detail: string | null | undefined): string | null {
+  if (detail === undefined || detail === null) return null;
+  const clean = detail
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '')
+    .trim()
+    .slice(0, EVENT_DETAIL_MAX_CHARS);
+  return clean === '' ? null : clean;
 }
 
 function emptyFile(): RemoteEventsFile {
@@ -75,7 +97,7 @@ export function createRemoteEventLog(options: RemoteEventLogOptions): FileRemote
   const listeners = new Set<() => void>();
   /** In memory until load() finished (a set() before the read would replace the file content). */
   let data: RemoteEventsFile | null = null;
-  const pending: { event: RemoteEventInput; at: Date }[] = [];
+  const pending: { event: RemoteEventRecord; at: Date }[] = [];
   let loading: Promise<void> | null = null;
 
   const notify = (): void => {
@@ -98,18 +120,19 @@ export function createRemoteEventLog(options: RemoteEventLogOptions): FileRemote
   /** Applies one observation; true when a new row was added. */
   const apply = (
     file: RemoteEventsFile,
-    input: RemoteEventInput,
+    input: RemoteEventRecord,
     at: Date,
   ): { file: RemoteEventsFile; added: boolean } => {
     const address = normalizeRemoteAddress(input.address);
     const claimedName = sanitizeClaimedName(input.claimedName);
+    const detail = sanitizeDetail(input.detail);
     const atMs = at.getTime();
     const iso = at.toISOString();
     for (let index = file.events.length - 1; index >= 0; index -= 1) {
       const row = file.events[index];
       if (row === undefined) continue;
       if (atMs - Date.parse(row.at) >= EVENT_MERGE_MS) break;
-      if (row.kind !== input.kind || row.address !== address) continue;
+      if (row.kind !== input.kind || row.address !== address || row.detail !== detail) continue;
       const merged: RemoteEvent = {
         ...row,
         lastAt: atMs > Date.parse(row.lastAt) ? iso : row.lastAt,
@@ -130,9 +153,16 @@ export function createRemoteEventLog(options: RemoteEventLogOptions): FileRemote
       address,
       port: input.port,
       claimedName,
+      detail,
       rejected: isRejectedEventKind(input.kind),
     };
-    const fields = { kind: row.kind, address: row.address, port: row.port, claimedName: row.claimedName };
+    const fields = {
+      kind: row.kind,
+      address: row.address,
+      port: row.port,
+      claimedName: row.claimedName,
+      detail: row.detail,
+    };
     if (row.rejected) log.warn(fields, 'remote access rejected');
     else log.info(fields, 'remote access event');
     return { file: prune({ ...file, events: [...file.events, row] }, at), added: true };

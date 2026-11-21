@@ -28,7 +28,7 @@ import type {
   SpawnedProcess,
   SpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk';
-import { windowsPathsEqual } from '@shared/paths';
+import { HOST_PATH_RULES } from '../lib/paths';
 import type { LaunchSpec } from '../claude/ports';
 import type { LoginRequest, StartSessionRequest } from './types';
 
@@ -103,7 +103,7 @@ function additionalDirectoriesOf(req: StartSessionRequest): string[] {
     candidates.push(req.attachmentsDir);
   }
   for (const dir of candidates) {
-    if (!dirs.some((known) => windowsPathsEqual(known, dir))) dirs.push(dir);
+    if (!dirs.some((known) => HOST_PATH_RULES.equal(known, dir))) dirs.push(dir);
   }
   return dirs;
 }

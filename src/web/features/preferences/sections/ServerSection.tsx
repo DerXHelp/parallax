@@ -1,6 +1,7 @@
 import { DEFAULT_PORT, type HostState } from '@shared/model';
 import { useT } from '@web/i18n';
 import { Switch } from '@web/ui/switch';
+import { settingsHostOf } from '../lib/host-platform';
 import { HostWarnings } from '../components/HostWarnings';
 import { NumberField } from '../components/NumberField';
 import { SettingField, SettingList } from '../components/SettingField';
@@ -9,7 +10,9 @@ import type { SettingsEditor } from '../state/settings-editor';
 
 /**
  * Server: the port (ADR-111, after "Stop server" and a restart; `HostState.port` is the actual one)
- * and autostart (ADR-110, only with the system integration of the productive server).
+ * and autostart (ADR-110, only with the system integration of the productive server). WP-104:
+ * autostart only where the computer has one (`capabilities.autostart`), the window at the start
+ * only with a desktop.
  */
 export function ServerSection({
   editor,
@@ -22,6 +25,7 @@ export function ServerSection({
   const { settings, save } = editor;
   const { autostart } = settings;
   const integration = hostState?.systemIntegration ?? false;
+  const { capabilities } = settingsHostOf(hostState);
   const defaultPort = String(DEFAULT_PORT);
   const currentPort = hostState?.port ?? null;
   const integrationReason = integration ? null : t('preferences.systemIntegrationOff');
@@ -52,48 +56,52 @@ export function ServerSection({
           />
         )}
       />
-      <SettingField
-        name="autostart"
-        label={t('preferences.server.autostart')}
-        description={t('preferences.server.autostartHint')}
-        disabled={!integration}
-        disabledReason={integrationReason}
-        control={({ id, describedBy }) => (
-          <Switch
-            id={id}
-            aria-describedby={describedBy}
-            disabled={!integration}
-            checked={autostart.enabled}
-            onCheckedChange={(enabled) => {
-              save({ autostart: { ...autostart, enabled } });
-            }}
-          />
-        )}
-        below={() => (
-          <HostWarnings
-            hostState={hostState}
-            codes={['AUTOSTART_FAILED']}
-            foreignHint={t('preferences.server.autostartForeign')}
-          />
-        )}
-      />
-      <SettingField
-        name="openWindow"
-        label={t('preferences.server.openWindow')}
-        disabled={openWindowReason !== null}
-        disabledReason={openWindowReason}
-        control={({ id, describedBy }) => (
-          <Switch
-            id={id}
-            aria-describedby={describedBy}
-            disabled={openWindowReason !== null}
-            checked={autostart.openWindow}
-            onCheckedChange={(openWindow) => {
-              save({ autostart: { ...autostart, openWindow } });
-            }}
-          />
-        )}
-      />
+      {capabilities.autostart ? (
+        <SettingField
+          name="autostart"
+          label={t('preferences.server.autostart')}
+          description={t('preferences.server.autostartHint')}
+          disabled={!integration}
+          disabledReason={integrationReason}
+          control={({ id, describedBy }) => (
+            <Switch
+              id={id}
+              aria-describedby={describedBy}
+              disabled={!integration}
+              checked={autostart.enabled}
+              onCheckedChange={(enabled) => {
+                save({ autostart: { ...autostart, enabled } });
+              }}
+            />
+          )}
+          below={() => (
+            <HostWarnings
+              hostState={hostState}
+              codes={['AUTOSTART_FAILED']}
+              foreignHint={t('preferences.server.autostartForeign')}
+            />
+          )}
+        />
+      ) : null}
+      {capabilities.autostart && capabilities.desktop ? (
+        <SettingField
+          name="openWindow"
+          label={t('preferences.server.openWindow')}
+          disabled={openWindowReason !== null}
+          disabledReason={openWindowReason}
+          control={({ id, describedBy }) => (
+            <Switch
+              id={id}
+              aria-describedby={describedBy}
+              disabled={openWindowReason !== null}
+              checked={autostart.openWindow}
+              onCheckedChange={(openWindow) => {
+                save({ autostart: { ...autostart, openWindow } });
+              }}
+            />
+          )}
+        />
+      ) : null}
     </SettingList>
   );
 }

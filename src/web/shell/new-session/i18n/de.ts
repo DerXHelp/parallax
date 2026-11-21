@@ -7,6 +7,7 @@ export const de: typeof en = {
   cwd: {
     label: 'Projektordner',
     placeholder: 'D:\\arbeit\\mein-projekt',
+    placeholderPosix: '/home/ich/mein-projekt',
     hint: 'Vollständiger Pfad eines vorhandenen Ordners – eintippen, einfügen oder durchsuchen. Dort lässt sich auch ein neuer Ordner anlegen.',
     browse: 'Durchsuchen…',
   },
@@ -71,6 +72,7 @@ export const de: typeof en = {
     configDir: 'Netzwerk-, Geräte- und reservierte Pfade sind als Konfigurationsordner nicht erlaubt.',
     executable: {
       not_absolute: 'Gib einen vollständigen Pfad an, z. B. C:\\Users\\ich\\.local\\bin\\claude.exe.',
+      not_absolute_posix: 'Gib einen vollständigen Pfad an, z. B. /home/ich/.local/bin/claude.',
       not_exe: 'Der Pfad muss auf .exe enden.',
       unsafe: 'Netzwerk-, Geräte- und reservierte Pfade sind nicht erlaubt.',
       not_found: 'Unter diesem Pfad gibt es keine Datei.',
@@ -112,5 +114,13 @@ export const de: typeof en = {
     truncated: 'Nur die ersten {count} Ordner werden angezeigt.',
     nothingChosen: 'Wähle ein Laufwerk oder einen Ordner aus oder öffne ihn, um ihn zu übernehmen.',
     choose: 'Diesen Ordner wählen',
+    posix: {
+      roots: 'Computer',
+      listRoots: 'Orte',
+      emptyRoots: 'Keine Orte gefunden.',
+      nothingChosen: 'Wähle einen Ort oder einen Ordner aus oder öffne ihn, um ihn zu übernehmen.',
+      tooLong: 'Der Name ist zu lang (höchstens {count} Bytes).',
+      invalidChar: 'Ein Ordnername darf weder / noch Steuerzeichen enthalten.',
+    },
   },
 };

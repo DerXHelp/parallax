@@ -35,6 +35,7 @@ import {
   type PermissionMode,
   type PromptPriority,
 } from '@shared/common';
+import type { EntryId } from '@shared/common';
 import type { Decision, ModelOption, SlashCommandInfo } from '@shared/model';
 import type { RunState } from '@shared/status';
 import { useT, type t as translateFn } from '@web/i18n';
@@ -42,11 +43,14 @@ import { cn } from '@web/lib/cn';
 import { feedbackOverhead } from '@web/lib/plan-feedback';
 import { transferFiles, type IncomingFiles } from '@web/lib/transfer-files';
 import { isHandoffPending, openExternalConsole, useHandoffPending } from '@web/shell/navigation/handoff';
+import { continueInTerminal } from '@web/shell/navigation/session-actions';
 import { useShellRequestHandler } from '@web/shell/requests';
 import { useEscapeHandler } from '@web/shell/shortcuts';
 import { SlotBoundary } from '@web/shell/SlotBoundary';
 import { followTranscript } from '@web/shell/transcript-follow';
 import { errorPayloadOf } from '@web/state/connection';
+import { useSessionCapabilities } from '@web/state/host-platform';
+import { useTerminalAvailable } from '@web/state/hosts';
 import {
   useDecisions,
   useSessionConnectionStatus,
@@ -398,6 +402,9 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
   const [terminalHint, setTerminalHint] = useState<string | null>(null);
   /** WP41-07: "Open in external console" is on its way (from here or a session menu) – send nothing. */
   const handoffPending = useHandoffPending(sessionKey);
+  /** WP-105/106: where a terminal-only command can go – the embedded terminal, a console window. */
+  const terminalAvailable = useTerminalAvailable(sessionKey);
+  const externalConsole = useSessionCapabilities(sessionKey).externalConsole;
   const [slashError, setSlashError] = useState<InlineError | null>(null);
   const [dragging, setDragging] = useState(false);
   /** @ picker: the `@` index of the current opening, its file list, dismissal, query and active row. */
@@ -852,10 +859,11 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
     textareaRef.current?.focus();
   };
 
-  const openExternal = () => {
+  /** "Open in external console" / WP-105 "Continue in terminal" from the hint of a terminal-only command. */
+  const handOff = (open: (sessionKey: string, entryId: EntryId) => Promise<unknown>) => {
     if (entryId === null) return;
     const before = getDraftInput(sessionKey);
-    openExternalConsole(sessionKey, entryId)
+    open(sessionKey, entryId)
       .then(() => {
         setTerminalHint(null);
         if (getDraftInput(sessionKey) === before) clearDraft(sessionKey);
@@ -1157,10 +1165,32 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
           title={t('composer.slash.terminal.title', { command: terminalHint })}
           actions={
             <>
-              <Button size="sm" variant="outline" disabled={!online || handoffPending} onClick={openExternal}>
-                {handoffPending ? <Spinner className="size-3" /> : <TerminalIcon aria-hidden />}
-                {t('composer.slash.terminal.open')}
-              </Button>
+              {terminalAvailable ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!online || handoffPending}
+                  onClick={() => {
+                    handOff(continueInTerminal);
+                  }}
+                >
+                  {handoffPending ? <Spinner className="size-3" /> : <SquareTerminalIcon aria-hidden />}
+                  {t('composer.slash.terminal.continue')}
+                </Button>
+              ) : null}
+              {externalConsole ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!online || handoffPending}
+                  onClick={() => {
+                    handOff(openExternalConsole);
+                  }}
+                >
+                  {handoffPending ? <Spinner className="size-3" /> : <TerminalIcon aria-hidden />}
+                  {t('composer.slash.terminal.open')}
+                </Button>
+              ) : null}
               <Button
                 size="sm"
                 variant="ghost"
@@ -1174,7 +1204,15 @@ const ComposerEditor = memo(function ComposerEditor({ sessionKey }: { sessionKey
             </>
           }
         >
-          {t('composer.slash.terminal.description')}
+          {t(
+            terminalAvailable
+              ? externalConsole
+                ? 'composer.slash.terminal.descriptionBoth'
+                : 'composer.slash.terminal.descriptionTerminal'
+              : externalConsole
+                ? 'composer.slash.terminal.description'
+                : 'composer.slash.terminal.descriptionNone',
+          )}
         </Alert>
       )}
       {attachments.length === 0 ? null : (

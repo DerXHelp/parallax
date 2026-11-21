@@ -20,6 +20,7 @@ Umsetzung, Abweichungen und Verdrahtung `docs/wp/WP-78a.md`. Der Listener ist di
 | `hubSocket.ts` | `GuardedHubSocket`: WebSocket für den Hub, verwirft alles nach einem Generationswechsel | WP-78a |
 | `headers.ts`, `addresses.ts`, `limits.ts` | Browser-/Versions-Header, Adressen und Namen, Grenzen (§B.10) und Zähler | WP-78a |
 | `testKit.ts` | Test-Helfer (Dienst auf `127.0.0.1:0`, Fake-Hub, Kopplung und Agent) – nur für Tests | WP-78a |
+| `peerTerminal.ts` | Terminal für den gekoppelten Rechner (E3, §B.13): privates Fastify mit `registerTerminalRoute` hinter `REMOTE_PATHS.terminalWs` | WP-107 |
 | `src/server/http/content.ts` | Blob/Datei/Anhänge über `registerContent` | WP-78b |
 
 Regeln: Code und Fenster nie in `HostState`, Ops oder Logs; vor jeder Wirkung `isCurrentConnection()` (Generation);

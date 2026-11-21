@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -18,17 +18,19 @@ import {
 } from './install';
 import {
   CURRENT_FILE,
-  ICON_FILE,
   InstallError,
   PACKAGE_ROOT_DIR,
   START_CMD,
   START_SCRIPT,
+  START_SH,
   VERSIONS_DIR,
   defaultInstallRoot,
+  iconFile,
   readCurrent,
+  startCommandFile,
 } from './layout';
 import { SdkError } from './sdk';
-import { startCmd, startScript } from './templates';
+import { startCmd, startScript, startShell } from './templates';
 import {
   fakeProvideSdk,
   makeTestKey,
@@ -125,10 +127,10 @@ describe('installPackage (WP-86, WP-83 §8.3)', () => {
     });
     expect(await readCurrent(w.root)).toEqual({ schemaVersion: 1, version: '1.0.0', previous: null });
     expect(await readFile(path.join(w.root, START_SCRIPT), 'utf8')).toBe(startScript());
-    expect(await readFile(path.join(w.root, START_CMD), 'utf8')).toContain('start.mjs');
-    expect(await readFile(path.join(w.root, ICON_FILE), 'utf8')).toBe('icon 1.0.0');
+    expect(await readFile(path.join(w.root, startCommandFile()), 'utf8')).toContain('start.mjs');
+    expect(await readFile(path.join(w.root, iconFile()), 'utf8')).toBe('icon 1.0.0');
     expect(w.shortcuts).toEqual([w.root]);
-    expect(w.lines.join('\n')).toMatch(/Package checked: signature and 5 files/);
+    expect(w.lines.join('\n')).toMatch(/Package checked: signature and 7 files/);
   });
 
   it('keeps the previous version, deletes older ones - but never the running one', async () => {
@@ -285,13 +287,13 @@ describe('stageVersion (WP-87 §1.9)', () => {
     expect(await exists(path.join(w.root, START_SCRIPT))).toBe(false);
     expect(w.shortcuts).toEqual([]);
 
-    // 5 listed files + release.json + signature.
+    // 7 listed files + release.json + signature.
     const steps = events.map(([step]) => step);
     expect([...new Set(steps)]).toEqual(['check', 'copy', 'sdk']);
-    expect(events.filter(([step]) => step === 'check').at(-1)).toEqual(['check', 7, 7]);
+    expect(events.filter(([step]) => step === 'check').at(-1)).toEqual(['check', 9, 9]);
     const copy = events.filter(([step]) => step === 'copy');
-    expect(copy[0]).toEqual(['copy', 0, 14]);
-    expect(copy.at(-1)).toEqual(['copy', 14, 14]);
+    expect(copy[0]).toEqual(['copy', 0, 18]);
+    expect(copy.at(-1)).toEqual(['copy', 18, 18]);
     expect(copy.every(([, done], index) => index === 0 || done >= (copy[index - 1]?.[1] ?? 0))).toBe(true);
     expect(events.slice(-2)).toEqual([
       ['sdk', 0, 1],
@@ -380,12 +382,12 @@ describe('switchVersion and restoreCurrent (WP-87 §1.9)', () => {
     const w = await world();
     await install(w, await w.pkg('1.0.0'));
     const currentBefore = await readFile(path.join(w.root, CURRENT_FILE));
-    const cmdBefore = await readFile(path.join(w.root, START_CMD));
+    const cmdBefore = await readFile(path.join(w.root, startCommandFile()));
     await stageVersion(
       {
         packageDir: await w.pkgWith('1.1.0', {
           rootFiles: true,
-          files: { 'root/start.mjs': '// start 1.1.0\n', 'parallax.ico': 'icon 1.1.0' },
+          files: { 'root/start.mjs': '// start 1.1.0\n', [iconFile()]: 'icon 1.1.0' },
         }),
         root: w.root,
         keys: [w.key.x],
@@ -400,14 +402,16 @@ describe('switchVersion and restoreCurrent (WP-87 §1.9)', () => {
     });
     expect(await readCurrent(w.root)).toEqual({ schemaVersion: 1, version: '1.1.0', previous: '1.0.0' });
     expect(await readFile(path.join(w.root, START_SCRIPT), 'utf8')).toBe('// start 1.1.0\n');
-    expect(await readFile(path.join(w.root, START_CMD), 'utf8')).toBe(startCmd('26.9.0'));
-    expect(await readFile(path.join(w.root, ICON_FILE), 'utf8')).toBe('icon 1.1.0');
+    expect(await readFile(path.join(w.root, startCommandFile()), 'utf8')).toBe(
+      process.platform === 'win32' ? startCmd('26.9.0') : startShell('26.9.0'),
+    );
+    expect(await readFile(path.join(w.root, iconFile()), 'utf8')).toBe('icon 1.1.0');
 
     await restoreCurrent(w.root, result.before);
     expect((await readFile(path.join(w.root, CURRENT_FILE))).equals(currentBefore)).toBe(true);
     expect(await readFile(path.join(w.root, START_SCRIPT), 'utf8')).toBe(startScript());
-    expect((await readFile(path.join(w.root, START_CMD))).equals(cmdBefore)).toBe(true);
-    expect(await readFile(path.join(w.root, ICON_FILE), 'utf8')).toBe('icon 1.0.0');
+    expect((await readFile(path.join(w.root, startCommandFile()))).equals(cmdBefore)).toBe(true);
+    expect(await readFile(path.join(w.root, iconFile()), 'utf8')).toBe('icon 1.0.0');
   });
 
   it('defaults previous like the installer; restoring "none" deletes current.json', async () => {
@@ -496,20 +500,29 @@ describe('root files from the package (WP-87 §1.9)', () => {
     expect(packageRootFiles('26.9.0')).toEqual({
       [`${PACKAGE_ROOT_DIR}/${START_SCRIPT}`]: startScript(),
       [`${PACKAGE_ROOT_DIR}/${START_CMD}`]: startCmd('26.9.0'),
+      [`${PACKAGE_ROOT_DIR}/${START_SH}`]: startShell('26.9.0'),
     });
   });
 
-  it('the installer writes start.mjs and parallax.cmd from root/ of the package', async () => {
+  it('the installer writes start.mjs and the start script of the platform from root/ of the package', async () => {
     const w = await world();
     await install(
       w,
       await w.pkgWith('1.0.0', {
         rootFiles: true,
-        files: { 'root/parallax.cmd': '@rem 1.0.0\r\n' },
+        files: { 'root/parallax.cmd': '@rem 1.0.0\r\n', 'root/parallax': '#!/bin/sh\n# 1.0.0\n' },
       }),
     );
     expect(await readFile(path.join(w.root, START_SCRIPT), 'utf8')).toBe(startScript());
-    expect(await readFile(path.join(w.root, START_CMD), 'utf8')).toBe('@rem 1.0.0\r\n');
-    expect(w.lines.join('\n')).toMatch(/Package checked: signature and 7 files/);
+    const own = process.platform === 'win32' ? '@rem 1.0.0\r\n' : '#!/bin/sh\n# 1.0.0\n';
+    expect(await readFile(path.join(w.root, startCommandFile()), 'utf8')).toBe(own);
+    expect(w.lines.join('\n')).toMatch(/Package checked: signature and 10 files/);
+  });
+
+  it.runIf(process.platform !== 'win32')('Linux: the start script is executable (mode 755)', async () => {
+    const w = await world();
+    await install(w, await w.pkg('1.0.0'));
+    expect((await stat(path.join(w.root, START_SH))).mode & 0o777).toBe(0o755);
+    expect(await readFile(path.join(w.root, START_SH), 'utf8')).toBe(startShell('26.9.0'));
   });
 });

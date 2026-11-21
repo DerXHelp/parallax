@@ -125,9 +125,13 @@ const open = (
 describe('createFileService – L15 spy test: rejected paths never reach the file system or a program', () => {
   it('UNC, device and paths outside the policy: no fs call, no program start (every command, HTTP)', async () => {
     const s = await setup();
-    const rejected = ['\\\\host\\share\\x', '//host/x', '\\\\?\\C:\\x'];
+    // The rules of the host (WP-103): on POSIX a Windows path is no absolute path, `//host/x` is `/host/x`.
+    const rejected =
+      process.platform === 'win32'
+        ? ['\\\\host\\share\\x', '//host/x', '\\\\?\\C:\\x']
+        : ['\\\\host\\share\\x', 'C:\\Windows\\win.ini', '/proc/self/environ', '/etc/../etc/hostname'];
     const outsidePolicy = [
-      'C:\\Windows\\win.ini',
+      process.platform === 'win32' ? 'C:\\Windows\\win.ini' : '//host/x',
       path.join(s.outside, 'secret.txt'),
       path.join(s.home, 'project-other', 'a.txt'),
     ];
@@ -282,6 +286,8 @@ describe('createFileService – GET /api/file (open)', () => {
 describe('createFileService – file.open (ADR-144; recording opener, nothing starts)', () => {
   it('editor: the checked physical path with line/col and the current editor settings', async () => {
     const s = await setup();
+    // VS Code is a preset on both platforms (Notepad++, the default, opens like `system` on Linux).
+    s.settings.current = settingsSchema.parse({ editor: { preset: 'vscode', executable: null, args: [] } });
     const file = path.join(s.cwd, 'src', 'main.ts');
     expect(await s.run(open(file, 'editor', 7))).toEqual({});
     expect(s.opener.calls).toEqual([
@@ -348,6 +354,14 @@ describe('createFileService – file.open (ADR-144; recording opener, nothing st
       code: 'FILE_TYPE_BLOCKED',
       params: {},
     });
+  });
+
+  it('a preset this host does not offer opens like system (Notepad++ on Linux, WP-106)', async () => {
+    const s = await setup();
+    const notepadpp: EditorSettings = { preset: 'notepadpp', executable: null, args: [] };
+    s.settings.current = settingsSchema.parse({ editor: notepadpp });
+    await s.run(open(path.join(s.cwd, 'README.md'), 'editor'));
+    expect(s.opener.calls[0]?.target).toBe(process.platform === 'win32' ? 'editor' : 'default');
   });
 
   it('missing files: FILE_NOT_FOUND, nothing started', async () => {
@@ -418,9 +432,11 @@ describe('createFileService – files.session / files.project', () => {
     expect(await failure(s.run(project))).toEqual({ code: 'CWD_NOT_FOUND', params: {} });
     s.info.cwd = path.join(s.home, 'project', 'README.md');
     expect(await failure(s.run(project))).toEqual({ code: 'CWD_NOT_DIRECTORY', params: {} });
-    s.info.cwd = '\\\\server\\share\\repo';
+    const [unsafe, reason] =
+      process.platform === 'win32' ? ['\\\\server\\share\\repo', 'unc'] : ['/proc/self', 'pseudo_fs'];
+    s.info.cwd = unsafe;
     const before = s.fs.calls.length;
-    expect(await failure(s.run(project))).toEqual({ code: 'PATH_REJECTED', params: { reason: 'unc' } });
+    expect(await failure(s.run(project))).toEqual({ code: 'PATH_REJECTED', params: { reason } });
     expect(s.fs.calls.length).toBe(before);
     expect(s.gitRuns).toEqual([]);
   });

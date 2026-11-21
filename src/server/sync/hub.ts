@@ -5,12 +5,20 @@ import type { RawData } from 'ws';
 import type { z } from 'zod';
 import { LIMITS, type ClientId, type EntryId } from '@shared/common';
 import { errorPayloadSchema, makeError, type ErrorPayload } from '@shared/errors';
-import { hostStateSchema, sessionSummarySchema, type HostState, type SessionSummary } from '@shared/model';
+import {
+  hostStateSchema,
+  remotePeerLevelSchema,
+  sessionSummarySchema,
+  type HostState,
+  type RemotePeerLevel,
+  type SessionSummary,
+} from '@shared/model';
 import {
   PROTOCOL_VERSION,
   WS_CLOSE,
   WS_PATH,
   REMOTE_ALLOWED_COMMANDS,
+  REMOTE_MANAGE_COMMANDS,
   commandResultSchemas,
   isRemoteAllowedCommand,
   notifySchema,
@@ -21,6 +29,8 @@ import {
   type ClientHelloMessage,
   type ClientKind,
   type Command,
+  type CommandName,
+  type ConnectionAccess,
   type Notification,
   type PresenceState,
   type ServerMessage,
@@ -54,6 +64,14 @@ import { CommandError, type ClientPresence, type SessionPublisher, type SessionS
  * from then on nothing is sent to it and nothing it sent runs (checked right before a command
  * executes – this replaces the coupling generation of §B.8 in the hub). Local connections are
  * unchanged.
+ *
+ * WP-107 (WP-76 §B.13, levels): a remote socket may carry `remote` (`RemoteSocketAccess`, set by the
+ * remote-access service): the coupling level at the moment of each command. `control` allows
+ * REMOTE_ALLOWED_COMMANDS, `manage` also REMOTE_MANAGE_COMMANDS (`isRemoteAllowedCommand(name,
+ * level)`); an unknown level counts as `control`, a stale one (null: the generation changed) runs
+ * nothing (HOST_REVOKED). `hello.access` reports the level, `CommandContext.access` carries it to the
+ * engine, the remote-access state and login links are redacted only for `control`, and every command a
+ * remote window runs is reported to `remote.executed` (connection log: `manage_command`, …).
  */
 
 // =====================================================================================
@@ -61,7 +79,20 @@ import { CommandError, type ClientPresence, type SessionPublisher, type SessionS
 // =====================================================================================
 
 /** The subset of a `ws` WebSocket the hub uses (real sockets and test fakes). */
+/**
+ * WP-107: what a socket of the remote-access listener tells the hub about its coupling (absent on
+ * local sockets and on older producers – a remote socket without it counts as `control`).
+ */
+export interface RemoteSocketAccess {
+  /** The coupling level now; null = the connection's generation is stale (nothing may run). */
+  level(): RemotePeerLevel | null;
+  /** The hub runs `command` for this connection (only the name; never parameters). */
+  executed?(command: CommandName): void;
+}
+
 export interface HubSocket {
+  /** WP-107: set only on remote-access sockets. */
+  readonly remote?: RemoteSocketAccess;
   readonly readyState: number;
   readonly bufferedAmount: number;
   send(data: string): void;
@@ -287,6 +318,8 @@ function rawType(text: string): string | null {
 
 /** Command names a remote window may send (raw strings, for messages that failed to parse). */
 const REMOTE_ALLOWED_NAMES: ReadonlySet<string> = new Set(REMOTE_ALLOWED_COMMANDS);
+/** … and those of the level `manage` (WP-107). */
+const REMOTE_MANAGE_NAMES: ReadonlySet<string> = new Set(REMOTE_MANAGE_COMMANDS);
 
 /** Raw `cmd.name` of a command message that failed to parse (for REMOTE_NOT_ALLOWED); null if absent. */
 function rawCommandName(text: string): string | null {
@@ -303,7 +336,11 @@ function rawCommandName(text: string): string | null {
   return null;
 }
 
-/** Remote connections never see the remote-access state (pairing window, peer, log counter – §B.6) nor login links. */
+/**
+ * Remote connections of the level `control` never see the remote-access state (pairing window, peer,
+ * log counter – §B.6) nor login links; `manage` sees both (§B.13: without a desktop the sign-in of
+ * `claude` opens in the controlling computer's browser). The pairing code is never in HostState.
+ */
 function redactForRemote(host: HostState): HostState {
   // Also the links of a running profile login (security review WP-82): whoever opens one and signs
   // in hands that account to the CLI on this computer – they stay on this computer.
@@ -732,8 +769,20 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
     if (conn.origin === 'remote' && conn.state !== 'open') {
       return { type: 'ack', cmdId, ok: false, error: makeError('HOST_REVOKED') };
     }
+    // WP-107: the level at the moment of the command; a stale generation runs nothing.
+    const level = conn.origin === 'remote' ? levelOf(conn) : null;
+    if (conn.origin === 'remote' && level === null) {
+      return { type: 'ack', cmdId, ok: false, error: makeError('HOST_REVOKED') };
+    }
+    if (level !== null && !isRemoteAllowedCommand(cmd.name, level)) {
+      return { type: 'ack', cmdId, ok: false, error: makeError('REMOTE_NOT_ALLOWED', { command: cmd.name }) };
+    }
     try {
-      const result = await source.handleCommand(cmd, { clientId, cmdId });
+      if (level !== null) reportExecuted(conn, cmd.name);
+      const result = await source.handleCommand(
+        cmd,
+        level === null ? { clientId, cmdId } : { clientId, cmdId, access: level },
+      );
       const schema: z.ZodType = commandResultSchemas[cmd.name];
       const parsed = schema.safeParse(result);
       if (!parsed.success) {
@@ -777,9 +826,49 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
     return conn.origin === 'remote' ? `remote\u0000${cmdId}` : cmdId;
   }
 
+  /**
+   * WP-107: the coupling level of a remote connection now – unknown values count as `control`, null =
+   * the connection's generation is stale. Local connections: null (never asked).
+   */
+  function levelOf(conn: Conn): RemotePeerLevel | null {
+    const access = conn.socket.remote;
+    if (access === undefined) return 'control';
+    let raw: unknown;
+    try {
+      raw = access.level();
+    } catch {
+      return null;
+    }
+    if (raw === null) return null;
+    const parsed = remotePeerLevelSchema.safeParse(raw);
+    return parsed.success ? parsed.data : 'control';
+  }
+
+  /** `hello.access` / `CommandContext.access` of a connection. */
+  function accessOf(conn: Conn): ConnectionAccess {
+    return conn.origin === 'remote' ? (levelOf(conn) ?? 'control') : 'local';
+  }
+
+  /** The command report of a remote socket (connection log); a failing report never stops the command. */
+  function reportExecuted(conn: Conn, name: CommandName): void {
+    try {
+      conn.socket.remote?.executed?.(name);
+    } catch (error) {
+      log.warn({ err: error, command: name }, 'remote command report failed');
+    }
+  }
+
+  /** The host state as this connection may see it (redacted for remote `control`). */
+  function hostFor(conn: Conn, host: HostState): HostState {
+    if (conn.origin !== 'remote' || levelOf(conn) === 'manage') return host;
+    return redactForRemote(host);
+  }
+
   /** May this remote connection send a command of this (raw) name at all? The relay sends none. */
   function remoteMayTry(conn: Conn, name: string | null): boolean {
-    return conn.kind !== 'relay' && name !== null && REMOTE_ALLOWED_NAMES.has(name);
+    if (conn.kind === 'relay' || name === null) return false;
+    if (REMOTE_ALLOWED_NAMES.has(name)) return true;
+    return REMOTE_MANAGE_NAMES.has(name) && levelOf(conn) === 'manage';
   }
 
   /** REMOTE_NOT_ALLOWED for a command a remote connection may not send. */
@@ -791,7 +880,10 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
   function handleCmd(conn: Conn, cmdId: string, cmd: Command): void {
     const clientId = conn.clientId;
     if (clientId === null) return;
-    if (conn.origin === 'remote' && (conn.kind === 'relay' || !isRemoteAllowedCommand(cmd.name))) {
+    if (
+      conn.origin === 'remote' &&
+      (conn.kind === 'relay' || !isRemoteAllowedCommand(cmd.name, levelOf(conn) ?? 'control'))
+    ) {
       refuseRemote(conn, cmdId, cmd.name);
       return;
     }
@@ -870,7 +962,7 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
       conn.lastFocusAt = focusMemory.get(message.clientId) ?? null;
     }
     if (checkOutgoing(hostStateSchema, host, 'host state')) {
-      send(conn, { type: 'host.state', host: conn.origin === 'remote' ? redactForRemote(host) : host });
+      send(conn, { type: 'host.state', host: hostFor(conn, host) });
     }
     const valid = list.filter((summary) =>
       checkOutgoing(sessionSummarySchema, summary, `summary ${summary.entryId}`),
@@ -1035,6 +1127,8 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
       serverInstanceId: instance.serverInstanceId,
       serverVersion: instance.serverVersion,
       serverStartedAt: instance.startedAt,
+      // WP-107 (§B.13): display only – every command is checked with the level of its moment.
+      access: accessOf(conn),
     });
     ensureHeartbeat();
   }
@@ -1135,7 +1229,7 @@ export function createSyncHub(options: SyncHubOptions): SyncHub {
     let redacted: string | null = null;
     for (const conn of conns) {
       if (conn.state !== 'open') continue;
-      if (conn.origin === 'remote') {
+      if (conn.origin === 'remote' && levelOf(conn) !== 'manage') {
         redacted ??= JSON.stringify({ type: 'host.state', host: redactForRemote(host) });
         sendText(conn, redacted);
       } else {

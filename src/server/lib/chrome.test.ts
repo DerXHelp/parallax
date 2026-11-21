@@ -2,7 +2,19 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { exeProductVersion, findChrome, readExeVersion } from './chrome';
+import { POSIX_PATHS } from '@shared/paths';
+import {
+  SNAP_CHROMIUM,
+  exeProductVersion,
+  findChrome,
+  findChromeLinux,
+  isSnapChrome,
+  parseChromeVersion,
+  readChromeVersion,
+  readChromeVersionLinux,
+  readExeVersion,
+} from './chrome';
+import type { RunFileFn } from './process';
 import { parseRegDefaultValue, type RegQuery } from './registry';
 import { createMemoryFs } from './windows';
 
@@ -128,5 +140,77 @@ describe('exeProductVersion (preflight: Chrome version without starting it)', ()
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('Chrome on Linux (WP-106, WP-100 §5.3)', () => {
+  const posixFs = (files: string[], notExecutable: string[] = []) =>
+    createMemoryFs(Object.fromEntries(files.map((f) => [f, ''])), { rules: POSIX_PATHS, notExecutable });
+  const env = { PATH: '/usr/local/bin:/usr/bin:/bin' };
+
+  it('a configured program wins, then google-chrome-stable, google-chrome, chromium, chromium-browser on PATH, then the Snap', async () => {
+    const all = [
+      '/opt/own/chrome',
+      '/usr/bin/google-chrome-stable',
+      '/usr/bin/google-chrome',
+      '/usr/bin/chromium',
+    ];
+    expect(await findChromeLinux({ fs: posixFs(all), env, configured: '/opt/own/chrome' })).toBe(
+      '/opt/own/chrome',
+    );
+    expect(await findChromeLinux({ fs: posixFs(all), env })).toBe('/usr/bin/google-chrome-stable');
+    expect(await findChromeLinux({ fs: posixFs(all.slice(2)), env })).toBe('/usr/bin/google-chrome');
+    expect(await findChromeLinux({ fs: posixFs(['/usr/local/bin/chromium-browser']), env })).toBe(
+      '/usr/local/bin/chromium-browser',
+    );
+    expect(await findChromeLinux({ fs: posixFs([SNAP_CHROMIUM]), env })).toBe(SNAP_CHROMIUM);
+    expect(await findChromeLinux({ fs: posixFs([]), env })).toBeNull();
+  });
+
+  it('never a relative PATH entry, an unsafe or non-executable configured program', async () => {
+    const fs = posixFs(['/usr/bin/chromium', 'bin/google-chrome', '/opt/x/chrome'], ['/opt/x/chrome']);
+    expect(await findChromeLinux({ fs, env: { PATH: 'bin::/usr/bin' }, configured: '/opt/x/chrome' })).toBe(
+      '/usr/bin/chromium',
+    );
+    expect(await findChromeLinux({ fs, env: {}, configured: 'chrome' })).toBeNull();
+    expect(fs.touched.some((file) => !file.startsWith('/'))).toBe(false);
+  });
+
+  it('Snap Chromium is recognized by its path', () => {
+    expect(isSnapChrome(SNAP_CHROMIUM)).toBe(true);
+    expect(isSnapChrome('/snap/chromium/current/usr/lib/chromium-browser/chrome')).toBe(true);
+    expect(isSnapChrome('/usr/bin/google-chrome-stable')).toBe(false);
+  });
+
+  it.each([
+    ['Google Chrome 158.0.7712.55 ', '158.0.7712.55'],
+    ['Chromium 158.0.7712.55 snap', '158.0.7712.55'],
+    ['Google Chrome for Testing 157.0.1.2', '157.0.1.2'],
+    ['something else 1.2.3', null],
+    ['', null],
+  ])('parseChromeVersion(%j)', (output, version) => {
+    expect(parseChromeVersion(output)).toBe(version);
+  });
+
+  it('readChromeVersionLinux asks --version with an argument array; failures are null', async () => {
+    const calls: { file: string; args: readonly string[] }[] = [];
+    const run =
+      (stdout: string, exitCode = 0): RunFileFn =>
+      (file, args) => {
+        calls.push({ file, args });
+        return Promise.resolve({ exitCode, signal: null, stdout, stderr: '', timedOut: false });
+      };
+    expect(await readChromeVersionLinux('/usr/bin/google-chrome', run('Google Chrome 158.0.7712.55\n'))).toBe(
+      '158.0.7712.55',
+    );
+    expect(calls).toEqual([{ file: '/usr/bin/google-chrome', args: ['--version'] }]);
+    expect(await readChromeVersionLinux('/usr/bin/google-chrome', run('', 1))).toBeNull();
+    expect(await readChromeVersionLinux('chrome', run('Google Chrome 1.2.3'))).toBeNull();
+    const failing: RunFileFn = () => Promise.reject(new Error('spawn ENOENT'));
+    expect(await readChromeVersionLinux('/usr/bin/chromium', failing)).toBeNull();
+    // Windows keeps the version resource (no process).
+    expect(await readChromeVersion('\\\\evil\\share\\chrome.exe', 'win32', run('x'))).toBeNull();
+    // The unsafe name never reached the runner.
+    expect(calls).toHaveLength(2);
   });
 });

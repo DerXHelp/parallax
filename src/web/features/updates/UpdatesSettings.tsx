@@ -395,7 +395,7 @@ function StatusBlock({ hostState, onOpen }: { hostState: HostState; onOpen: Open
         <input
           ref={fileInput}
           type="file"
-          accept=".zip"
+          accept={hostState.platform === 'win32' ? '.zip' : '.tar.gz,.gz'}
           hidden
           tabIndex={-1}
           aria-hidden

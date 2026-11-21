@@ -1,9 +1,16 @@
 import { useEffect, useMemo, type ReactNode } from 'react';
-import { parseSessionKey } from '@shared/common';
-import { makeError } from '@shared/errors';
-import type { ShellKind } from '@shared/model';
+import { LOCAL_HOST_ID, parseSessionKey } from '@shared/common';
+import { makeError, type ErrorPayload } from '@shared/errors';
+import { shellKindSchema, type ShellKind } from '@shared/model';
 import { TERMINAL_CLOSE_CODES } from '@shared/terminal';
 import { useI18n } from '@web/i18n';
+import { effectiveShell } from '@web/lib/shells';
+import { useSessionPaths } from '@web/state/host-platform';
+import {
+  clearTerminalTarget,
+  useSessionShells,
+  useTerminalTarget,
+} from '@web/shell/navigation/session-actions';
 import { useSettings } from '@web/state/settings';
 import { Alert } from '@web/ui/alert';
 import { Button } from '@web/ui/button';
@@ -22,13 +29,23 @@ import { useTerminalSession } from './state/terminals';
  * first connect without terminals it opens one with the default shell of the settings, after the
  * user closed all of them it shows one button per shell. Server errors show inline (translated
  * code), `available: false` the hint `TERMINAL_UNAVAILABLE`. Root `data-slot="terminal-panel"`.
+ *
+ * WP-105: the shells of the session's computer (`useSessionShells`: on Linux its `shell.detect` list); a
+ * session of another computer connects through this server's relay (`env.socketUrl(hostId)`, E3); a
+ * terminal requested by the shell (`useTerminalTarget`: the claude terminal of "Continue in terminal")
+ * becomes active and takes the focus once it is in the list.
  */
 export function TerminalPanel({ sessionKey }: { sessionKey: string }) {
   const tt = useTerminalT();
   const { tError } = useI18n();
   const env = useTerminalEnvironment();
-  const entryId = parseSessionKey(sessionKey)?.entryId ?? null;
-  const defaultShell = useSettings().console.defaultShell;
+  const parsed = parseSessionKey(sessionKey);
+  const entryId = parsed?.entryId ?? null;
+  const hostId = parsed?.hostId ?? LOCAL_HOST_ID;
+  // WP-104: the shells of the session's computer; a setting it does not offer falls back to its default.
+  const flavor = useSessionPaths(sessionKey).flavor;
+  const shells = useSessionShells(sessionKey);
+  const defaultShell = effectiveShell(useSettings().console.defaultShell, flavor, shells);
   const controller = useMemo(
     () =>
       entryId === null
@@ -36,10 +53,10 @@ export function TerminalPanel({ sessionKey }: { sessionKey: string }) {
         : new TerminalController({
             sessionKey,
             entryId,
-            url: env.socketUrl(),
+            url: env.socketUrl(hostId),
             createSocket: env.createSocket,
           }),
-    [sessionKey, entryId, env],
+    [sessionKey, entryId, hostId, env],
   );
   useEffect(() => {
     controller?.setDefaultShell(defaultShell);
@@ -54,9 +71,26 @@ export function TerminalPanel({ sessionKey }: { sessionKey: string }) {
   const state = useTerminalSession(sessionKey);
   // Until this mount's controller started, the store may still describe an earlier mount.
   const live = controller !== null && state.owner === controller.id;
+  const target = useTerminalTarget(sessionKey);
+  const targetListed =
+    live && target !== null && state.items.some((item) => item.terminalId === target.terminalId);
+  useEffect(() => {
+    if (!targetListed) return;
+    clearTerminalTarget(sessionKey, target.token);
+    controller.select(target.terminalId);
+    controller.focusActive();
+  }, [targetListed, controller, target, sessionKey]);
 
   const open = (shell: ShellKind) => {
     controller?.open(shell);
+  };
+  /** WP-105: SHELL_NOT_FOUND names a missing Linux shell (the error text speaks of Git for Windows). */
+  const errorText = (error: ErrorPayload): string => {
+    const shell = shellKindSchema.safeParse(error.params.shell);
+    if (error.code === 'SHELL_NOT_FOUND' && shell.success && shell.data !== 'gitbash') {
+      return tt('panel.shellMissing', { shell: tt(SHELL_KEYS[shell.data]) });
+    }
+    return tError(error);
   };
   const firstPending = state.pending[0];
 
@@ -96,7 +130,15 @@ export function TerminalPanel({ sessionKey }: { sessionKey: string }) {
       </div>
     );
   } else if (state.items.length > 0) {
-    body = <TerminalTabs state={state} controller={controller} defaultShell={defaultShell} onOpen={open} />;
+    body = (
+      <TerminalTabs
+        state={state}
+        controller={controller}
+        defaultShell={defaultShell}
+        shells={shells}
+        onOpen={open}
+      />
+    );
   } else if (firstPending !== undefined) {
     const shell = tt(SHELL_KEYS[firstPending.shell]);
     body = (
@@ -109,7 +151,7 @@ export function TerminalPanel({ sessionKey }: { sessionKey: string }) {
       </div>
     );
   } else if (state.loaded) {
-    body = <TerminalEmpty defaultShell={defaultShell} onOpen={open} />;
+    body = <TerminalEmpty defaultShell={defaultShell} shells={shells} onOpen={open} />;
   }
 
   return (
@@ -132,7 +174,7 @@ export function TerminalPanel({ sessionKey }: { sessionKey: string }) {
           <Alert
             tone="error"
             data-slot="terminal-error"
-            title={tError(state.error)}
+            title={errorText(state.error)}
             actions={
               <Button
                 size="sm"

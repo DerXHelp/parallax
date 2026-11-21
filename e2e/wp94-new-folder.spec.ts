@@ -65,9 +65,10 @@ test('folder browser: a click selects a subfolder, "New folder" creates one and 
   await expect(name).toHaveCount(0);
   expect((await stat(created)).isDirectory()).toBe(true);
 
-  // The same name again: the server says it exists, nothing else happens.
+  // The same name again (Windows compares names case-insensitively, Linux exactly – WP-109): the
+  // server says it exists, nothing else happens.
   await browser.locator('[data-action="folder-new"]').click();
-  await name.fill('neues projekt');
+  await name.fill(process.platform === 'win32' ? 'neues projekt' : 'Neues Projekt');
   await browser.locator('[data-action="folder-create"]').click();
   await expect(browser.locator('[data-folder-create-error="FOLDER_EXISTS"]')).toBeVisible();
   await page.keyboard.press('Escape');
@@ -81,5 +82,5 @@ test('folder browser: a click selects a subfolder, "New folder" creates one and 
   await dialog.locator('button[type="submit"]').click();
   await expect(dialog).toBeHidden();
   const key = await app.waitForSelection((k) => k !== null);
-  await expect(app.row(key).locator('[data-slot="row-path"]')).toHaveText('blub\\Neues Projekt');
+  await expect(app.row(key).locator('[data-slot="row-path"]')).toHaveText(path.join('blub', 'Neues Projekt'));
 });

@@ -10,7 +10,7 @@ import type {
   SessionSummary,
 } from '@shared/model';
 import { IDLE_PROFILE_LOGIN } from '@shared/model';
-import { windowsPathIssue } from '@shared/paths';
+import { WIN32_PATHS, type PathRules } from '@shared/paths';
 import type { Command } from '@shared/protocol';
 import { sampleClaudeInstallStatus, sampleHostState, sampleId, sampleProfile, sampleTime } from '@shared/samples';
 import { startNewSessionDemo, type NewSessionDemo } from '@web/shell/new-session/demo-host';
@@ -35,8 +35,11 @@ const MACHINE_ENV = new Set(['USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PATH', '
 
 type Checkable = Pick<Profile, 'executable' | 'configDir' | 'env' | 'args' | 'passRawArgs'>;
 
-/** Findings in the server's order (errors, warnings, infos); see the module note. */
-export function demoProfileIssues(profile: Checkable): ProfileIssue[] {
+/**
+ * Findings in the server's order (errors, warnings, infos); see the module note. `rules`: the paths
+ * of the demo host (WP-104: on Linux any absolute file, no `.exe`).
+ */
+export function demoProfileIssues(profile: Checkable, rules: PathRules = WIN32_PATHS): ProfileIssue[] {
   const errors: ProfileIssue[] = [];
   const warnings: ProfileIssue[] = [];
   const infos: ProfileIssue[] = [];
@@ -83,13 +86,13 @@ export function demoProfileIssues(profile: Checkable): ProfileIssue[] {
   }
   if (profile.executable.kind === 'path') {
     const file = profile.executable.path;
-    const pathIssue = windowsPathIssue(file);
+    const pathIssue = rules.issue(file);
     const reason =
       pathIssue === 'not_absolute' || pathIssue === 'empty'
         ? 'not_absolute'
         : pathIssue !== null
           ? 'unsafe'
-          : !/\.exe$/i.test(file)
+          : rules.flavor === 'win32' && !/\.exe$/i.test(file)
             ? 'not_exe'
             : /missing/i.test(file)
               ? 'not_found'
@@ -98,7 +101,7 @@ export function demoProfileIssues(profile: Checkable): ProfileIssue[] {
       errors.push({ level: 'error', issue: makeError('PROFILE_INVALID', { field: 'executable', reason }) });
     }
   }
-  if (profile.configDir !== null && windowsPathIssue(profile.configDir) !== null) {
+  if (profile.configDir !== null && rules.issue(profile.configDir) !== null) {
     errors.push({ level: 'error', issue: makeError('PROFILE_INVALID', { field: 'configDir', reason: 'unsafe' }) });
   }
   for (const [key, value] of Object.entries(profile.env)) {

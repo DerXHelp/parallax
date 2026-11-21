@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { makeError } from '@shared/errors';
 import { isRemoteAllowedCommand, type HostCommand } from '@shared/protocol';
+import { POSIX_PATHS } from '@shared/paths';
 import { SAMPLE_IDS, sampleId, sampleSettings } from '@shared/samples';
 import type { ConsoleLaunchSpec } from '../claude/ports';
 import { createMemoryFs } from '../lib/windows';
@@ -39,6 +40,7 @@ function commands(p: Partial<ShellCommandsDeps> & { launcher: ConsoleLauncher })
     fs: createMemoryFs({ [`${GIT}\\git-bash.exe`]: '', [`${GIT}\\bin\\bash.exe`]: '' }),
     regKeyQuery: () => Promise.resolve(null),
     checkCwd: () => Promise.resolve(),
+    platform: 'win32',
     ...p,
   });
 }
@@ -111,16 +113,69 @@ describe('session.openShell (WP-97, ADR-238)', () => {
 describe('shell.detect', () => {
   it('the Git folder (override first), fresh every time', async () => {
     const { fake } = launcher();
-    expect(await commands({ launcher: fake }).handle({ name: 'shell.detect' }, CTX)).toEqual({ gitDir: GIT });
+    expect(await commands({ launcher: fake }).handle({ name: 'shell.detect' }, CTX)).toEqual({
+      gitDir: GIT,
+      shells: ['cmd', 'powershell', 'gitbash'],
+    });
     const none = commands({ launcher: fake, fs: createMemoryFs({}), env: { ...ENV, ProgramFiles: 'C:\\x' } });
-    expect(await none.handle({ name: 'shell.detect' }, CTX)).toEqual({ gitDir: null });
+    expect(await none.handle({ name: 'shell.detect' }, CTX)).toMatchObject({ gitDir: null });
+  });
+});
+
+describe('Linux (WP-105)', () => {
+  const linuxEnv = { HOME: '/home/demo', PATH: '/usr/local/bin:/usr/bin', SHELL: '/usr/bin/bash' };
+  const linuxFs = () =>
+    createMemoryFs({ '/usr/bin/bash': '', '/usr/local/bin/zsh': '' }, { rules: POSIX_PATHS });
+
+  it('shell.detect: login and the installed shells, no Git folder and no registry', async () => {
+    const { fake } = launcher();
+    const asked: string[] = [];
+    const linux = commands({
+      launcher: fake,
+      platform: 'linux',
+      env: linuxEnv,
+      fs: linuxFs(),
+      regKeyQuery: (key) => {
+        asked.push(key);
+        return Promise.resolve(null);
+      },
+    });
+    expect(await linux.handle({ name: 'shell.detect' }, CTX)).toEqual({
+      gitDir: null,
+      shells: ['login', 'bash', 'zsh'],
+    });
+    expect(asked).toEqual([]);
+  });
+
+  it('session.openShell: the login shell as a login shell for the window launcher', async () => {
+    const { fake, opened } = launcher();
+    const linux = commands({
+      launcher: fake,
+      platform: 'linux',
+      env: linuxEnv,
+      fs: linuxFs(),
+      entryCwd: () => '/home/demo/proj',
+      passwdShell: () => null,
+    });
+    await linux.handle({ name: 'session.openShell', entryId: SAMPLE_IDS.entry, shell: 'login' }, CTX);
+    expect(opened[0]).toMatchObject({
+      executablePath: '/usr/bin/bash',
+      args: ['-l'],
+      cwd: '/home/demo/proj',
+    });
+    expect(
+      await errorPayload(
+        linux.handle({ name: 'session.openShell', entryId: SAMPLE_IDS.entry, shell: 'cmd' }, CTX),
+      ),
+    ).toEqual(makeError('SHELL_NOT_FOUND', { shell: 'cmd' }));
   });
 });
 
 describe('remote access', () => {
-  it('neither command is allowed from another computer', () => {
+  it('no shell window from another computer; its shell list is allowed (WP-102)', () => {
     expect(isRemoteAllowedCommand('session.openShell')).toBe(false);
-    expect(isRemoteAllowedCommand('shell.detect')).toBe(false);
+    // WP-102 (E3): the shell list serves the embedded terminal of a controlling computer.
+    expect(isRemoteAllowedCommand('shell.detect')).toBe(true);
   });
 });
 

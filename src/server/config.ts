@@ -1,5 +1,4 @@
 import { readFileSync, statSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -7,8 +6,9 @@ import { z } from 'zod';
 import { BUILD_ID } from '@shared/build';
 import { LOOPBACK_HOST, backendKindSchema, type BackendKind } from '@shared/http';
 import { DEFAULT_PORT, SETTINGS_SCHEMA_VERSION, settingsFileSchema, type Settings } from '@shared/model';
-import { isWindowsPathInside, windowsPathIssue, windowsPathsEqual } from '@shared/paths';
-import { PRODUCT_ID, PRODUCT_NAME } from '@shared/product';
+import { pathFlavorOf, pathRules, type PathRules } from '@shared/paths';
+import { PRODUCT_ID } from '@shared/product';
+import { defaultDataDir, defaultDataDirLabel } from './lib/dataDir';
 import { newUuid } from './lib/ids';
 import { logLevelSchema, type LogLevel } from './lib/logger';
 import { fsErrorCode } from './lib/paths';
@@ -23,9 +23,10 @@ import { SETTINGS_FILE } from './store/settings';
  *
  * Flags: `--dev`, `--backend=fake|sdk`, `--port=<0..65535>`, `--host=127.0.0.1`, `--home=<dir>`,
  * `--log-level=<level>`, `--validate=off|log|throw`, `--toasts=native|off`,
- * `--system-integration=auto|on|off`. Env: `PARALLAX_HOME`, `PARALLAX_PORT` (0 = any free port),
- * `PARALLAX_HOST`, `PARALLAX_BACKEND`, `PARALLAX_DEV` (`1`/`true`), `PARALLAX_LOG_LEVEL`,
- * `PARALLAX_VALIDATE`, `PARALLAX_TOASTS`, `PARALLAX_SYSTEM_INTEGRATION`.
+ * `--system-integration=auto|on|off`, `--key-store=auto|file`, `--desktop=auto|off`. Env: `PARALLAX_HOME`,
+ * `PARALLAX_PORT` (0 = any free port), `PARALLAX_HOST`, `PARALLAX_BACKEND`, `PARALLAX_DEV` (`1`/`true`),
+ * `PARALLAX_LOG_LEVEL`, `PARALLAX_VALIDATE`, `PARALLAX_TOASTS`, `PARALLAX_SYSTEM_INTEGRATION`,
+ * `PARALLAX_KEY_STORE`, `PARALLAX_DESKTOP`.
  *
  * The bind address is always 127.0.0.1 (Plan "Sicherheit", A.8; R1-05, ADR-023): `--host` /
  * `PARALLAX_HOST` stay accepted for ADR-006 compatibility, every other value is a ConfigError –
@@ -33,10 +34,23 @@ import { SETTINGS_FILE } from './store/settings';
  *
  * The FakeBackend never runs on the real data directory or inside it (R3-02, ADR-061): fake
  * answers, fake session ids and fake PIDs would mix with the real entries – ConfigError.
+ *
+ * Platforms (WP-103): the real data directory comes from lib/dataDir.ts (Windows
+ * `%LOCALAPPDATA%\Parallax`, Linux `$XDG_DATA_HOME/parallax` or `~/.local/share/parallax`); paths are
+ * resolved and checked with the rules of the platform (`LoadConfigInput.platform`, default this
+ * process). Native toasts: Windows toasts, on Linux the desktop's notifications (WP-106).
  */
 
-/** Default data directory in dev mode, relative to the working directory (never %LOCALAPPDATA%). */
+/** Default data directory in dev mode, relative to the working directory (never the real data directory). */
 export const DEV_HOME_DIR = '.parallax-dev';
+
+/** `path.win32`/`path.posix` and the path rules of a platform. */
+function platformPaths(platform: NodeJS.Platform): { path: typeof path.posix; rules: PathRules } {
+  return {
+    path: platform === 'win32' ? path.win32 : path.posix,
+    rules: pathRules(pathFlavorOf(platform)),
+  };
+}
 
 /** From @shared/http (the health answer reports it, R3-02). */
 export { backendKindSchema, type BackendKind };
@@ -50,11 +64,14 @@ export const validationModeSchema = z.enum(['off', 'log', 'throw']);
 export type ValidationMode = z.infer<typeof validationModeSchema>;
 
 /**
- * Native Windows toasts (WP22-03/-15, Plan A.9; sessions/nativeToasts.ts): `native` on Windows,
+ * Native toasts (WP22-03/-15, Plan A.9; sessions/nativeToasts.ts): `native` on Windows and Linux
+ * (WP-106: `notify-send`/D-Bus; without a graphical session the notifier switches itself off),
  * `off` under Vitest and in the E2E servers (`NODE_ENV=test`) – a test run must not pop up toasts
- * or write the HKCU app id. Flag `--toasts=native|off`, env `PARALLAX_TOASTS`.
+ * or write the HKCU app id. Other platforms: off. Flag `--toasts=native|off`, env `PARALLAX_TOASTS`.
  */
 export const toastModeSchema = z.enum(['native', 'off']);
+/** Platforms with native toasts (lib/toast.ts). */
+const NATIVE_TOAST_PLATFORMS: ReadonlySet<NodeJS.Platform> = new Set<NodeJS.Platform>(['win32', 'linux']);
 export type ToastMode = z.infer<typeof toastModeSchema>;
 
 /**
@@ -67,6 +84,24 @@ export type ToastMode = z.infer<typeof toastModeSchema>;
  */
 export const systemIntegrationModeSchema = z.enum(['auto', 'on', 'off']);
 export type SystemIntegrationMode = z.infer<typeof systemIntegrationModeSchema>;
+
+/**
+ * Key store of "Several computers" (WP-76 §B.14): `auto` = the platform's protected store (DPAPI;
+ * Linux: Secret Service, then `systemd-creds --user`); `file` = Linux without a desktop may keep the
+ * keys in a 0600 file (explicit opt-in, with warnings – WP-107). `file` is a ConfigError on Windows.
+ * Flag `--key-store`, env `PARALLAX_KEY_STORE`.
+ */
+export const keyStoreModeSchema = z.enum(['auto', 'file']);
+export type KeyStoreMode = z.infer<typeof keyStoreModeSchema>;
+
+/**
+ * Desktop of this server (WP-109, WP-100 §5.8): `auto` = what the session offers (Windows always;
+ * Linux with `DISPLAY`/`WAYLAND_DISPLAY`); `off` = server mode (`parallax --server`, systemd, SSH): no
+ * desktop actions (console window, editor, file manager, autostart, `parallax:`), no native toasts –
+ * other computers steer it. Flag `--desktop`, env `PARALLAX_DESKTOP`.
+ */
+export const desktopModeSchema = z.enum(['auto', 'off']);
+export type DesktopMode = z.infer<typeof desktopModeSchema>;
 
 export interface ServerConfig {
   dev: boolean;
@@ -86,6 +121,10 @@ export interface ServerConfig {
   logLevel: LogLevel;
   /** Autostart + protocol handler (ADR-110); `auto` is decided by `systemIntegrationAvailable`. */
   systemIntegration: SystemIntegrationMode;
+  /** WP-76 §B.14: `file` = the opt-in for the 0600 key file on Linux (WP-107). */
+  keyStore: KeyStoreMode;
+  /** WP-109: `off` = server mode without desktop actions and native toasts. */
+  desktop: DesktopMode;
   /**
    * WP-86 `--install-root=<dir>`: root folder of the installation this server runs from (the
    * launcher passes it on in package mode; start.mjs, autostart and protocol handler point there).
@@ -124,10 +163,16 @@ function nonEmpty(value: string | undefined): string | undefined {
   return value === undefined || value === '' ? undefined : value;
 }
 
-/** `%LOCALAPPDATA%\Parallax` (falls back to `<home>\AppData\Local\Parallax`). */
-export function defaultHome(env: NodeJS.ProcessEnv = process.env): string {
-  const base = nonEmpty(env.LOCALAPPDATA) ?? path.join(os.homedir(), 'AppData', 'Local');
-  return path.join(base, PRODUCT_NAME);
+/**
+ * The real data directory: Windows `%LOCALAPPDATA%\Parallax` (falls back to
+ * `<home>\AppData\Local\Parallax`), Linux `$XDG_DATA_HOME/parallax` or `~/.local/share/parallax`
+ * (lib/dataDir.ts).
+ */
+export function defaultHome(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return defaultDataDir(env, platform);
 }
 
 export interface LoadConfigInput {
@@ -138,6 +183,8 @@ export interface LoadConfigInput {
   cwd?: string;
   /** Text of a file (throws like `readFileSync`); seam for the settings file (default: real fs). */
   readFile?: (file: string) => string;
+  /** Test seam: path rules, data directory and toasts of this platform (default `process.platform`). */
+  platform?: NodeJS.Platform;
 }
 
 // ---- settings.json, read-only (ADR-111) ----
@@ -161,17 +208,20 @@ function readTextFile(file: string): string {
  * Reads `<home>/settings.json` WITHOUT writing or moving anything (the settings store of the
  * server owns the file; the launcher only peeks): missing → no settings, no hint; unreadable,
  * invalid or written by a newer Parallax version (`schemaVersion` > SETTINGS_SCHEMA_VERSION) →
- * no settings and a hint. Never throws. Under Vitest the real data directory is never read, also
- * not through a hand-made `env` (CLAUDE.md "Tests").
+ * no settings and a hint. Never throws. Under Vitest the real data directory of THIS machine is
+ * never read, also not through a hand-made `env` (CLAUDE.md "Tests"). `platform` joins the file
+ * name (test seam).
  */
 export function readSettingsFile(
   home: string,
   readFile: (file: string) => string = readTextFile,
+  platform: NodeJS.Platform = process.platform,
 ): SettingsPeek {
-  if (process.env.VITEST !== undefined && isWindowsPathInside(home, defaultHome(process.env))) {
+  const host = platformPaths(process.platform);
+  if (process.env.VITEST !== undefined && host.rules.isInside(home, defaultHome(process.env))) {
     return { settings: null, note: null };
   }
-  const file = path.join(home, SETTINGS_FILE);
+  const file = platformPaths(platform).path.join(home, SETTINGS_FILE);
   const ignored = (why: string): SettingsPeek => ({
     settings: null,
     note: `${file} ignored (${why}) - using the defaults for port and autostart`,
@@ -240,13 +290,15 @@ export function systemIntegrationAvailable(
     platform === 'win32' &&
     config.backend === 'sdk' &&
     !config.dev &&
-    windowsPathsEqual(config.home, defaultHome(env))
+    platformPaths(platform).rules.equal(config.home, defaultHome(env, platform))
   );
 }
 
 export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
   const env = input.env ?? process.env;
   const cwd = input.cwd ?? process.cwd();
+  const platform = input.platform ?? process.platform;
+  const { path: paths, rules } = platformPaths(platform);
   let values: Record<string, string | boolean | undefined>;
   try {
     ({ values } = parseArgs({
@@ -262,6 +314,8 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
         toasts: { type: 'string' },
         'system-integration': { type: 'string' },
         'install-root': { type: 'string' },
+        'key-store': { type: 'string' },
+        desktop: { type: 'string' },
       },
       strict: true,
       allowPositionals: false,
@@ -300,26 +354,25 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
       : parseOrThrow(logLevelSchema, logLevelRaw, 'log level');
 
   const homeRaw = flag('home') ?? nonEmpty(env.PARALLAX_HOME);
-  const realHome = defaultHome(env);
+  const realHome = defaultHome(env, platform);
   const home =
     homeRaw === undefined
       ? dev
-        ? path.resolve(cwd, DEV_HOME_DIR)
+        ? paths.resolve(cwd, DEV_HOME_DIR)
         : realHome
-      : path.resolve(cwd, parseOrThrow(homeSchema, homeRaw, 'home'));
-  if (process.platform === 'win32') {
-    const issue = windowsPathIssue(home);
-    if (issue !== null) throw new ConfigError(`invalid home (${issue}): ${home}`);
-  }
-  const isRealHome = windowsPathsEqual(home, realHome);
+      : paths.resolve(cwd, parseOrThrow(homeSchema, homeRaw, 'home'));
+  const homeIssue = rules.issue(home);
+  if (homeIssue !== null) throw new ConfigError(`invalid home (${homeIssue}): ${home}`);
+  const isRealHome = rules.equal(home, realHome);
   // Also no folder inside it (R0-23).
-  if (env.VITEST !== undefined && isWindowsPathInside(home, realHome)) {
+  if (env.VITEST !== undefined && rules.isInside(home, realHome)) {
     throw new ConfigError(`tests must not use the real data directory ${realHome}`);
   }
-  if (backend === 'fake' && isWindowsPathInside(home, realHome)) {
+  if (backend === 'fake' && rules.isInside(home, realHome)) {
     throw new ConfigError(
       `the FakeBackend never uses the real data directory ${realHome} - pass --home=<dir> or ` +
-        'PARALLAX_HOME (e.g. a folder in %TEMP%), or start without --backend=fake/PARALLAX_BACKEND=fake',
+        `PARALLAX_HOME (e.g. a folder in ${platform === 'win32' ? '%TEMP%' : '/tmp'}), or start without ` +
+        '--backend=fake/PARALLAX_BACKEND=fake',
     );
   }
 
@@ -330,7 +383,7 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
   if (portRaw !== undefined) {
     port = parseOrThrow(portSchema, portRaw, 'port');
   } else {
-    const peek = readSettingsFile(home, input.readFile);
+    const peek = readSettingsFile(home, input.readFile, platform);
     if (peek.note !== null) notes.push(peek.note);
     port = peek.settings?.port ?? DEFAULT_PORT;
   }
@@ -343,10 +396,20 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
     isTestRun(env),
   );
 
+  const keyStoreRaw = flag('key-store') ?? nonEmpty(env.PARALLAX_KEY_STORE);
+  const keyStore =
+    keyStoreRaw === undefined ? 'auto' : parseOrThrow(keyStoreModeSchema, keyStoreRaw, 'key store');
+  if (keyStore === 'file' && platform === 'win32') {
+    throw new ConfigError('the file key store exists only on Linux - Windows uses DPAPI');
+  }
+
+  const desktopRaw = flag('desktop') ?? nonEmpty(env.PARALLAX_DESKTOP);
+  const desktop = desktopRaw === undefined ? 'auto' : parseOrThrow(desktopModeSchema, desktopRaw, 'desktop');
+
   const installRootRaw = flag('install-root');
-  const installRoot = installRootRaw === undefined ? null : path.resolve(cwd, installRootRaw);
-  if (installRoot !== null && process.platform === 'win32') {
-    const issue = windowsPathIssue(installRoot);
+  const installRoot = installRootRaw === undefined ? null : paths.resolve(cwd, installRootRaw);
+  if (installRoot !== null) {
+    const issue = rules.issue(installRoot);
     if (issue !== null) throw new ConfigError(`invalid install root (${issue}): ${installRoot}`);
   }
 
@@ -360,12 +423,24 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
         : 'log';
 
   const toastsRaw = flag('toasts') ?? nonEmpty(env.PARALLAX_TOASTS);
-  const toasts: ToastMode =
+  let toasts: ToastMode =
     toastsRaw !== undefined
       ? parseOrThrow(toastModeSchema, toastsRaw, 'toasts')
-      : process.platform === 'win32' && env.VITEST === undefined && env.NODE_ENV !== 'test'
+      : NATIVE_TOAST_PLATFORMS.has(platform) &&
+          desktop === 'auto' &&
+          env.VITEST === undefined &&
+          env.NODE_ENV !== 'test'
         ? 'native'
         : 'off';
+  // Native toasts are Windows toasts and Linux desktop notifications (lib/toast.ts); elsewhere the
+  // browser notifications stay.
+  if (toasts === 'native' && !NATIVE_TOAST_PLATFORMS.has(platform)) {
+    notes.push('native toasts exist only on Windows and Linux - toasts are off');
+    toasts = 'off';
+  } else if (toasts === 'native' && desktop === 'off') {
+    notes.push('server mode has no desktop - native toasts are off');
+    toasts = 'off';
+  }
 
   return {
     dev,
@@ -375,9 +450,11 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
     port,
     host,
     home,
-    dataDirLabel: isRealHome ? `%LOCALAPPDATA%\\${PRODUCT_NAME}` : dev ? 'dev' : home,
+    dataDirLabel: isRealHome ? defaultDataDirLabel(env, platform) : dev ? 'dev' : home,
     logLevel,
     systemIntegration,
+    keyStore,
+    desktop,
     installRoot,
     notes,
   };

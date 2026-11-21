@@ -10,6 +10,8 @@
  * replace can fail the same way – both sides retry (`LOCK_RETRY_DELAYS_MS`, `withFsRetry`). Readers
  * never see a half-written file (temp file + rename); anything unreadable counts as `invalid`/
  * `missing`, never as an error.
+ *
+ * WP-107: on Linux the file is written with mode 0600 (it holds the launcher token; `privateFiles`).
  */
 import { readFile, unlink } from 'node:fs/promises';
 import path from 'node:path';
@@ -22,6 +24,7 @@ import {
 } from '@shared/http';
 import { DEFAULT_RETRY_DELAYS_MS, withFsRetry, writeFileAtomic, type FsOps } from '../lib/fs';
 import { fsErrorCode } from '../lib/paths';
+import { secureFsOps } from '../secure/privateFiles';
 
 /**
  * Retry delays of the lock-file rename (≈ 4.6 s): longer than the stores' default, because a
@@ -110,7 +113,7 @@ export async function writeServerLock(options: WriteServerLockOptions): Promise<
   const file = serverLockPath(options.home);
   await writeFileAtomic(file, `${JSON.stringify(lock, null, 2)}\n`, {
     retryDelaysMs: LOCK_RETRY_DELAYS_MS,
-    ...(options.fs === undefined ? {} : { fs: options.fs }),
+    fs: options.fs ?? secureFsOps(),
   });
   let released = false;
   return {

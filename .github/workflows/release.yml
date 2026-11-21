@@ -1,8 +1,10 @@
 # Release of a tag vX.Y.Z (WP-85, docs/wp/WP-83.md §6). Four jobs, one after the other:
 #   build   - checks, build, E2E, release-pack (no secret, read-only)
-#   sign    - environment "release": signs release.json, zips, writes and signs latest.json, draft release
-#             (installs nothing, runs only scripts/release/sign.ts)
-#   smoke   - the finished zip under the minimum Node and Node 26 (FakeBackend, temp home)
+#   sign    - environment "release": signs release.json, packs the signed folder twice (Windows zip, Linux
+#             tarball, WP-108), writes and signs latest.json, draft release (installs nothing, runs only
+#             scripts/release/sign.ts)
+#   smoke   - each archive on its platform (windows-latest, ubuntu-24.04) under the minimum Node and Node 26
+#             (FakeBackend, temp home and user folders)
 #   publish - the draft becomes public; a failure before leaves at most a draft
 # Actions are pinned by commit SHA (version as comment), updated only when older than 14 days.
 name: Release
@@ -102,7 +104,7 @@ jobs:
         with:
           name: package
           path: ${{ runner.temp }}/package
-      - name: Sign, zip, latest.json
+      - name: Sign, zip, tarball, latest.json
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
         run: |
@@ -113,8 +115,11 @@ jobs:
           node scripts/release/sign.ts sign (Join-Path $pkg "$folder/release.json")
           $zip = Join-Path $out "$folder-win.zip"
           & (Join-Path $env:SystemRoot 'System32\tar.exe') -a -c -f $zip -C $pkg $folder
+          # WP-108: the same signed folder for Linux (ustar/pax, modes of the shell scripts, uid/gid 0).
+          $tarball = Join-Path $out "$folder-linux-x64.tar.gz"
+          node scripts/release/sign.ts tarball (Join-Path $pkg $folder) $tarball
           Copy-Item (Join-Path $pkg "$folder/CHANGELOG.md") $out
-          node scripts/release/sign.ts latest --zip $zip --version $env:VERSION --release (Join-Path $pkg "$folder/release.json") --notes (Join-Path $pkg 'notes.md') --changelog (Join-Path $out 'CHANGELOG.md') --out (Join-Path $out 'latest.json')
+          node scripts/release/sign.ts latest --zip $zip --tarball $tarball --version $env:VERSION --release (Join-Path $pkg "$folder/release.json") --notes (Join-Path $pkg 'notes.md') --changelog (Join-Path $out 'CHANGELOG.md') --out (Join-Path $out 'latest.json')
           node scripts/release/sign.ts sign (Join-Path $out 'latest.json')
           Copy-Item (Join-Path $pkg 'notes.md') $out
       - name: Draft release
@@ -123,7 +128,7 @@ jobs:
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           $out = Join-Path $env:RUNNER_TEMP 'release'
-          $assets = @("parallax-$env:VERSION-win.zip", 'latest.json', 'latest.json.sig', 'CHANGELOG.md') | ForEach-Object { Join-Path $out $_ }
+          $assets = @("parallax-$env:VERSION-win.zip", "parallax-$env:VERSION-linux-x64.tar.gz", 'latest.json', 'latest.json.sig', 'CHANGELOG.md') | ForEach-Object { Join-Path $out $_ }
           $flags = @('--draft', '--verify-tag', '--title', "Parallax $env:VERSION", '--notes-file', (Join-Path $out 'notes.md'))
           if ($env:VERSION.Contains('-')) { $flags += '--prerelease' }
           gh release create $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY @flags @assets
@@ -136,15 +141,22 @@ jobs:
 
   smoke:
     needs: [build, sign]
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
+        # Each archive on its platform (WP-108).
+        os: [windows-latest, ubuntu-24.04]
         # The minimum (engines.node, release.json minNode) and the standard version.
         node: ['26.9.0', '26']
+        include:
+          - os: windows-latest
+            asset: win.zip
+          - os: ubuntu-24.04
+            asset: linux-x64.tar.gz
     env:
       VERSION: ${{ needs.build.outputs.version }}
     steps:
@@ -161,10 +173,12 @@ jobs:
           name: release
           path: ${{ runner.temp }}/release
       - name: Verify, install the SDK, start, health
+        env:
+          ASSET: ${{ matrix.asset }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           $release = Join-Path $env:RUNNER_TEMP 'release'
-          pnpm exec tsx --tsconfig tsconfig.tools.json scripts/release/smoke.ts --zip (Join-Path $release "parallax-$env:VERSION-win.zip") --latest (Join-Path $release 'latest.json') --work (Join-Path $env:RUNNER_TEMP 'smoke')
+          pnpm exec tsx --tsconfig tsconfig.tools.json scripts/release/smoke.ts --archive (Join-Path $release "parallax-$env:VERSION-$env:ASSET") --latest (Join-Path $release 'latest.json') --work (Join-Path $env:RUNNER_TEMP 'smoke')
 
   publish:
     needs: smoke

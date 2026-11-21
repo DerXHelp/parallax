@@ -24,10 +24,14 @@ import { makeError } from '@shared/errors';
 import {
   currentSessionId,
   draftTotalChars,
+  editorExecutableIssue,
   type Entry,
   type PlanDecision,
   type Settings,
+  type SettingsPatch,
 } from '@shared/model';
+import type { PathRules } from '@shared/paths';
+import { HOST_PATH_RULES } from '../lib/paths';
 import {
   isHostCommand,
   type Command,
@@ -51,7 +55,7 @@ import {
   type EntryCommand,
   type EntryState,
 } from './entryState';
-import { consoleCommand, openExternal, returnFromExternal } from './external';
+import { consoleCommand, openExternal, openInTerminal, returnFromExternal } from './external';
 import { approveFreshContext } from './freshContext';
 import { catalogOrFallback, toModelCatalog } from './models';
 import { endRemoteBeforeClose, setRemoteControl } from './remoteControl';
@@ -94,6 +98,8 @@ export async function handleCommand(
       case 'session.create':
         return await createSession(engine, cmd, ctx.clientId);
       case 'settings.update': {
+        assertSettingsAccess(cmd.patch, ctx);
+        assertHostSettings(cmd.patch);
         const prev = engine.core.stores.settings.get();
         const settings = engine.core.stores.settings.update(cmd.patch);
         engine.settingsChanged(prev, settings);
@@ -106,7 +112,7 @@ export async function handleCommand(
       }
       default:
         if (isHostCommand(cmd)) return await hostCommand(engine, cmd, ctx);
-        return await entryCommand(engine, cmd, ctx.clientId);
+        return await entryCommand(engine, cmd, ctx);
     }
   } catch (error) {
     if (error instanceof CommandError) throw error;
@@ -117,6 +123,31 @@ export async function handleCommand(
 
 function notImplemented(name: string): CommandError {
   return commandError('NOT_IMPLEMENTED', { command: name });
+}
+
+/**
+ * WP-102: the shared schema accepts an editor path of either shape (Windows or POSIX); a host stores
+ * only one its own rules accept → VALIDATION_FAILED {field: 'editor.executable', reason}.
+ */
+export function assertHostSettings(patch: SettingsPatch, rules: PathRules = HOST_PATH_RULES): void {
+  const executable = patch.editor?.executable;
+  if (executable === undefined || executable === null) return;
+  const issue = editorExecutableIssue(executable, rules);
+  if (issue !== null) throw commandError('VALIDATION_FAILED', { field: 'editor.executable', reason: issue });
+}
+
+/**
+ * Security review WP-109 (WP-76 §B.13): settings that start programs on this computer's desktop – the
+ * editor and the console (terminal emulator, Git Bash) – change only from a window of this computer.
+ * The view "Manage" hides those sections; the server enforces it.
+ */
+export const LOCAL_ONLY_SETTINGS = ['editor', 'console'] as const satisfies readonly (keyof SettingsPatch)[];
+
+export function assertSettingsAccess(patch: SettingsPatch, ctx: CommandContext): void {
+  if ((ctx.access ?? 'local') === 'local') return;
+  if (LOCAL_ONLY_SETTINGS.some((key) => patch[key] !== undefined)) {
+    throw commandError('REMOTE_NOT_ALLOWED', { command: 'settings.update' });
+  }
 }
 
 /** ADR-101: the handler that lists the name; its CommandErrors pass through unchanged. */
@@ -250,7 +281,8 @@ async function materializeForNewEntry(
 
 // ---- commands of one entry ----
 
-async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: ClientId): Promise<unknown> {
+async function entryCommand(engine: CommandEngine, cmd: EntryCommand, ctx: CommandContext): Promise<unknown> {
+  const { clientId } = ctx;
   const s = engine.state(cmd.entryId);
   if (s === undefined) throw commandError('ENTRY_NOT_FOUND', { entryId: cmd.entryId });
   // Checked again inside the lifecycle lock by every command that waits for it (R4-01).
@@ -359,6 +391,9 @@ async function entryCommand(engine: CommandEngine, cmd: EntryCommand, clientId: 
     // Phase 2 (WP-34): external console (ADR-104), continue after the rate limit (ADR-112).
     case 'session.openExternal':
       return openExternal(core, s, clientId);
+    // 102e: "Continue in terminal" – the same handoff into an embedded terminal.
+    case 'session.openInTerminal':
+      return openInTerminal(core, s, clientId, (ctx.access ?? 'local') === 'local' ? 'local' : 'remote');
     case 'session.reclaim':
       return returnFromExternal(core, s, 'command');
     case 'session.consoleCommand':

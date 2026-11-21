@@ -226,10 +226,10 @@ async function attachText(testInfo: TestInfo, name: string, text: string): Promi
 /** Release offered by the release server for a package (zip, its changelog, its notes). */
 async function offerOf(pkg: TestPackage | undefined): Promise<OfferedRelease> {
   if (pkg === undefined) throw new Error('unknown package');
-  const zip = await pkg.zip();
+  const archive = await pkg.archive();
   return {
     version: pkg.version,
-    zip: zip.bytes,
+    archive: archive.bytes,
     changelog: changelogUpTo(pkg.version, VERSIONS),
     notes: notesOf(pkg.version),
   };
@@ -462,14 +462,14 @@ test('upload of a foreign file → UPDATE_INVALID_PACKAGE', async ({ page }) => 
   const app = await openApp(page, w.server);
   const section = await updatesSection(app);
   await section.locator('[data-slot="update-file-input"]').setInputFiles({
-    name: 'not-a-package.zip',
-    mimeType: 'application/zip',
+    name: process.platform === 'win32' ? 'not-a-package.zip' : 'not-a-package.tar.gz',
+    mimeType: process.platform === 'win32' ? 'application/zip' : 'application/gzip',
     buffer: Buffer.from('This is a text file, not a Parallax package.\n', 'utf8'),
   });
   const error = section.locator('[data-slot="update-error"][data-code="UPDATE_INVALID_PACKAGE"]');
   await expect(error).toBeVisible({ timeout: 60_000 });
   await expect(error.locator('[data-slot="update-error-detail"]')).toHaveText(
-    'The file is not a readable zip archive.',
+    'The file is not a readable package archive.',
   );
   await expect(statusOf(section)).toHaveText('Parallax is up to date.');
   // The upload is gone from <root>\downloads.
@@ -485,9 +485,9 @@ test('upload of a package with a wrong SDK hash → UPDATE_SDK_FAILED', async ({
   const section = await updatesSection(app);
   const pkg = w.packages[BAD_SDK];
   if (pkg === undefined) throw new Error('no package with a wrong SDK hash');
-  const zip = await pkg.zip();
+  const archive = await pkg.archive();
   const before = w.release.requests.length;
-  await section.locator('[data-slot="update-file-input"]').setInputFiles(zip.file);
+  await section.locator('[data-slot="update-file-input"]').setInputFiles(archive.file);
   const error = section.locator('[data-slot="update-error"][data-code="UPDATE_SDK_FAILED"]');
   await expect(error).toBeVisible({ timeout: 120_000 });
   await expect(statusOf(section)).toHaveText('Parallax is up to date.');

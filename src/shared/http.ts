@@ -20,7 +20,13 @@ import {
 } from './common';
 import { DEV_WEB_PORT } from './devPorts';
 import { errorPayloadSchema } from './errors';
-import { appVersionSchema, blobRefSchema, hostNameSchema } from './model';
+import {
+  appVersionSchema,
+  blobRefSchema,
+  hostNameSchema,
+  remoteAccessStateSchema,
+  remotePeerLevelSchema,
+} from './model';
 import { PRODUCT_ID } from './product';
 import { WS_PATH } from './protocol';
 
@@ -39,6 +45,13 @@ export const API_PATHS = {
   authStatus: '/api/auth/status',
   /** POST with `Authorization: Bearer <launcherToken>` and without Origin: fresh one-time code. */
   launcherCode: '/api/launcher/code',
+  /**
+   * WP-102 (WP-76 §B.13): POST `launcherRemoteRequestSchema` → `launcherRemoteResponseSchema` with
+   * `Authorization: Bearer <launcherToken>` and without Origin, Sec-Fetch-* or Cookie (like
+   * `launcherCode`): "Share" and the coupling from the command line (`parallax remote …`), e.g. on a
+   * computer without a desktop. The pairing code only in the answer to `pair`, never logged.
+   */
+  launcherRemote: '/api/launcher/remote',
   /** GET with cookie; route pattern – build URLs with blobPath(). */
   blob: '/api/blob/:blobId',
   /**
@@ -70,7 +83,8 @@ export const API_PATHS = {
   ws: WS_PATH,
   /**
    * WP-99 (ADR-239): WebSocket of the embedded terminal (`src/shared/terminal.ts`). Guard class "ws"
-   * like `ws`; never in `HOST_API_PATHS` – the forwarder of another computer never passes it on.
+   * like `ws`. WP-102 (E3, WP-76 §B.13): a controlling computer reaches it through
+   * `HOST_API_PATHS.terminalWs` → `REMOTE_PATHS.terminalWs`.
    */
   terminalWs: '/api/terminal/ws',
 } as const;
@@ -241,6 +255,34 @@ export const launcherCodeResponseSchema = z.object({
   serverInstanceId: z.uuid(),
 });
 export type LauncherCodeResponse = z.infer<typeof launcherCodeResponseSchema>;
+
+/**
+ * `POST /api/launcher/remote` body (WP-102, WP-76 §B.13): `status`; `enable`/`disable` = "Share"
+ * on/off (role `share` resp. `off`); `pair` = open a pairing window with that level (replaces an
+ * open one); `cancel` = close it; `unpair` = revoke the coupling; `level` = change its level.
+ */
+export const launcherRemoteRequestSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('status') }),
+  z.object({ action: z.literal('enable') }),
+  z.object({ action: z.literal('disable') }),
+  z.object({ action: z.literal('pair'), level: remotePeerLevelSchema.default('control') }),
+  z.object({ action: z.literal('cancel') }),
+  z.object({ action: z.literal('unpair') }),
+  z.object({ action: z.literal('level'), level: remotePeerLevelSchema }),
+]);
+export type LauncherRemoteRequest = z.infer<typeof launcherRemoteRequestSchema>;
+
+/**
+ * `POST /api/launcher/remote` success: the state after the action (`null` = not sharing) and, only
+ * for `pair`, the formatted code (`src/shared/pairing.ts`) and the end of the window. Errors as
+ * `ErrorPayload` with the code's HTTP status (e.g. LAUNCHER_TOKEN_INVALID, REMOTE_KEYSTORE_UNAVAILABLE).
+ */
+export const launcherRemoteResponseSchema = z.object({
+  remoteAccess: remoteAccessStateSchema.nullable(),
+  code: z.string().min(1).max(64).nullable(),
+  expiresAt: isoDateTimeSchema.nullable(),
+});
+export type LauncherRemoteResponse = z.infer<typeof launcherRemoteResponseSchema>;
 
 /** Session backend of a server: `sdk` = the real `claude`, `fake` = FakeBackend (no tokens). */
 export const backendKindSchema = z.enum(['sdk', 'fake']);
@@ -517,11 +559,19 @@ export const HOST_API_PATHS = {
   blob: '/api/hosts/:hostId/blob/:blobId',
   file: '/api/hosts/:hostId/file',
   attachments: '/api/hosts/:hostId/attachments',
+  /** WP-102 (E3): the embedded terminal of that computer (class ws) → `REMOTE_PATHS.terminalWs`. */
+  terminalWs: '/api/hosts/:hostId/terminal/ws',
 } as const;
 
 /** `/api/hosts/<hostId>/ws`. */
 export function hostWsPath(hostId: HostId): string {
   return HOST_API_PATHS.ws.replace(':hostId', hostId);
+}
+
+/** `/api/terminal/ws` for this computer, `/api/hosts/<hostId>/terminal/ws` for another (WP-102). */
+export function hostTerminalWsPath(hostId: HostId): string {
+  if (hostId === LOCAL_HOST_ID) return API_PATHS.terminalWs;
+  return HOST_API_PATHS.terminalWs.replace(':hostId', hostId);
 }
 
 /** `/api/blob/<blobId>` for this computer, `/api/hosts/<hostId>/blob/<blobId>` for another. */
@@ -557,6 +607,8 @@ export const REMOTE_PATHS = {
   health: '/remote/v1/health',
   /** WebSocket upgrade → the sync hub like a window (or the relay, `clientHello.kind`). */
   ws: '/remote/v1/ws',
+  /** WP-102 (E3): WebSocket upgrade → the embedded terminal like `/api/terminal/ws` (every level). */
+  terminalWs: '/remote/v1/terminal/ws',
   /** GET like `/api/blob/:blobId`. */
   blob: '/remote/v1/blob/:blobId',
   /** GET/HEAD like `/api/file` (query `fileQuerySchema`). */

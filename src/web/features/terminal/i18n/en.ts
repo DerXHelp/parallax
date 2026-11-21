@@ -17,18 +17,33 @@ export const en = {
     /** `{shell}` = `shells.*`. */
     starting: 'Starting {shell}…',
     dismiss: 'Dismiss',
+    /** WP-105: SHELL_NOT_FOUND of a shell other than Git Bash (`{shell}` = `shells.*`). */
+    shellMissing: '{shell} is not installed on this computer.',
   },
   /** Menu texts of the shells (like the console button of the header). */
   shells: {
     cmd: 'Command Prompt (cmd)',
     powershell: 'PowerShell',
     gitbash: 'Git Bash',
+    /** WP-102: Linux – the user's login shell, then the common ones. */
+    login: 'Login shell',
+    bash: 'Bash',
+    zsh: 'Zsh',
+    fish: 'fish',
+    pwsh: 'PowerShell 7',
   },
   /** Short shell names in the tabs. */
   short: {
     cmd: 'cmd',
     powershell: 'PowerShell',
     gitbash: 'Git Bash',
+    login: 'Shell',
+    bash: 'bash',
+    zsh: 'zsh',
+    fish: 'fish',
+    pwsh: 'pwsh',
+    /** WP-105: the terminal of "Continue in terminal" (`command: 'claude'`). */
+    claude: 'claude',
   },
   tabs: {
     label: 'Terminals of this session',
@@ -60,6 +75,12 @@ export const en = {
     failed: 'The shell could not be started.',
     restart: 'Restart',
     close: 'Close',
+    /** WP-105: the claude terminal ended – the session is back in Parallax. */
+    claude: 'claude exited with code {code} – the session continues here',
+    claudeUnknown: 'claude exited – the session continues here',
+    claudeFailed: 'claude could not be started.',
+    /** WP-105: "Restart" of an ended claude terminal opens a shell (`{shell}` = `short.*`). */
+    shell: 'Open {shell}',
   },
   menu: {
     copy: 'Copy',

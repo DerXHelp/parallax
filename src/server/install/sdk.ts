@@ -15,18 +15,22 @@
  * `--sdk-tarball` stays). The checked bytes are copied into the cache (temp file + rename) and the
  * cache file is unpacked with `System32\tar.exe --strip-components=1`; afterwards `package.json`
  * must carry the spec's name and version.
+ *
+ * Linux (WP-108): npm of the official Node build lives in `<prefix>/lib/node_modules/npm` (node is
+ * `<prefix>/bin/node`), the archive is unpacked with `/usr/bin/tar` (GNU tar; `--no-same-owner
+ * --no-same-permissions`, also when run as root in a container), paths follow the POSIX rules.
  */
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, open, readdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
-import { windowsPathIssue } from '@shared/paths';
 import { toError } from '../lib/async';
 import { withFsRetry } from '../lib/fs';
 import { logger } from '../lib/logger';
 import { fsErrorCode } from '../lib/paths';
 import { runFile, systemTool, type RunFileFn, type RunFileResult } from '../lib/process';
+import { installPathRules } from './layout';
 import { authFor, readNpmrc, registryFor, type Npmrc } from './npmrc';
 
 /** `release.json` `sdk`. */
@@ -48,11 +52,11 @@ export interface ProvideSdkOptions {
   tarball?: string;
   /** `--registry <url>` */
   registry?: string;
-  /** Default `process.execPath`; npm is looked up next to it. */
+  /** Default `process.execPath`; npm is looked up next to it (`npmCliPath`). */
   nodeExe?: string;
   /** Default `process.env` (npm configuration, `.npmrc`, registry variables). */
   env?: NodeJS.ProcessEnv;
-  /** Default `runFile` (npm and tar.exe). */
+  /** Default `runFile` (npm and tar: `tarTool()`). */
   run?: RunFileFn;
   fetch?: typeof fetch;
   /** Progress lines for the user (English); default: the server log. */
@@ -195,7 +199,7 @@ function runFailure(result: RunFileResult, timeoutMs: number): string | null {
 }
 
 function assertUsablePath(label: string, file: string): void {
-  const issue = windowsPathIssue(file);
+  const issue = installPathRules().issue(file);
   if (issue !== null) throw new SdkError(`${label} path refused (${issue}): ${file}`);
 }
 
@@ -287,19 +291,36 @@ async function storeInCache(
 
 // ---- unpack ----
 
+/** The archiver: `System32\tar.exe` (bsdtar) on Windows, `/usr/bin/tar` or `/bin/tar` elsewhere. */
+export function tarTool(platform: NodeJS.Platform = process.platform): string {
+  return systemTool(platform === 'win32' ? 'tar.exe' : 'tar', process.env, platform);
+}
+
+/** Unpack arguments; GNU tar keeps owner and mode of the archive for root unless told otherwise. */
+export function unpackArgs(
+  archive: string,
+  target: string,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  const args = ['-x', '-z', '-f', archive, '--strip-components=1', '-C', target];
+  if (platform !== 'win32') args.push('--no-same-owner', '--no-same-permissions');
+  return args;
+}
+
 async function unpack(ctx: Context): Promise<void> {
   await mkdir(ctx.target, { recursive: true });
-  const args = ['-x', '-z', '-f', ctx.cacheFile, '--strip-components=1', '-C', ctx.target];
+  const args = unpackArgs(ctx.cacheFile, ctx.target);
+  const tar = tarTool();
   let problem: string | null;
   try {
-    const result = await ctx.run(systemTool('tar.exe'), args, {
+    const result = await ctx.run(tar, args, {
       cwd: ctx.target,
       env: ctx.childEnv,
       timeoutMs: TAR_TIMEOUT_MS,
     });
     problem = runFailure(result, TAR_TIMEOUT_MS);
   } catch (error) {
-    problem = `tar.exe could not be started: ${errorText(error)}`;
+    problem = `${path.basename(tar)} could not be started: ${errorText(error)}`;
   }
   problem ??= await checkUnpacked(ctx);
   if (problem !== null) {
@@ -341,13 +362,26 @@ export function packedFileName(stdout: string): string | null {
   if (!parsed.success) return null;
   const [first] = parsed.data;
   if (first === undefined) return null;
-  const name = path.basename(first.filename);
+  // Both separators on every platform: the name must stay a plain file name in the work folder.
+  const name = path.win32.basename(first.filename);
   return name.toLowerCase().endsWith('.tgz') ? name : null;
 }
 
 interface Fetched {
   file: string;
   workDir: string;
+}
+
+/**
+ * npm of a Node installation: `<node folder>\node_modules\npm\bin\npm-cli.js` on Windows,
+ * `<prefix>/lib/node_modules/npm/bin/npm-cli.js` for `<prefix>/bin/node` elsewhere.
+ */
+export function npmCliPath(nodeExe: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform === 'win32') {
+    return path.win32.join(path.win32.dirname(nodeExe), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  }
+  const prefix = path.posix.dirname(path.posix.dirname(nodeExe));
+  return path.posix.join(prefix, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js');
 }
 
 /** `npm pack` into a fresh folder; null (with the reason in `attempts`) when npm is missing or fails. */
@@ -357,7 +391,7 @@ async function viaNpm(
   registry: string | undefined,
   attempts: string[],
 ): Promise<Fetched | null> {
-  const npmCli = path.join(path.dirname(nodeExe), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  const npmCli = npmCliPath(nodeExe);
   if (!(await isFile(npmCli))) {
     attempts.push(`npm next to Node: ${npmCli} not found`);
     ctx.log(`npm not found next to Node (${npmCli}), downloading directly`);

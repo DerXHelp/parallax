@@ -1,5 +1,13 @@
 import { LIMITS } from '@shared/common';
-import { fromGitBashPath, resolveWindowsPath } from '@shared/paths';
+import {
+  WIN32_PATHS,
+  fromGitBashPath,
+  isPosixPathInside,
+  posixPathKey,
+  resolvePosixPath,
+  resolveWindowsPath,
+  type PathRules,
+} from '@shared/paths';
 
 /**
  * Pure recognizer of file references in text (WP-55, ADR-141, L15): drive paths (`C:\…`, `C:/…`),
@@ -15,9 +23,37 @@ import { fromGitBashPath, resolveWindowsPath } from '@shared/paths';
  * single spaces into folder names (`C:\Program Files\nodejs\node.exe`, `extendOverSpaces`); an
  * inline code span is one candidate as a whole (`findCodeRefs`). A cut-off prefix of a name with
  * spaces is never reported. All patterns run in linear time (R5W-05).
+ *
+ * Host platform (WP-104): every function takes the path rules of the session's HOST (default
+ * `WIN32_PATHS` – everything above, unchanged). On a POSIX host (Linux) drive, Git Bash, UNC and device
+ * paths are no references; instead absolute paths under well-known roots (`/home/…`, `/tmp/…`, `/usr/…`
+ * …, `POSIX_ROOT`) or under the session's cwd, `~/…` (home of the host – unknown to the UI, so only
+ * resolved when the home derived from the cwd puts the file under the cwd) and relative paths with `/`.
+ * URLs, fractions (`1/2`), dates (`2026/11/21`) and slash commands (`/clear`) stay text.
  */
 
-export type FileRefKind = 'drive' | 'git_bash' | 'file_url' | 'relative' | 'unc' | 'device';
+export type FileRefKind =
+  | 'drive'
+  | 'git_bash'
+  | 'file_url'
+  | 'relative'
+  | 'unc'
+  | 'device'
+  /** WP-104, POSIX hosts: an absolute path (`/home/u/a.ts`). */
+  | 'posix'
+  /** WP-104, POSIX hosts: `~/…` as written (resolved with `resolveFileRef`). */
+  | 'home';
+
+/** Which host the text belongs to (WP-104): its path rules and the session's cwd. */
+export interface FileRefScope {
+  /** Path rules of the session's host; `WIN32_PATHS` = everything as before WP-104. */
+  readonly rules: PathRules;
+  /** cwd of the session: on a POSIX host absolute paths below it are references too. */
+  readonly cwd: string | null;
+}
+
+/** The default: a Windows host, no cwd needed (relative references resolve later). */
+export const WINDOWS_FILE_REF_SCOPE: FileRefScope = { rules: WIN32_PATHS, cwd: null };
 
 /** Where a reference points to – also the result of `parseFileTarget` (Markdown link targets). */
 export interface FileTarget {
@@ -80,6 +116,21 @@ const OTHER_WHITESPACE = /[^\S ]/u;
 const OPENERS = new Set(['(', '[', '{']);
 const TRAILING = new Set(['.', ',', ':', ';', '!']);
 const CLOSERS: Readonly<Record<string, string>> = { ')': '(', ']': '[', '}': '{' };
+
+// ---- POSIX hosts (WP-104) ----
+
+/** Roots under which an absolute path in running text is a reference on a POSIX host. */
+const POSIX_ROOTS = 'home|root|tmp|usr|etc|var|opt|mnt|media|srv|run|workspace';
+/** An absolute path under a well-known root with at least one name below it (`/home/u`, not `/home`). */
+const POSIX_ROOT = new RegExp(String.raw`^\/(?:${POSIX_ROOTS})\/[^/]`);
+/** Such a path after a prefix that is no path (`→/home/u/x`); not after a word, `:` (`host:/x`) or a path sign. */
+const POSIX_ROOT_INSIDE = new RegExp(String.raw`(?<![\p{L}\p{N}_.~/:\\-])\/(?:${POSIX_ROOTS})\/[^/]`, 'u');
+/** A relative path with `/` as the only separator (`\` is an ordinary character on Linux). */
+const POSIX_RELATIVE = new RegExp(String.raw`^(?:\.{1,2}\/)*(?:${SEGMENT}\/)*${SEGMENT}$`, 'u');
+/** `~/` followed by a name (spaces only reach `classify` from a code span, `wholeCodeRef`). */
+const POSIX_HOME = /^~\/[^/]/;
+/** `/C:/…` – a Windows drive path in a `file:` URL, never a file of a POSIX host. */
+const SLASHED_DRIVE = /^\/[A-Za-z]:[\\/]/;
 
 /** The part after the last separator (the name; empty after a trailing separator). */
 function lastSegment(path: string): string {
@@ -158,11 +209,51 @@ function decode(value: string): string {
   }
 }
 
+type Classified = Pick<FileTarget, 'path' | 'kind' | 'unsafe'>;
+
+function isPosix(scope: FileRefScope): boolean {
+  return scope.rules.flavor === 'posix';
+}
+
+/** Segments that end with a dot are prose (`e.g./i.e.`), not names (Windows even drops the dot). */
+function hasProseSegment(segments: readonly string[]): boolean {
+  return segments.some((segment) => segment !== '.' && segment !== '..' && segment.endsWith('.'));
+}
+
+/**
+ * POSIX `classify`: absolute paths (running text: under a well-known root or the cwd; a link target:
+ * any), `~/…` and relative paths with `/`. `//…` (protocol-relative, comments) is never a path here.
+ */
+function classifyPosix(body: string, relativeNeedsExtension: boolean, cwd: string | null): Classified | null {
+  if (body.startsWith('~/')) {
+    if (!POSIX_HOME.test(body) || hasProseSegment(body.slice(2).split('/'))) return null;
+    return { path: body, kind: 'home', unsafe: false };
+  }
+  if (body.startsWith('/')) {
+    if (body.startsWith('//') || body.length < 2 || SLASHED_DRIVE.test(body)) return null;
+    // A link target is explicit; running text needs a known root or the session's folder.
+    if (!relativeNeedsExtension || POSIX_ROOT.test(body)) return { path: body, kind: 'posix', unsafe: false };
+    if (cwd === null || posixPathKey(cwd) === '/') return null;
+    const resolved = resolvePosixPath(body, body);
+    return resolved !== null && isPosixPathInside(resolved, cwd)
+      ? { path: body, kind: 'posix', unsafe: false }
+      : null;
+  }
+  if (/^[\\~$%]/.test(body) || !POSIX_RELATIVE.test(body)) return null;
+  const segments = body.split('/');
+  if (hasProseSegment(segments)) return null;
+  if (relativeNeedsExtension && (segments.length < 2 || !hasExtension(body))) return null;
+  if (!/[^/.]/.test(body)) return null;
+  return { path: body, kind: 'relative', unsafe: false };
+}
+
 /** Kind and normalized path of a reference body (without suffix); null when it is no path. */
 function classify(
   body: string,
   relativeNeedsExtension: boolean,
-): Pick<FileTarget, 'path' | 'kind' | 'unsafe'> | null {
+  scope: FileRefScope = WINDOWS_FILE_REF_SCOPE,
+): Classified | null {
+  if (isPosix(scope)) return classifyPosix(body, relativeNeedsExtension, scope.cwd);
   if (DEVICE.test(body)) return { path: body, kind: 'device', unsafe: true };
   if (UNC.test(body)) return { path: body, kind: 'unc', unsafe: true };
   if (DRIVE.test(body)) return body.length > 3 ? { path: body, kind: 'drive', unsafe: false } : null;
@@ -174,15 +265,23 @@ function classify(
   if (/^[\\/~$%]/.test(body) || !RELATIVE.test(body)) return null;
   const segments = body.split(/[\\/]/);
   // Windows drops a trailing dot of a name – such a "segment" is prose (`e.g./i.e.`), not a path.
-  if (segments.some((segment) => segment !== '.' && segment !== '..' && segment.endsWith('.'))) return null;
+  if (hasProseSegment(segments)) return null;
   if (relativeNeedsExtension && (segments.length < 2 || !hasExtension(body))) return null;
   if (!/[^\\/.]/.test(body)) return null;
   return { path: body, kind: 'relative', unsafe: false };
 }
 
-/** `file:///C:/x`, `file://localhost/C:/x` → drive path; `file://host/share` → unsafe UNC. */
-function classifyFileUrl(rest: string): Pick<FileTarget, 'path' | 'kind' | 'unsafe'> | null {
+/**
+ * `file:///C:/x`, `file://localhost/C:/x` → drive path; `file://host/share` → unsafe UNC. On a POSIX
+ * host `file:///home/u/x` and `file://localhost/home/u/x` → `/home/u/x`; another host is no reference.
+ */
+function classifyFileUrl(rest: string, scope: FileRefScope = WINDOWS_FILE_REF_SCOPE): Classified | null {
   const decoded = decode(rest);
+  if (isPosix(scope)) {
+    const path = /^(?:localhost)?(\/.*)$/i.exec(decoded)?.[1] ?? null;
+    if (path === null || path.length < 2 || path.startsWith('//') || SLASHED_DRIVE.test(path)) return null;
+    return { path, kind: 'file_url', unsafe: false };
+  }
   const local = /^(?:\/|localhost\/)([A-Za-z]:[\\/].*)$/i.exec(decoded);
   if (local !== null) {
     const path = local[1] ?? '';
@@ -203,22 +302,31 @@ function makeRef(text: string, start: number, end: number, target: FileTarget): 
 }
 
 /** A `file://` URL in running text (the scheme match covers it up to whitespace). */
-function fileUrlRef(text: string, start: number, match: string): FileRef | null {
+function fileUrlRef(text: string, start: number, match: string, scope: FileRefScope): FileRef | null {
   const value = trimEnd(match);
   const { body, line, col, endLine } = splitSuffix(value);
-  const target = classifyFileUrl(body.slice('file://'.length));
+  const target = classifyFileUrl(body.slice('file://'.length), scope);
   if (target === null) return null;
   return makeRef(text, start, start + value.length, { ...target, line, col, endLine });
 }
 
 /** One token of running text (between delimiters); null when it holds no reference. */
-function tokenRef(text: string, tokenStart: number, token: string): FileRef | null {
+function tokenRef(text: string, tokenStart: number, token: string, scope: FileRefScope): FileRef | null {
   let offset = 0;
   while (offset < token.length && OPENERS.has(token.charAt(offset))) offset++;
   const key = KEY_PREFIX.exec(token.slice(offset));
   if (key !== null) offset += key[0].length;
   let value = token.slice(offset);
-  if (!DRIVE.test(value) && !DEVICE.test(value) && !UNC.test(value) && !GIT_BASH.test(value)) {
+  if (isPosix(scope)) {
+    // An absolute path under a known root after a prefix that is no path (`→/home/u/x`).
+    if (!value.startsWith('/') && !value.startsWith('~/')) {
+      const inside = POSIX_ROOT_INSIDE.exec(value);
+      if (inside !== null && inside.index > 0 && !POSIX_RELATIVE.test(value)) {
+        offset += inside.index;
+        value = value.slice(inside.index);
+      }
+    }
+  } else if (!DRIVE.test(value) && !DEVICE.test(value) && !UNC.test(value) && !GIT_BASH.test(value)) {
     // A drive path after a prefix that is no path (`→C:\x`, `at:C:\x`).
     const inside = DRIVE_INSIDE.exec(value);
     if (inside !== null && inside.index > 0 && !RELATIVE.test(value)) {
@@ -229,7 +337,7 @@ function tokenRef(text: string, tokenStart: number, token: string): FileRef | nu
   value = trimEnd(value);
   if (value === '' || value.length > LIMITS.pathChars) return null;
   const { body, line, col, endLine } = splitSuffix(value);
-  const target = classify(body, true);
+  const target = classify(body, true, scope);
   if (target === null) return null;
   const start = tokenStart + offset;
   return makeRef(text, start, start + value.length, { ...target, line, col, endLine });
@@ -247,14 +355,27 @@ function tokenRef(text: string, tokenStart: number, token: string): FileRef | nu
  * a name with spaces (`…\Projekt mit Leerzeichen`, `…\My File.txt`): that base is dropped (null)
  * instead of linking – or refusing – a mere prefix. Each step looks at most `LIMITS.pathChars`
  * ahead and stops at the next drive, so long texts stay linear.
+ * POSIX hosts (WP-104, `/home/u/My Project/a.md`, `~/My Notes/a.md`): the same extension with `/`, but
+ * a base without an extension stays a reference (`/etc/hosts contains …`): names with spaces are rare
+ * on Linux, many files have no extension, and the stat check (`verify`) keeps a prefix that does not
+ * exist plain text.
  */
-function extendOverSpaces(text: string, working: string, ref: FileRef, tokenEnd: number): FileRef | null {
-  if (ref.kind !== 'drive' && ref.kind !== 'git_bash') return ref;
+function extendOverSpaces(
+  text: string,
+  working: string,
+  ref: FileRef,
+  tokenEnd: number,
+  scope: FileRefScope,
+): FileRef | null {
+  const posix = isPosix(scope);
+  if (posix ? ref.kind !== 'posix' && ref.kind !== 'home' : ref.kind !== 'drive' && ref.kind !== 'git_bash') {
+    return ref;
+  }
   // Trimmed punctuation or brackets, a line suffix, a trailing separator or a file name: complete.
   if (ref.end !== tokenEnd || splitSuffix(ref.raw).body !== ref.raw) return ref;
   const tail = lastSegment(ref.raw);
   if (tail === '' || hasExtension(tail)) return ref;
-  const separator = ref.kind === 'git_bash' ? '/' : ref.raw.charAt(2);
+  const separator = posix || ref.kind === 'git_bash' ? '/' : ref.raw.charAt(2);
   const otherSeparator = separator === '/' ? '\\' : '/';
   let best: FileRef | null = null;
   let previous = tail;
@@ -277,9 +398,9 @@ function extendOverSpaces(text: string, working: string, ref: FileRef, tokenEnd:
     if (first === 0 || word.slice(0, first).includes(':')) break;
     const raw = trimEnd(text.slice(ref.start, end));
     const { body, line, col, endLine } = splitSuffix(raw);
-    if (body.includes(':', 2)) break;
+    if (body.includes(':', posix ? 0 : 2)) break;
     const name = lastSegment(body);
-    const target = name === '' || hasExtension(name) ? classify(body, true) : null;
+    const target = name === '' || hasExtension(name) ? classify(body, true, scope) : null;
     if (target?.kind === ref.kind) {
       best = makeRef(text, ref.start, ref.start + raw.length, { ...target, line, col, endLine });
     }
@@ -288,6 +409,7 @@ function extendOverSpaces(text: string, working: string, ref: FileRef, tokenEnd:
     position = end;
   }
   if (best !== null) return best;
+  if (posix) return ref;
   WORD.lastIndex = ref.end + 1;
   const continues = working.charAt(ref.end) === ' ' && WORD.test(working);
   return continues ? null : ref;
@@ -307,19 +429,22 @@ function mask(text: string, pattern: RegExp, onMatch?: (match: string, index: nu
 
 /**
  * Every file reference of `text`, in order and without overlaps. Positions refer to `text`.
- * Never throws; texts without a separator return quickly.
+ * Never throws; texts without a separator return quickly. `scope`: the host the text belongs to.
  */
-export function findFileRefs(text: string): FileRef[] {
+export function findFileRefs(text: string, scope: FileRefScope = WINDOWS_FILE_REF_SCOPE): FileRef[] {
   if (!/[\\/]/.test(text)) return [];
+  const posix = isPosix(scope);
   const refs: FileRef[] = [];
   let working = mask(text, URL_PATTERN, (match, index) => {
     if (!/^file:\/\//i.test(match)) return;
-    const ref = fileUrlRef(text, index, match);
+    const ref = fileUrlRef(text, index, match, scope);
     if (ref !== null) refs.push(ref);
   });
   working = mask(working, DEVICE_PATTERN, (match, index) => {
+    // Masked on every host (the `?` would split the token); a reference only on Windows.
     const value = trimEnd(match);
-    if (value.length > 4) refs.push(makeRef(text, index, index + value.length, deviceTarget(value)));
+    if (!posix && value.length > 4)
+      refs.push(makeRef(text, index, index + value.length, deviceTarget(value)));
   });
   working = mask(working, WWW_PATTERN);
   if (working.includes('@')) working = mask(working, EMAIL_PATTERN);
@@ -327,8 +452,9 @@ export function findFileRefs(text: string): FileRef[] {
   for (const token of working.matchAll(TOKEN)) {
     // Words a path with spaces already took.
     if (token.index < consumed) continue;
-    const base = tokenRef(text, token.index, token[0]);
-    const ref = base === null ? null : extendOverSpaces(text, working, base, token.index + token[0].length);
+    const base = tokenRef(text, token.index, token[0], scope);
+    const ref =
+      base === null ? null : extendOverSpaces(text, working, base, token.index + token[0].length, scope);
     if (ref === null) continue;
     refs.push(ref);
     consumed = ref.end;
@@ -341,22 +467,28 @@ export function findFileRefs(text: string): FileRef[] {
  * also in the file name (`C:\Users\Max Mustermann\My File.txt`). Not for a command or several paths:
  * no characters a path never holds, no colon after the drive (except a line suffix), no name that
  * starts or ends with a space, and no word with an extension before a space (`C:\a\b.ts and c.md`,
- * `C:\x\tool.exe --help`). Null when the span is something else.
+ * `C:\x\tool.exe --help`). Null when the span is something else. POSIX hosts (WP-104): the same
+ * for an absolute path under a known root or the cwd and for `~/…`, without any colon.
  */
-function wholeCodeRef(code: string): FileRef | null {
+function wholeCodeRef(code: string, scope: FileRefScope): FileRef | null {
+  const posix = isPosix(scope);
   const value = code.trim();
   if (!value.includes(' ') || value.length > LIMITS.pathChars) return null;
-  if (!DRIVE.test(value) && !GIT_BASH.test(value)) return null;
+  const absolute = posix
+    ? value.startsWith('/') || value.startsWith('~/')
+    : DRIVE.test(value) || GIT_BASH.test(value);
+  if (!absolute) return null;
   if (NOT_IN_PATH.test(value) || OTHER_WHITESPACE.test(value)) return null;
   const { body, line, col, endLine } = splitSuffix(value);
-  if (body.includes(':', 2)) return null;
-  for (const segment of body.split(/[\\/]/)) {
+  if (body.includes(':', posix ? 0 : 2)) return null;
+  for (const segment of body.split(posix ? '/' : /[\\/]/)) {
     if (segment !== segment.trim()) return null;
     const words = segment.split(' ');
     if (words.slice(0, -1).some((word) => hasExtension(word))) return null;
   }
-  const target = classify(body, true);
-  if (target === null || (target.kind !== 'drive' && target.kind !== 'git_bash')) return null;
+  const target = classify(body, true, scope);
+  const kinds: readonly FileRefKind[] = posix ? ['posix', 'home'] : ['drive', 'git_bash'];
+  if (target === null || !kinds.includes(target.kind)) return null;
   const start = code.indexOf(value);
   return makeRef(code, start, start + value.length, { ...target, line, col, endLine });
 }
@@ -365,23 +497,45 @@ function wholeCodeRef(code: string): FileRef | null {
  * File references of an inline code span (V4-01): the span as one path when it is one
  * (`wholeCodeRef`), else the references of its text like running text (a command with a path).
  */
-export function findCodeRefs(code: string): FileRef[] {
-  const whole = wholeCodeRef(code);
-  return whole === null ? findFileRefs(code) : [whole];
+export function findCodeRefs(code: string, scope: FileRefScope = WINDOWS_FILE_REF_SCOPE): FileRef[] {
+  const whole = wholeCodeRef(code, scope);
+  return whole === null ? findFileRefs(code, scope) : [whole];
 }
 
 /**
- * The absolute Windows path of a reference: relative ones against `cwd` (null without one), the
- * others only normalized (`/` → `\`, `..` resolved). Null for unsafe references and for every
- * result that fails the C.10 filter (`resolveWindowsPath`).
+ * The home folder of a POSIX host as far as the cwd tells it (`/home/<name>`, `/root`), else null.
+ * The UI does not know the real one (no contract field), so `resolveHome` only accepts a result
+ * below the cwd – then the guess cannot point anywhere the session does not work in anyway.
+ */
+function homeOf(cwd: string): string | null {
+  const key = posixPathKey(cwd);
+  return (/^\/home\/[^/]+/.exec(key) ?? /^\/root(?=\/|$)/.exec(key))?.[0] ?? null;
+}
+
+/** `~/…` on a POSIX host: against the home derived from the cwd, only when the file lies under the cwd. */
+function resolveHome(path: string, cwd: string | null): string | null {
+  if (cwd === null || !path.startsWith('~/')) return null;
+  const home = homeOf(cwd);
+  if (home === null) return null;
+  const resolved = resolvePosixPath(home, path.slice(2));
+  return resolved !== null && isPosixPathInside(resolved, cwd) ? resolved : null;
+}
+
+/**
+ * The absolute path of a reference on its host (`rules`, default Windows): relative ones against
+ * `cwd` (null without one), `~/…` see `resolveHome`, the others only normalized (Windows: `/` → `\`;
+ * `..` resolved). Null for unsafe references and for every result that fails the C.10 filter of
+ * the host (`rules.resolve`).
  */
 export function resolveFileRef(
   ref: Pick<FileTarget, 'path' | 'kind' | 'unsafe'>,
   cwd: string | null,
+  rules: PathRules = WIN32_PATHS,
 ): string | null {
   if (ref.unsafe) return null;
-  if (ref.kind === 'relative') return cwd === null ? null : resolveWindowsPath(cwd, ref.path);
-  return resolveWindowsPath(ref.path, ref.path);
+  if (ref.kind === 'relative') return cwd === null ? null : rules.resolve(cwd, ref.path);
+  if (ref.kind === 'home') return rules.flavor === 'posix' ? resolveHome(ref.path, cwd) : null;
+  return rules.resolve(ref.path, ref.path);
 }
 
 /**
@@ -389,9 +543,11 @@ export function resolveFileRef(
  * `file:///C:/…` or a relative path (no extension needed – a link is explicit); `#L12`/`:12` give
  * the line, another fragment or a query is dropped. Link destinations come percent-encoded (`\` →
  * `%5C`) and are decoded first. Null for web URLs, other schemes, anchors and rooted paths;
- * `file://host/…` and UNC targets come back `unsafe`.
+ * `file://host/…` and UNC targets come back `unsafe`. On a POSIX host (`rules`, WP-104) any absolute
+ * path (`/docs/a.md`), `~/…` and `file:///home/…` are local targets instead of drive paths.
  */
-export function parseFileTarget(target: string): FileTarget | null {
+export function parseFileTarget(target: string, rules: PathRules = WIN32_PATHS): FileTarget | null {
+  const scope: FileRefScope = { rules, cwd: null };
   let value = decode(target.trim());
   if (value === '' || value.length > LIMITS.pathChars) return null;
   const fileUrl = /^file:\/\/(.*)$/i.exec(value);
@@ -402,18 +558,30 @@ export function parseFileTarget(target: string): FileTarget | null {
   const { body, line, col, endLine } = splitSuffix(value);
   const hash = body.indexOf('#');
   const path = hash >= 0 ? body.slice(0, hash) : body;
-  const kind = fileUrl === null ? classify(path, false) : classifyFileUrl(path.slice('file://'.length));
+  const kind =
+    fileUrl === null ? classify(path, false, scope) : classifyFileUrl(path.slice('file://'.length), scope);
   return kind === null ? null : { ...kind, line, col, endLine };
 }
 
 /**
  * The absolute path of a path string from a tool input or a tool result (`file_path`, Grep/Glob
  * hits): drive and Git Bash paths are normalized, relative ones resolved against `cwd`; UNC, device
- * and rooted paths without a drive give null.
+ * and rooted paths without a drive give null. On a POSIX host (`rules`, WP-104): absolute paths are
+ * normalized, `~/…` see `resolveHome`, relative ones resolved against `cwd`, drive paths give null.
  */
-export function resolveFilePath(path: string, cwd: string | null): string | null {
+export function resolveFilePath(
+  path: string,
+  cwd: string | null,
+  rules: PathRules = WIN32_PATHS,
+): string | null {
   const value = path.trim();
   if (value === '' || value.length > LIMITS.pathChars) return null;
+  if (rules.flavor === 'posix') {
+    if (value.startsWith('/')) return resolvePosixPath(value, value);
+    if (value.startsWith('~/')) return resolveHome(value, cwd);
+    if (value.startsWith('~') || /^[A-Za-z]:/.test(value)) return null;
+    return cwd === null ? null : resolvePosixPath(cwd, value);
+  }
   if (DRIVE.test(value)) return resolveWindowsPath(value, value);
   const bash = GIT_BASH.test(value) ? fromGitBashPath(value) : null;
   if (bash !== null) return resolveWindowsPath(bash, bash);

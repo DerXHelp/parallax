@@ -45,7 +45,12 @@ describe('summaryOf', () => {
     const entry = sampleEntry({ external, lastRunState: 'external' });
     const facts = sampleStatusFacts({ runState: 'external' });
     const running = summaryOf(entry, facts);
-    expect(running.external).toEqual({ since: external.since, pid: external.pid, running: true });
+    expect(running.external).toEqual({
+      since: external.since,
+      pid: external.pid,
+      running: true,
+      terminalId: null,
+    });
     expect(sessionSummarySchema.parse(running)).toEqual(running);
     expect(summaryOf(entry, facts, { externalRunning: false }).external?.running).toBe(false);
     expect(summaryOf(sampleEntry(), sampleStatusFacts(), { externalRunning: false }).external).toBeNull();

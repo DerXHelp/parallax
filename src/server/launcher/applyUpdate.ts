@@ -138,7 +138,7 @@ export interface ApplyUpdateDeps {
    * Children older than `startedAt` are skipped (reused parent PIDs).
    */
   killOldServer(pid: number, startedAt: Date): Promise<void>;
-  /** `taskkill /PID <pid> /T /F` (the tree of a server this orchestrator started). */
+  /** `taskkill /PID <pid> /T /F`, POSIX the process group (the tree of a server this orchestrator started). */
   killTree(pid: number): Promise<void>;
   /** Signature, every hash and the SDK of `versions\<v>` (throws otherwise). */
   verifyVersion(root: string, version: string): Promise<ReleaseInfo>;
@@ -188,22 +188,38 @@ export const UPDATE_LOGS_KEPT = 5;
 const UPDATE_LOG_PATTERN = /^update-\d{8}-\d{6}\.log$/u;
 const TOAST_TAG = 'parallax-update';
 
+/** How the user starts Parallax again (WP-108: the Start menu on Windows, menu or command on Linux). */
+function startHint(language: Language, platform: NodeJS.Platform): string {
+  if (platform === 'win32') {
+    return language === 'de' ? 'Starte es über das Startmenü.' : 'Start it from the Start menu.';
+  }
+  return language === 'de'
+    ? 'Starte es über das Anwendungsmenü oder mit dem Befehl „parallax“.'
+    : 'Start it from the application menu or with the command "parallax".';
+}
+
 /** The two fixed notification texts of step 11 (German or English after settings.json). */
-export function failureNotification(language: Language, version: string, log: string | null): ToastRequest {
+export function failureNotification(
+  language: Language,
+  version: string,
+  log: string | null,
+  platform: NodeJS.Platform = process.platform,
+): ToastRequest {
   const where = log ?? '-';
+  const hint = startHint(language, platform);
   return language === 'de'
     ? {
         title: `${PRODUCT_NAME}-Update fehlgeschlagen`,
         body:
           `Der Wechsel auf ${PRODUCT_NAME} ${version} ist fehlgeschlagen, und ${PRODUCT_NAME} ließ sich nicht ` +
-          `wieder starten. Starte es über das Startmenü. Protokoll: ${where}`,
+          `wieder starten. ${hint} Protokoll: ${where}`,
         tag: TOAST_TAG,
       }
     : {
         title: `${PRODUCT_NAME} update failed`,
         body:
           `Switching to ${PRODUCT_NAME} ${version} failed, and ${PRODUCT_NAME} could not be started again. ` +
-          `Start it from the Start menu. Log: ${where}`,
+          `${hint} Log: ${where}`,
         tag: TOAST_TAG,
       };
 }
@@ -666,8 +682,10 @@ async function rollBack(ctx: Context, undo: Undo, reason: UpdateRestartFailedRea
 
 async function failBack(ctx: Context): Promise<number> {
   const { deps, request } = ctx;
+  const where =
+    process.platform === 'win32' ? 'from the Start menu' : 'from the application menu or with "parallax"';
   deps.log(
-    `No Parallax server runs for ${request.home}. Start Parallax from the Start menu` +
+    `No Parallax server runs for ${request.home}. Start Parallax ${where}` +
       `${deps.logPath === null ? '' : `; this log: ${deps.logPath}`}.`,
   );
   await notifyFailure(request, deps);
@@ -791,7 +809,7 @@ export function createNodeApplyUpdateDeps(options: NodeApplyUpdateDepsOptions): 
         return;
       }
       try {
-        // TerminateProcess on Windows – the process alone, see ApplyUpdateDeps.killOldServer.
+        // The process alone (TerminateProcess, POSIX SIGKILL), see ApplyUpdateDeps.killOldServer.
         process.kill(pid, 'SIGKILL');
       } catch (error) {
         if (errnoCode(error) !== 'ESRCH') throw error;

@@ -5,6 +5,7 @@ import {
   IDLE_PROFILE_LOGIN,
   draftTotalChars,
   isDefaultProgramAllowed,
+  shellKindsFor,
   type AssistantTextItem,
   type Decision,
   type DecisionOutcome,
@@ -26,7 +27,7 @@ import {
   type TranscriptItem,
   type UpdateState,
 } from '@shared/model';
-import { isWindowsPathInside, windowsPathIssue, windowsPathKey } from '@shared/paths';
+import { pathFlavorOf, pathRules, type PathRules } from '@shared/paths';
 import type {
   ClientHelloMessage,
   ClientMessage,
@@ -462,7 +463,7 @@ export class FakeHost {
   private nextEntry = 100;
 
   // Phase 3 (WP-54): files, plan versions
-  /** File table (key: windowsPathKey): file.stat/statMany/open, files.project, a playground FileSource. */
+  /** File table (key: `paths.key` of the fake computer): file.stat/statMany/open, files.project, a playground FileSource. */
   readonly files = new Map<string, FakeFile>();
   /** Every file.open that passed the checks – also the ones `fileOpenError` fails (assertions). */
   readonly fileOpens: CommandOf<'file.open'>[] = [];
@@ -716,13 +717,18 @@ export class FakeHost {
 
   // ---- files (Phase 3, WP-54) ----
 
+  /** Path rules of the fake computer (WP-104: `hostState.platform`, e.g. a Linux host in tests). */
+  get paths(): PathRules {
+    return pathRules(pathFlavorOf(this.hostState.platform));
+  }
+
   file(path: string): FakeFile | undefined {
-    return this.files.get(windowsPathKey(path));
+    return this.files.get(this.paths.key(path));
   }
 
   /** Adds or replaces a file of the table. */
   setFile(file: FakeFile): void {
-    this.files.set(windowsPathKey(file.info.path), file);
+    this.files.set(this.paths.key(file.info.path), file);
   }
 
   /** Text a FileSource serves for `path` (playground, tests); null for unknown and non-text files. */
@@ -752,11 +758,11 @@ export class FakeHost {
    * FILE_NOT_FOUND below the root (summary cwd, else FAKE_FILE_ROOT) → PATH_NOT_ALLOWED.
    */
   statFile(entryId: EntryId, path: string): FileStatResult {
-    if (windowsPathIssue(path) !== null) return { path, ok: false, error: makeError('PATH_REJECTED') };
+    if (this.paths.issue(path) !== null) return { path, ok: false, error: makeError('PATH_REJECTED') };
     const file = this.file(path);
     if (file !== undefined) return { path, ok: true, file: { ...file.info, path } };
     const root = this.summaries.get(entryId)?.cwd ?? FAKE_FILE_ROOT;
-    const code = isWindowsPathInside(path, root) ? 'FILE_NOT_FOUND' : 'PATH_NOT_ALLOWED';
+    const code = this.paths.isInside(path, root) ? 'FILE_NOT_FOUND' : 'PATH_NOT_ALLOWED';
     return { path, ok: false, error: makeError(code) };
   }
 
@@ -823,7 +829,8 @@ export class FakeHost {
     at: string,
   ): void {
     const files = this.sessionFilesOf(entryId);
-    const index = files.findIndex((file) => windowsPathKey(file.path) === windowsPathKey(path));
+    const rules = this.paths;
+    const index = files.findIndex((file) => rules.key(file.path) === rules.key(path));
     const previous = files[index];
     const next: SessionFile =
       previous === undefined
@@ -1336,7 +1343,7 @@ export class FakeHost {
         if (!this.knowsEntry(cmd.entryId)) return { ok: false, error: makeError('ENTRY_NOT_FOUND') };
         const result = this.statFile(cmd.entryId, cmd.path);
         if (!result.ok) return { ok: false, error: result.error };
-        if (cmd.target === 'default' && !isDefaultProgramAllowed(cmd.path)) {
+        if (cmd.target === 'default' && !isDefaultProgramAllowed(cmd.path, this.paths)) {
           return { ok: false, error: makeError('FILE_TYPE_BLOCKED') };
         }
         if (cmd.target !== 'explorer' && result.file.kind === 'directory') {
@@ -1352,7 +1359,7 @@ export class FakeHost {
         if (!this.knowsEntry(cmd.entryId)) return { ok: false, error: makeError('ENTRY_NOT_FOUND') };
         const root = this.summaries.get(cmd.entryId)?.cwd ?? FAKE_FILE_ROOT;
         const files = [...this.files.values()]
-          .filter((file) => file.info.kind !== 'directory' && isWindowsPathInside(file.info.path, root))
+          .filter((file) => file.info.kind !== 'directory' && this.paths.isInside(file.info.path, root))
           .map((file) =>
             file.info.path
               .slice(root.length)
@@ -1377,8 +1384,15 @@ export class FakeHost {
       case 'session.openShell':
         if (!this.knowsEntry(cmd.entryId)) return { ok: false, error: makeError('ENTRY_NOT_FOUND') };
         return this.ok({ pid: null });
-      case 'shell.detect':
-        return this.ok({ gitDir: this.hostState.settings.console.gitDir ?? 'C:\\Program Files\\Git' });
+      case 'shell.detect': {
+        // WP-104: a Linux host reports its shells and has no Git for Windows.
+        const flavor = this.paths.flavor;
+        if (flavor === 'posix') return this.ok({ gitDir: null, shells: ['login', 'bash', 'zsh'] });
+        return this.ok({
+          gitDir: this.hostState.settings.console.gitDir ?? 'C:\\Program Files\\Git',
+          shells: [...shellKindsFor(flavor)],
+        });
+      }
       case 'plan.list':
         if (!this.knowsEntry(cmd.entryId)) return { ok: false, error: makeError('ENTRY_NOT_FOUND') };
         return this.ok({ versions: this.planVersions.map((version) => version.info) });
@@ -1423,6 +1437,7 @@ export class FakeHost {
       case 'remoteAccess.check':
       case 'remoteAccess.events':
       case 'remoteAccess.eventsSeen':
+      case 'remoteAccess.setPeerLevel':
       case 'hosts.add':
       case 'hosts.update':
       case 'hosts.move':
@@ -1481,6 +1496,7 @@ export class FakeHost {
       case 'session.setFastMode':
       case 'session.switchConversation':
       case 'session.openExternal':
+      case 'session.openInTerminal':
       case 'session.reclaim':
       case 'session.consoleCommand':
       case 'session.continueAfterLimit':

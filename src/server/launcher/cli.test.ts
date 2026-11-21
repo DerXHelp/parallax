@@ -4,10 +4,24 @@ import { SAMPLE_IDS } from '@shared/samples';
 import type { SettingsPeek } from '../config';
 import { APPLY_FAILED_PREFIX, APPLY_TIMEOUTS, UPDATE_READY_TIMEOUT_ENV } from '../update/handoff';
 import type { ApplyUpdateRequest } from './applyUpdate';
-import { runLauncherCli, type LauncherCliDeps } from './cli';
+import { makeError } from '@shared/errors';
+import type { LauncherRemoteRequest, LauncherRemoteResponse } from '@shared/http';
+import {
+  remoteLines,
+  remoteRefusal,
+  runLauncherCli,
+  type LauncherCliDeps,
+  type RemoteCallResult,
+  type ServeOutcome,
+  type ServeRequest,
+  type ServiceRequest,
+} from './cli';
 import { LauncherError, type LauncherOptions, type LauncherResult } from './launcher';
 
-const HOME = 'D:\\px-cli';
+const WIN = process.platform === 'win32';
+/** WP-107: absolute by the rules of this computer (Linux runs these tests too). */
+const HOME = WIN ? 'D:\\px-cli' : '/srv/px-cli';
+const APPS = WIN ? 'D:\\apps\\Parallax' : '/opt/Parallax';
 const URI = `parallax://session/${SAMPLE_IDS.entry}`;
 
 interface Harness {
@@ -170,13 +184,13 @@ describe('launcher command line flow (cli.ts)', () => {
     await runLauncherCli([`--home=${HOME}`], plain.deps);
     expect(plain.launches[0]?.serverArgs.some((arg) => arg.startsWith('--install-root'))).toBe(false);
     const installed = harness();
-    await runLauncherCli(['--install-root=D:\\apps\\Parallax', `--home=${HOME}`], installed.deps);
-    expect(installed.launches[0]?.installRoot).toBe('D:\\apps\\Parallax');
-    expect(installed.launches[0]?.serverArgs).toContain('--install-root=D:\\apps\\Parallax');
+    await runLauncherCli([`--install-root=${APPS}`, `--home=${HOME}`], installed.deps);
+    expect(installed.launches[0]?.installRoot).toBe(APPS);
+    expect(installed.launches[0]?.serverArgs).toContain(`--install-root=${APPS}`);
   });
 
   describe('--apply-update (WP-87b)', () => {
-    const ROOT = 'D:\\apps\\Parallax';
+    const ROOT = APPS;
     const APPLY = [`--install-root=${ROOT}`, '--apply-update=1.0.1', '--wait-pid=4242'];
 
     it('branches off before the launch: the resolved configuration goes to runApplyUpdate', async () => {
@@ -223,5 +237,185 @@ describe('launcher command line flow (cli.ts)', () => {
       expect(config.applies).toEqual([]);
       expect(config.launches).toEqual([]);
     });
+  });
+});
+
+const STATE: NonNullable<LauncherRemoteResponse['remoteAccess']> = {
+  listening: true,
+  port: 47_200,
+  addresses: ['192.0.2.10'],
+  hostName: 'demo-server',
+  checks: [
+    { id: 'port', status: 'ok', params: {} },
+    { id: 'keystore', status: 'warning', params: { scheme: 'file' } },
+  ],
+  peer: {
+    name: 'demo-laptop',
+    level: 'manage',
+    pairedAt: '2026-11-20T10:00:00.000Z',
+    connected: true,
+    connections: 1,
+    lastSeenAt: null,
+    lastAddress: null,
+    appVersion: null,
+    compatible: true,
+  },
+  pairingExpiresAt: null,
+  unseenRejected: 2,
+  error: null,
+};
+
+describe('WP-107: --server, parallax service, parallax remote', () => {
+  function extended(
+    p: { serve?: ServeOutcome; remote?: RemoteCallResult; serviceExit?: number } = {},
+  ): Harness & {
+    serves: ServeRequest[];
+    remotes: [string, LauncherRemoteRequest][];
+    services: ServiceRequest[];
+  } {
+    const h = harness();
+    const serves: ServeRequest[] = [];
+    const remotes: [string, LauncherRemoteRequest][] = [];
+    const services: ServiceRequest[] = [];
+    h.deps.serve = (request) => {
+      serves.push(request);
+      request.onStarted({
+        mode: 'started',
+        port: request.options.port,
+        pid: 99,
+        url: null,
+        chromePid: null,
+        window: false,
+      });
+      return Promise.resolve(p.serve ?? { kind: 'ended', code: 0 });
+    };
+    h.deps.remote = (home, request) => {
+      remotes.push([home, request]);
+      return Promise.resolve(
+        p.remote ?? { kind: 'ok', response: { remoteAccess: STATE, code: null, expiresAt: null } },
+      );
+    };
+    h.deps.service = (request) => {
+      services.push(request);
+      return Promise.resolve(p.serviceExit ?? 0);
+    };
+    return Object.assign(h, { serves, remotes, services });
+  }
+
+  it("--server: no window start, the server runs in the foreground; the exit code is the server's", async () => {
+    const h = extended({ serve: { kind: 'ended', code: 3 } });
+    expect(await runLauncherCli(['--server', `--home=${HOME}`, '--port=4800'], h.deps)).toBe(3);
+    expect(h.launches).toEqual([]);
+    expect(h.serves[0]?.options).toMatchObject({ home: HOME, port: 4800, printUrl: true, openWindow: false });
+    // WP-109: the server of `--server` runs without desktop actions and native toasts.
+    expect(h.serves[0]?.options.serverArgs).toContain('--desktop=off');
+    expect(h.out.join('\n')).toMatch(/Parallax server runs on http:\/\/127\.0\.0\.1:4800 \(PID 99/);
+    // --print-url: the sign-in address (runLauncher prints it), still no Chrome.
+    const url = extended();
+    expect(await runLauncherCli(['--server', '--print-url', `--home=${HOME}`], url.deps)).toBe(0);
+    expect(url.serves[0]?.options).toMatchObject({ printUrl: true, openWindow: true, entryId: null });
+  });
+
+  it('--server with a server of this home already running: exit 1, nothing started', async () => {
+    const h = extended({ serve: { kind: 'existing', port: 4711, pid: 77 } });
+    expect(await runLauncherCli(['--server', `--home=${HOME}`], h.deps)).toBe(1);
+    expect(h.err.join('\n')).toMatch(
+      /already runs on http:\/\/127\.0\.0\.1:4711 \(PID 77\).*no second server/,
+    );
+    const unavailable = harness();
+    expect(await runLauncherCli(['--server', `--home=${HOME}`], unavailable.deps)).toBe(2);
+    const failing = extended();
+    failing.deps.serve = () =>
+      Promise.reject(new LauncherError('server_exited', 'stopped right after the start'));
+    expect(await runLauncherCli(['--server', `--home=${HOME}`], failing.deps)).toBe(1);
+    expect(failing.err).toEqual(['stopped right after the start']);
+  });
+
+  it('service: the unit gets the resolved home, a requested port and the key-store opt-in', async () => {
+    const h = extended({ serviceExit: 0 });
+    expect(await runLauncherCli(['service', 'install', `--home=${HOME}`], h.deps)).toBe(0);
+    expect(h.services).toEqual([{ action: 'install', serverArgs: [`--home=${HOME}`], installRoot: null }]);
+    const more = extended();
+    await runLauncherCli(
+      [`--install-root=${APPS}`, 'service', 'install', `--home=${HOME}`, '--port=4800', '--backend=fake'],
+      more.deps,
+    );
+    expect(more.services[0]).toEqual({
+      action: 'install',
+      serverArgs: [`--home=${HOME}`, '--port=4800', '--backend=fake'],
+      installRoot: APPS,
+    });
+    const status = extended({ serviceExit: 3 });
+    expect(await runLauncherCli(['service', 'status', `--home=${HOME}`], status.deps)).toBe(3);
+    expect(status.launches).toEqual([]);
+  });
+
+  it('remote status: the state in words, never a launch', async () => {
+    const h = extended();
+    expect(await runLauncherCli(['remote', 'status', `--home=${HOME}`], h.deps)).toBe(0);
+    expect(h.remotes).toEqual([[HOME, { action: 'status' }]]);
+    expect(h.launches).toEqual([]);
+    expect(h.out).toEqual([
+      'Sharing is on - listening on port 47200.',
+      'Computer: demo-server; addresses: 192.0.2.10.',
+      'Coupled with demo-laptop (level manage, since 2026-11-20T10:00:00.000Z), connected.',
+      'Check keystore: warning.',
+      'Rejected attempts since last seen: 2.',
+    ]);
+  });
+
+  it('remote pair --level manage: the code only on this console, with the level', async () => {
+    const h = extended({
+      remote: {
+        kind: 'ok',
+        response: {
+          remoteAccess: { ...STATE, peer: null, pairingExpiresAt: '2026-11-21T10:05:00.000Z' },
+          code: '1234-5678-9012',
+          expiresAt: '2026-11-21T10:05:00.000Z',
+        },
+      },
+    });
+    expect(await runLauncherCli(['remote', 'pair', '--level', 'manage', `--home=${HOME}`], h.deps)).toBe(0);
+    expect(h.remotes[0]?.[1]).toEqual({ action: 'pair', level: 'manage' });
+    expect(h.out[0]).toBe('Pairing code: 1234-5678-9012');
+    expect(h.out.join('\n')).toMatch(/Level: manage/);
+    expect(h.out.join('\n')).not.toMatch(/A pairing window is open/);
+  });
+
+  it('remote: not running, refused, token and transport errors exit 1 with a message', async () => {
+    const cases: [RemoteCallResult, RegExp][] = [
+      [{ kind: 'not_running' }, /does not run for .* start it first/],
+      [{ kind: 'token_invalid' }, /rejected the launcher token/],
+      [{ kind: 'failed', reason: 'ETIMEDOUT' }, /No answer from the running server \(ETIMEDOUT\)/],
+      [{ kind: 'refused', error: makeError('REMOTE_KEYSTORE_UNAVAILABLE') }, /No key store is usable/],
+    ];
+    for (const [result, message] of cases) {
+      const h = extended({ remote: result });
+      expect(await runLauncherCli(['remote', 'unpair', `--home=${HOME}`], h.deps)).toBe(1);
+      expect(h.err.join('\n')).toMatch(message);
+    }
+    expect(remoteRefusal(makeError('VALIDATION_FAILED', { reason: 'not_paired' }))).toBe(
+      'No computer is coupled.',
+    );
+    expect(remoteRefusal(makeError('REMOTE_NOT_ALLOWED'))).toBe('Refused (REMOTE_NOT_ALLOWED).');
+  });
+
+  it('remoteLines: sharing off, not listening', () => {
+    expect(remoteLines({ action: 'disable' }, { remoteAccess: null, code: null, expiresAt: null })).toEqual([
+      'Sharing is off on this computer.',
+    ]);
+    const lines = remoteLines(
+      { action: 'status' },
+      {
+        remoteAccess: { ...STATE, listening: false, error: makeError('REMOTE_ACCESS_FAILED'), peer: null },
+        code: null,
+        expiresAt: null,
+      },
+    );
+    expect(lines.slice(0, 3)).toEqual([
+      'Sharing is on but not listening (REMOTE_ACCESS_FAILED).',
+      'Computer: demo-server; addresses: 192.0.2.10.',
+      'Not coupled.',
+    ]);
   });
 });

@@ -30,10 +30,12 @@ import { makeError, type ErrorPayload } from '@shared/errors';
 import {
   DEFAULT_MULTI_HOST_CONFIG,
   DEFAULT_UPDATE_STATE,
+  WINDOWS_HOST_CAPABILITIES,
   currentConversation,
   isRemoteControlActive,
   type AppInfo,
   type Entry,
+  type HostCapabilities,
   type HostState,
   type HostWarning,
   type Profile,
@@ -76,6 +78,7 @@ import {
   EntryState,
   settingsSleepPolicy,
   type EngineCore,
+  type EngineTerminal,
   type EngineCoreStores,
   type EngineStores,
   type NormalizerFns,
@@ -208,6 +211,10 @@ export interface SessionManagerDeps {
     systemIntegration?: boolean;
     /** WP-99 (ADR-239): `HostState.terminalAvailable` (TerminalService.available). Absent → false. */
     terminalAvailable?: boolean;
+    /** WP-102: `HostState.capabilities` (desktop actions of this host). Absent → the Windows set. */
+    capabilities?: HostCapabilities;
+    /** 102e: `HostState.homeDir` (already checked by the host's path rules). Absent → null. */
+    homeDir?: string | null;
     /** WP-87: `HostState.app` and `HostState.update` (the update service). Absent → null / default. */
     app?: () => AppInfo | null;
     update?: () => UpdateState;
@@ -231,6 +238,11 @@ export interface SessionManagerDeps {
    * earlier run stays `external` (its state is unknown, ADR-051).
    */
   consoleLauncher?: ConsoleLauncher;
+  /**
+   * 102e: the embedded terminal for `session.openInTerminal` (the composition's `TerminalService`).
+   * Absent → TERMINAL_UNAVAILABLE {reason:'platform'}; a terminal handoff of an earlier run returns.
+   */
+  terminal?: EngineTerminal;
   /** Phase 2 (ADR-109, WP-34): click target of native toasts (`toastLaunchUri`); absent → none. */
   systemIntegration?: Pick<SystemIntegration, 'toastLaunchUri'>;
   /** WP-70: the login state of a profile (`ProfileSummary.login`; host/login.ts); absent → idle. */
@@ -451,6 +463,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       sdkVersion: deps.host.sdkVersion,
       sdkClaudeCodeVersion: deps.host.sdkClaudeCodeVersion,
       platform: deps.host.platform,
+      capabilities: deps.host.capabilities ?? { ...WINDOWS_HOST_CAPABILITIES },
       dataDirLabel: deps.host.dataDirLabel,
       dev: deps.host.dev,
       backend: deps.backend.kind,
@@ -464,6 +477,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       port: deps.host.port?.() ?? null,
       systemIntegration: deps.host.systemIntegration ?? false,
       terminalAvailable: deps.host.terminalAvailable ?? false,
+      homeDir: deps.host.homeDir ?? null,
       // WP-64: the default profile's `remoteControlAtStartup`, once a process of it was ready.
       remoteControlDefault: remoteDefaults.get(defaultProfile.id) ?? null,
       app: deps.host.app?.() ?? null,
@@ -540,10 +554,13 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         if (runtime?.pid !== pid || root === undefined || runtime.spawnedAt === null) continue;
         // Only the process this runtime spawned (image + start time, like the orphan check): a
         // fake PID of the FakeBackend or a PID reused since must never lend its tree to a record.
+        // WP-107 (like recovery.ts since WP-103b): on Linux only PID and start time count – `comm` is
+        // no identity there (node renames its main thread, the name is cut at 15 characters).
         const image = path.win32.basename(runtime.launch.executablePath).toLowerCase();
         const sameStart =
           Math.abs(root.startedAt.getTime() - runtime.spawnedAt.getTime()) <= ORPHAN_START_TOLERANCE_MS;
-        if (root.name.toLowerCase() !== image || !sameStart) continue;
+        const sameImage = deps.host.platform !== 'win32' || root.name.toLowerCase() === image;
+        if (!sameImage || !sameStart) continue;
         const children = descendantsOf(result.processes, root).map((p) => ({
           pid: p.pid,
           image: p.name,
@@ -646,6 +663,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
     backend: deps.backend,
     claude: deps.claude,
     consoleLauncher: deps.consoleLauncher ?? null,
+    terminal: deps.terminal ?? null,
     stores,
     normalizer: {
       createLiveNormalizer: deps.normalizer?.createLiveNormalizer ?? createLiveNormalizer,

@@ -20,7 +20,7 @@
  */
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { Page, Request } from '@playwright/test';
 import { API_PATHS, FILE_PDF_CSP, fileUrl } from '@shared/http';
 import { rawRequest } from '../src/server/http/testServer';
@@ -273,8 +273,11 @@ test('a network path (L15) stays text: no link, no command, no /api/file request
   // The other references of the answer are checked and linked meanwhile …
   await expect(session.fileLink(answer, 'app.ts:12')).toBeVisible();
   await expect(session.fileLink(answer, 'notes.md')).toBeVisible();
-  // … the network path is plain text without a link.
-  await expect(answer.locator('[data-file-ref="unsafe"]')).toContainText('fake-host');
+  // … the network path is plain text without a link (Windows marks it unsafe; on a Linux host a
+  // backslash path is no path at all – WP-109).
+  await expect(answer.locator('[data-file-ref="unsafe"]').filter({ hasText: 'fake-host' })).toHaveCount(
+    process.platform === 'win32' ? 1 : 0,
+  );
   await expect(answer.locator('[data-slot="file-link"]').filter({ hasText: 'fake-host' })).toHaveCount(0);
 
   expect(requests.map((request) => request.url()).filter((url) => url.includes('fake-host'))).toEqual([]);
@@ -332,13 +335,15 @@ test('editor and Explorer: a custom editor from the settings; "Open in editor" /
   server,
   page,
 }) => {
-  const editor = 'C:\\Tools\\FakeEditor\\editor.exe';
+  // An absolute program of this host's shape (WP-109: Linux takes POSIX paths only).
+  const editor =
+    process.platform === 'win32' ? 'C:\\Tools\\FakeEditor\\editor.exe' : '/opt/fake-editor/editor';
   const settings = await app.openSettingsPage('files');
   await settings.locator('[data-preset="custom"] [role="radio"]').click();
   const form = settings.locator('[data-slot="editor-form"]');
   await form.locator('input').fill(editor);
   await form.locator('textarea').fill('-n{line}\n{file}');
-  await expect(settings.locator('[data-slot="editor-preview"]')).toContainText('editor.exe');
+  await expect(settings.locator('[data-slot="editor-preview"]')).toContainText(basename(editor));
   await form.locator('[data-action="editor-save"]').click();
   await expect(form.locator('[data-slot="editor-unsaved"]')).toHaveCount(0);
   await expect

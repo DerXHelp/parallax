@@ -35,13 +35,18 @@ function guiHead(subsystem = 2): Buffer {
   return bytes;
 }
 
-function recordingSpawn(): GuiSpawnFn & { calls: { file: string; args: readonly string[]; options: SpawnOptions }[] } {
+function recordingSpawn(): GuiSpawnFn & {
+  calls: { file: string; args: readonly string[]; options: SpawnOptions }[];
+} {
   const calls: { file: string; args: readonly string[]; options: SpawnOptions }[] = [];
   const spawn: GuiSpawnFn = (file, args, options) => {
     calls.push({ file, args, options });
     const child: GuiChild = {
       once: (event, listener) => {
-        if (event === 'spawn') queueMicrotask(() => { listener(); });
+        if (event === 'spawn')
+          queueMicrotask(() => {
+            listener();
+          });
         return child;
       },
       unref: () => undefined,
@@ -61,8 +66,10 @@ function registry(entries: Record<string, string>) {
 }
 
 const CHOICE = 'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice';
-const HTTP_CHOICE = 'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\http\\UserChoice';
-const command = (progId: string, hive = 'HKCU'): string => `${hive}\\Software\\Classes\\${progId}\\shell\\open\\command`;
+const HTTP_CHOICE =
+  'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\http\\UserChoice';
+const command = (progId: string, hive = 'HKCU'): string =>
+  `${hive}\\Software\\Classes\\${progId}\\shell\\open\\command`;
 
 function opener(entries: Record<string, string>, head = guiHead()) {
   const spawn = recordingSpawn();
@@ -90,7 +97,10 @@ async function reason(promise: Promise<unknown>): Promise<unknown> {
 describe('command line parsing', () => {
   it.each<[string, string[]]>([
     [`"${CHROME}" --single-argument %1`, [CHROME, '--single-argument', '%1']],
-    [`${FIREFOX} -osint -url "%1"`, ['C:\\Program', 'Files\\Mozilla', 'Firefox\\firefox.exe', '-osint', '-url', '%1']],
+    [
+      `${FIREFOX} -osint -url "%1"`,
+      ['C:\\Program', 'Files\\Mozilla', 'Firefox\\firefox.exe', '-osint', '-url', '%1'],
+    ],
     [`"${FIREFOX}" -osint -url "%1"`, [FIREFOX, '-osint', '-url', '%1']],
     ['  ', []],
   ])('%s', (line, tokens) => {
@@ -98,8 +108,14 @@ describe('command line parsing', () => {
   });
 
   it('the URL takes %1/%L, other placeholders drop, none → appended; only absolute .exe', () => {
-    expect(browserLaunch(`"${CHROME}" --single-argument %1`, URL)).toEqual({ file: CHROME, args: ['--single-argument', URL] });
-    expect(browserLaunch(`"${FIREFOX}" -osint -url "%1"`, URL)).toEqual({ file: FIREFOX, args: ['-osint', '-url', URL] });
+    expect(browserLaunch(`"${CHROME}" --single-argument %1`, URL)).toEqual({
+      file: CHROME,
+      args: ['--single-argument', URL],
+    });
+    expect(browserLaunch(`"${FIREFOX}" -osint -url "%1"`, URL)).toEqual({
+      file: FIREFOX,
+      args: ['-osint', '-url', URL],
+    });
     expect(browserLaunch(`"${EDGE}" --flag %* %L`, URL)).toEqual({ file: EDGE, args: ['--flag', URL] });
     expect(browserLaunch(`"${EDGE}"`, URL)).toEqual({ file: EDGE, args: [URL] });
     expect(browserLaunch('chrome.exe %1', URL)).toBeNull();
@@ -113,29 +129,47 @@ describe('default browser from the registry', () => {
     ['Chrome', 'ChromeHTML', `"${CHROME}" --single-argument %1`, CHROME],
     ['Edge', 'MSEdgeHTM', `"${EDGE}" --single-argument %1`, EDGE],
     ['Firefox', 'FirefoxURL-308046B0AF4A39CB', `"${FIREFOX}" -osint -url "%1"`, FIREFOX],
-  ])('%s: UserChoice → ProgId → shell\\open\\command → spawnGui with the URL', async (_name, progId, line, exe) => {
-    const { system, spawn } = opener({ [CHOICE]: userChoice(progId), [command(progId)]: defaultValue(line) });
-    await system.open(URL);
-    expect(spawn.calls).toHaveLength(1);
-    expect(spawn.calls[0]?.file).toBe(exe);
-    expect(spawn.calls[0]?.args).toContain(URL);
-    expect(spawn.calls[0]?.options).toMatchObject({ shell: false, detached: true });
-  });
+  ])(
+    '%s: UserChoice → ProgId → shell\\open\\command → spawnGui with the URL',
+    async (_name, progId, line, exe) => {
+      const { system, spawn } = opener({
+        [CHOICE]: userChoice(progId),
+        [command(progId)]: defaultValue(line),
+      });
+      await system.open(URL);
+      expect(spawn.calls).toHaveLength(1);
+      expect(spawn.calls[0]?.file).toBe(exe);
+      expect(spawn.calls[0]?.args).toContain(URL);
+      expect(spawn.calls[0]?.options).toMatchObject({ shell: false, detached: true });
+    },
+  );
 
   it('HKLM classes and the http choice as fallbacks; REG_EXPAND_SZ is expanded', async () => {
     const reg = registry({
       [HTTP_CHOICE]: userChoice('ChromeHTML'),
-      [command('ChromeHTML', 'HKLM')]: defaultValue('"%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe" %1', 'REG_EXPAND_SZ'),
+      [command('ChromeHTML', 'HKLM')]: defaultValue(
+        '"%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe" %1',
+        'REG_EXPAND_SZ',
+      ),
     });
-    await expect(defaultBrowserCommand({ ...reg, env: { ProgramFiles: 'C:\\Program Files' } })).resolves.toBe(`"${CHROME}" %1`);
+    await expect(defaultBrowserCommand({ ...reg, env: { ProgramFiles: 'C:\\Program Files' } })).resolves.toBe(
+      `"${CHROME}" %1`,
+    );
     expect(reg.asked).toEqual([CHOICE, HTTP_CHOICE, command('ChromeHTML'), command('ChromeHTML', 'HKLM')]);
   });
 
   it('no choice, a strange ProgId or no command → OPEN_FAILED no_default_browser (nothing starts)', async () => {
-    const cases: Record<string, string>[] = [{}, { [CHOICE]: userChoice('..\\evil') }, { [CHOICE]: userChoice('ChromeHTML') }];
+    const cases: Record<string, string>[] = [
+      {},
+      { [CHOICE]: userChoice('..\\evil') },
+      { [CHOICE]: userChoice('ChromeHTML') },
+    ];
     for (const entries of cases) {
       const { system, spawn } = opener(entries);
-      expect(await reason(system.open(URL))).toEqual({ code: 'OPEN_FAILED', params: { reason: 'no_default_browser' } });
+      expect(await reason(system.open(URL))).toEqual({
+        code: 'OPEN_FAILED',
+        params: { reason: 'no_default_browser' },
+      });
       expect(spawn.calls).toEqual([]);
     }
   });
@@ -143,7 +177,10 @@ describe('default browser from the registry', () => {
   it('a command without absolute .exe, a console program or a blocked program never starts', async () => {
     const relative = opener({ [CHOICE]: userChoice('X'), [command('X')]: defaultValue('browser.exe %1') });
     expect(await reason(relative.system.open(URL))).toMatchObject({ params: { reason: 'browser_command' } });
-    const cui = opener({ [CHOICE]: userChoice('X'), [command('X')]: defaultValue(`"${CHROME}" %1`) }, guiHead(3));
+    const cui = opener(
+      { [CHOICE]: userChoice('X'), [command('X')]: defaultValue(`"${CHROME}" %1`) },
+      guiHead(3),
+    );
     expect(await reason(cui.system.open(URL))).toMatchObject({ params: { reason: 'not_gui' } });
     const blocked = opener({
       [CHOICE]: userChoice('X'),
@@ -153,9 +190,31 @@ describe('default browser from the registry', () => {
     for (const o of [relative, cui, blocked]) expect(o.spawn.calls).toEqual([]);
   });
 
-  it('not Windows → OPEN_FAILED platform', async () => {
-    const system = createSystemLinkOpener({ platform: 'linux' });
+  it('neither Windows nor Linux → OPEN_FAILED platform', async () => {
+    const system = createSystemLinkOpener({ platform: 'darwin' });
     expect(await reason(system.open(URL))).toMatchObject({ params: { reason: 'platform' } });
+  });
+
+  it('WP-106 Linux: xdg-open with the URL as its one argument; never another scheme', async () => {
+    const spawn = recordingSpawn();
+    const system = createSystemLinkOpener({
+      platform: 'linux',
+      spawn,
+      env: { PATH: '/usr/bin', DISPLAY: ':0', CLAUDECODE: '1' },
+    });
+    await system.open(URL);
+    expect(spawn.calls.map((call) => [call.file.split('/').pop(), call.args])).toEqual([['xdg-open', [URL]]]);
+    expect(spawn.calls[0]?.options).toMatchObject({
+      shell: false,
+      detached: true,
+      stdio: 'ignore',
+      cwd: '/',
+    });
+    expect(spawn.calls[0]?.options.env).toEqual({ PATH: '/usr/bin', DISPLAY: ':0' });
+    for (const url of ['file:///etc/passwd', 'javascript:alert(1)', '/usr/bin/xterm']) {
+      expect(await reason(system.open(url))).toMatchObject({ params: { reason: 'url' } });
+    }
+    expect(spawn.calls).toHaveLength(1);
   });
 });
 
@@ -167,7 +226,9 @@ describe('link.open host command', () => {
     const ctx = { clientId: SAMPLE_IDS.client, cmdId: SAMPLE_IDS.cmdId };
     await expect(handler.handle({ name: 'link.open', url: URL }, ctx)).resolves.toEqual({});
     expect(recording.opened).toEqual([URL]);
-    expect(await reason(handler.handle({ name: 'link.open', url: 'javascript:alert(1)' }, ctx))).toMatchObject({
+    expect(
+      await reason(handler.handle({ name: 'link.open', url: 'javascript:alert(1)' }, ctx)),
+    ).toMatchObject({
       params: { reason: 'url' },
     });
     expect(recording.opened).toEqual([URL]);

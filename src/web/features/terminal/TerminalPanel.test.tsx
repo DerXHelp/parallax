@@ -2,7 +2,10 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { useRef, type ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { makeSessionKey } from '@shared/common';
 import { makeError } from '@shared/errors';
+import { SAMPLE_IDS, SAMPLE_REMOTE_HOST_ID } from '@shared/samples';
+import { requestTerminalTarget, resetTerminalTargets } from '@web/shell/navigation/session-actions';
 import { installShortcutListener, useEscapeHandler } from '@web/shell/shortcuts';
 import { clientStore, resetClientStore } from '@web/state/store';
 import { TooltipProvider } from '@web/ui/tooltip';
@@ -13,9 +16,11 @@ import { TerminalPanel } from './TerminalPanel';
 import {
   FakeTerminalServer,
   fakeTerminalEnvironment,
+  remoteTerminalSocketUrl,
   sampleTerminalId,
   sampleTerminalInfo,
   TERMINAL_SESSION_KEY,
+  TERMINAL_SOCKET_URL,
 } from './testing';
 
 // Menus and several server round trips per test: well under a second alone, more under parallel load.
@@ -23,10 +28,14 @@ vi.setConfig({ testTimeout: 30_000 });
 
 afterEach(() => {
   resetTerminalStores();
+  resetTerminalTargets();
   resetClientStore();
 });
 
-function setup(prepare: (server: FakeTerminalServer) => void = () => undefined) {
+function setup(
+  prepare: (server: FakeTerminalServer) => void = () => undefined,
+  sessionKey: string = TERMINAL_SESSION_KEY,
+) {
   const server = new FakeTerminalServer();
   prepare(server);
   const engines = createFakeEngineFactory();
@@ -38,7 +47,7 @@ function setup(prepare: (server: FakeTerminalServer) => void = () => undefined) 
       <TerminalEnvironmentContext value={env}>{children}</TerminalEnvironmentContext>
     </TooltipProvider>
   );
-  const view = render(wrap(<TerminalPanel sessionKey={TERMINAL_SESSION_KEY} />));
+  const view = render(wrap(<TerminalPanel sessionKey={sessionKey} />));
   return { server, engines: engines.engines, env, copyText, readClipboard, view, wrap };
 }
 
@@ -148,6 +157,11 @@ describe('TerminalPanel (WP-99b)', () => {
       expect(tab.getAttribute('aria-selected')).toBe('true');
     });
     expect(server.sentOfType('open').map((message) => message.shell)).toEqual(['powershell', 'cmd']);
+    // WP-109 (CI): the focus is in the new terminal, not back on "+".
+    await waitFor(() => {
+      expect(document.activeElement).toBe(activeView().querySelector('.xterm-helper-textarea'));
+    });
+    expect(document.activeElement).not.toBe(screen.getByRole('button', { name: 'New terminal' }));
   });
 
   it('shows the exit bar of an exited terminal: Restart opens the same shell again, Close removes it', async () => {
@@ -523,5 +537,90 @@ describe('TerminalPanel (WP-99b)', () => {
     await waitFor(() => {
       expect(order()).toEqual(['Git Bash 1', 'PowerShell 1', 'cmd 1']);
     });
+  });
+});
+
+describe('TerminalPanel (WP-105)', () => {
+  it('names a claude terminal "claude 1"; after claude ended "Restart" opens its shell', async () => {
+    const claude = sampleTerminalInfo({
+      terminalId: sampleTerminalId(1),
+      shell: 'powershell',
+      command: 'claude',
+    });
+    const { server } = setup((fake) => {
+      fake.items = [claude];
+    });
+    const user = userEvent.setup();
+    await screen.findByRole('tab', { name: 'claude 1' });
+    await waitFor(() => {
+      expect(server.sentOfType('attach')).toHaveLength(1);
+    });
+    // While claude runs, the context menu has no "Restart" (it would end claude).
+    const screenArea = activeView().querySelector<HTMLElement>('[data-slot="terminal-screen"]');
+    if (screenArea === null) throw new Error('no terminal screen');
+    fireEvent.contextMenu(screenArea);
+    const menu = await screen.findByRole('menu');
+    expect(within(menu).queryByRole('menuitem', { name: 'Restart' })).toBeNull();
+    expect(within(menu).getByRole('menuitem', { name: 'Close terminal' })).toBeTruthy();
+    await user.keyboard('{Escape}');
+
+    act(() => {
+      server.exit(claude.terminalId, 0);
+    });
+    const bar = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>('[data-slot="terminal-exit-bar"]');
+      expect(found).not.toBeNull();
+      return found;
+    });
+    expect(bar?.textContent).toContain('claude exited with code 0 – the session continues here');
+    await user.click(within(bar ?? document.body).getByRole('button', { name: 'Open PowerShell' }));
+    await waitFor(() => {
+      expect(server.sentOfType('open')).toHaveLength(1);
+    });
+    expect(server.sentOfType('close')).toEqual([{ type: 'close', terminalId: claude.terminalId }]);
+    expect(server.sentOfType('open')[0]?.shell).toBe('powershell');
+    expect(await screen.findByRole('tab', { name: 'PowerShell 1' })).toBeTruthy();
+  });
+
+  it('makes a requested terminal active once it is listed, also when it comes later', async () => {
+    const { server } = setup((fake) => {
+      fake.items = [sampleTerminalInfo({ terminalId: sampleTerminalId(1), shell: 'cmd' })];
+    });
+    await screen.findByRole('tab', { name: 'cmd 1' });
+    await waitFor(() => {
+      expect(activeView().getAttribute('data-terminal-id')).toBe(sampleTerminalId(1));
+    });
+
+    // "Continue in terminal": the answer (target) may come before the server's list.
+    const claude = sampleTerminalInfo({ terminalId: sampleTerminalId(2), shell: 'cmd', command: 'claude' });
+    act(() => {
+      requestTerminalTarget(TERMINAL_SESSION_KEY, claude.terminalId);
+    });
+    expect(activeView().getAttribute('data-terminal-id')).toBe(sampleTerminalId(1));
+    act(() => {
+      server.add(claude);
+    });
+    const tab = await screen.findByRole('tab', { name: 'claude 1' });
+    await waitFor(() => {
+      expect(tab.getAttribute('aria-selected')).toBe('true');
+    });
+    expect(activeView().getAttribute('data-terminal-id')).toBe(claude.terminalId);
+  });
+
+  it('names a missing Linux shell instead of the Git for Windows text', async () => {
+    setup((fake) => {
+      fake.failOpen = makeError('SHELL_NOT_FOUND', { shell: 'zsh' });
+    });
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Zsh is not installed on this computer.');
+  });
+
+  it('connects to the terminal of another computer through the relay (E3)', async () => {
+    const { server } = setup(() => undefined, makeSessionKey(SAMPLE_REMOTE_HOST_ID, SAMPLE_IDS.entry));
+    await waitFor(() => {
+      expect(server.sockets).toHaveLength(1);
+    });
+    expect(server.socket.url).toBe(remoteTerminalSocketUrl(SAMPLE_REMOTE_HOST_ID));
+    expect(server.socket.url).not.toBe(TERMINAL_SOCKET_URL);
   });
 });

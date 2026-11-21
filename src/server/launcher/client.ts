@@ -3,16 +3,22 @@
  * single-instance check and `POST /api/launcher/code` (Bearer launcher token, WITHOUT Origin) for a
  * one-time code. Plain `node:http` on 127.0.0.1 – no proxy settings, no keep-alive, no Origin or
  * Sec-Fetch-Site header (the server accepts the launcher endpoint only without them).
+ *
+ * WP-107: `POST /api/launcher/remote` the same way (`parallax remote …`).
  */
 import { request } from 'node:http';
+import { errorPayloadSchema, type ErrorPayload } from '@shared/errors';
 import {
   API_PATHS,
   LOOPBACK_HOST,
   bearerAuthorization,
   healthResponseSchema,
   launcherCodeResponseSchema,
+  launcherRemoteResponseSchema,
   type HealthResponse,
   type LauncherCodeResponse,
+  type LauncherRemoteRequest,
+  type LauncherRemoteResponse,
   type LauncherToken,
   type ServerLockFile,
 } from '@shared/http';
@@ -148,6 +154,47 @@ export async function requestLauncherCode(
     if (res.status === 401) return { kind: 'token_invalid' };
     const parsed = launcherCodeResponseSchema.safeParse(res.body);
     if (res.status === 200 && parsed.success) return { kind: 'ok', response: parsed.data };
+    return { kind: 'failed', reason: `HTTP ${String(res.status)}` };
+  } catch (error) {
+    return { kind: 'failed', reason: errnoCode(error) ?? 'error' };
+  }
+}
+
+/** WP-107: "Share" on runs the checks (port, keys, TLS self-test) – longer than a code. */
+export const LAUNCHER_REMOTE_TIMEOUT_MS = 60_000;
+
+export type LauncherRemoteResult =
+  | { kind: 'ok'; response: LauncherRemoteResponse }
+  /** 401 LAUNCHER_TOKEN_INVALID: the token is not the running server's (foreign/stale lock file). */
+  | { kind: 'token_invalid' }
+  /** The server refused the action (role conflict, key store, not paired …). */
+  | { kind: 'refused'; error: ErrorPayload }
+  | { kind: 'failed'; reason: string };
+
+/** WP-107: `POST /api/launcher/remote` with the token from the lock file (no Origin, no cookie). */
+export async function requestLauncherRemote(
+  port: number,
+  token: LauncherToken,
+  body: LauncherRemoteRequest,
+  options: { http?: HttpJson; timeoutMs?: number } = {},
+): Promise<LauncherRemoteResult> {
+  const http = options.http ?? nodeHttpJson;
+  try {
+    const res = await http({
+      port,
+      method: 'POST',
+      path: API_PATHS.launcherRemote,
+      headers: { authorization: bearerAuthorization(token), 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      timeoutMs: options.timeoutMs ?? LAUNCHER_REMOTE_TIMEOUT_MS,
+    });
+    if (res.status === 401) return { kind: 'token_invalid' };
+    if (res.status === 200) {
+      const parsed = launcherRemoteResponseSchema.safeParse(res.body);
+      return parsed.success ? { kind: 'ok', response: parsed.data } : { kind: 'failed', reason: 'answer' };
+    }
+    const error = errorPayloadSchema.safeParse(res.body);
+    if (error.success) return { kind: 'refused', error: error.data };
     return { kind: 'failed', reason: `HTTP ${String(res.status)}` };
   } catch (error) {
     return { kind: 'failed', reason: errnoCode(error) ?? 'error' };

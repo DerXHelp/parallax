@@ -1,5 +1,6 @@
 import type { TerminalId } from '@shared/terminal';
 import type { TerminalEngine } from '../lib/engine';
+import { getSessionPaths } from '@web/state/host-platform';
 import { readTerminalFont } from '../lib/font';
 import { createTerminalKeyHandler } from '../lib/keys';
 import { DEFAULT_TERMINAL_SIZE, sameSize, type TerminalSize } from '../lib/size';
@@ -101,6 +102,7 @@ export class TerminalViewRuntime {
       theme: readTerminalTheme(host.ownerDocument.documentElement),
       font: readTerminalFont(host),
       screenReaderMode: getScreenReaderMode(),
+      conpty: getSessionPaths(controller.sessionKey).flavor === 'win32',
     });
     this.engineValue = engine;
     engine.open(host);

@@ -16,6 +16,7 @@ function record(name = 'PC-A'): RemotePeerRecord {
     pin: identity.pin,
     certificate: identity.certificateDer.toString('base64'),
     authKey: Buffer.from('ciphertext-of-kauth').toString('base64'),
+    level: 'control',
     pairedAt: '2026-11-18T10:00:00.000Z',
     lastSeenAt: null,
     lastAddress: '10.0.0.5',

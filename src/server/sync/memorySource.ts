@@ -156,6 +156,7 @@ export function createMemorySessionSource(options: { host?: HostState } = {}): M
       case 'session.refreshModels':
       case 'session.switchConversation':
       case 'session.openExternal':
+      case 'session.openInTerminal':
       case 'session.reclaim':
       case 'session.consoleCommand':
       case 'session.continueAfterLimit':
@@ -207,6 +208,7 @@ export function createMemorySessionSource(options: { host?: HostState } = {}): M
       case 'remoteAccess.check':
       case 'remoteAccess.events':
       case 'remoteAccess.eventsSeen':
+      case 'remoteAccess.setPeerLevel':
       case 'hosts.add':
       case 'hosts.update':
       case 'hosts.move':

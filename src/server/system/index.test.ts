@@ -17,9 +17,25 @@ import {
   startMenuLinkPath,
   type StartCommand,
 } from './autostart';
-import { AUTOSTART_WARNING_ID, PROTOCOL_WARNING_ID, createSystemIntegration } from './index';
+import {
+  AUTOSTART_WARNING_ID,
+  PROTOCOL_WARNING_ID,
+  UNSUPPORTED_PLATFORM,
+  createSystemIntegration,
+} from './index';
 import { memoryMemo } from './memo';
 import { PROTOCOL_COMMAND_KEY, PROTOCOL_KEY } from './protocol';
+import {
+  HOME_MISSING,
+  URL_HANDLER_FILE,
+  URL_HANDLER_MIME,
+  desktopExecValue,
+  memoryDesktopFs,
+  parseDesktopExec,
+} from './xdg';
+
+/** The Windows suites work on a real temp APPDATA with Windows paths (shortcut existence checks). */
+const onWindows = process.platform === 'win32';
 
 const REPO = 'D:\\dev\\parallax';
 const NODE = 'C:\\Program Files\\nodejs\\node.exe';
@@ -150,7 +166,7 @@ async function world(p: Parameters<typeof machine>[0] & { home?: 'default' | 'ot
   return { m, env, link, home, command, now: () => new Date('2026-10-16T08:00:00.000Z') };
 }
 
-describe('createSystemIntegration (ADR-109, ADR-110)', () => {
+describe.runIf(onWindows)('createSystemIntegration (ADR-109, ADR-110)', () => {
   it('available: false → nothing happens, no launch URI, no warnings', async () => {
     const w = await world();
     const integration = createSystemIntegration({
@@ -422,7 +438,7 @@ describe('createSystemIntegration (ADR-109, ADR-110)', () => {
     expect(w.m.hkcu.has(`${PROTOCOL_COMMAND_KEY}|`)).toBe(false);
   });
 
-  it('missing APPDATA and other platforms are warnings, not errors', async () => {
+  it('missing APPDATA is a warning, not an error', async () => {
     const w = await world();
     const integration = createSystemIntegration({
       available: true,
@@ -435,17 +451,6 @@ describe('createSystemIntegration (ADR-109, ADR-110)', () => {
     });
     await integration.apply(settings(true, false));
     expect(integration.warnings().map((x) => x.error.params.reason)).toEqual(['APPDATA is not set']);
-    const linux = createSystemIntegration({
-      available: true,
-      repoRoot: REPO,
-      home: w.home,
-      run: w.m.run,
-      env: w.env,
-      platform: 'linux',
-      command: w.command,
-    });
-    await linux.apply(settings(true, true));
-    expect(linux.warnings().map((x) => x.error.params.reason)).toEqual(['not Windows', 'not Windows']);
   });
 
   it('onChange can be unsubscribed; a throwing listener does not break apply', async () => {
@@ -492,7 +497,7 @@ function captureLog() {
   };
 }
 
-describe('createSystemIntegration: installation and clone (WP-86)', () => {
+describe.runIf(onWindows)('createSystemIntegration: installation and clone (WP-86)', () => {
   const INSTALLED_AUTOSTART = `--use-system-ca --use-env-proxy ${ROOT}\\start.mjs --autostart`;
   const INSTALLED_PROTOCOL = `"${NODE}" --use-system-ca --use-env-proxy ${ROOT}\\start.mjs --open "%1"`;
   const LEFT_ALONE = 'entry belongs to an installation - left alone';
@@ -750,7 +755,7 @@ describe('createSystemIntegration: installation and clone (WP-86)', () => {
     const w = await world();
     for (const [available, platform] of [
       [false, 'win32'],
-      [true, 'linux'],
+      [true, 'darwin'],
     ] as const) {
       const integration = createSystemIntegration({
         available,
@@ -765,5 +770,213 @@ describe('createSystemIntegration: installation and clone (WP-86)', () => {
       await integration.apply(settings(false, false));
     }
     expect(w.m.calls.filter((c) => c.tool === 'powershell')).toEqual([]);
+  });
+});
+
+describe('createSystemIntegration on other platforms', () => {
+  it('a platform without integration: switched-on entries are warnings, never a spawn', async () => {
+    const m = machine();
+    const integration = createSystemIntegration({
+      available: true,
+      repoRoot: '/Users/demo/parallax',
+      home: '/Users/demo/px',
+      run: m.run,
+      env: { HOME: '/Users/demo' },
+      platform: 'darwin',
+      command: () => Promise.reject(new Error('never asked')),
+    });
+    await integration.apply(settings(true, true));
+    expect(integration.warnings().map((x) => x.error.params.reason)).toEqual([
+      UNSUPPORTED_PLATFORM,
+      UNSUPPORTED_PLATFORM,
+    ]);
+    expect(m.calls).toEqual([]);
+    await integration.apply(settings(false, false));
+    expect(integration.warnings()).toEqual([]);
+    expect(m.calls).toEqual([]);
+  });
+});
+
+// =====================================================================================
+// Linux (WP-106): .desktop entries and xdg-mime
+// =====================================================================================
+
+describe('createSystemIntegration on Linux (WP-106)', () => {
+  const HOME = '/home/demo';
+  const LINUX_REPO = '/home/demo/dev/parallax';
+  const LINUX_NODE = '/usr/bin/node';
+  const AUTOSTART = `${HOME}/.config/autostart/parallax.desktop`;
+  const HANDLER = `${HOME}/.local/share/applications/${URL_HANDLER_FILE}`;
+  const PROGRAM = `${HOME}/.local/share/applications/parallax.desktop`;
+  const INSTALL = '/home/demo/.local/share/parallax-app';
+
+  /** xdg-mime on a memory `mimeapps.list`; `fail` makes it exit 1. */
+  function desktop(p: { handler?: string; fail?: boolean } = {}) {
+    const mime: { handler: string | null } = { handler: p.handler ?? null };
+    const calls: { file: string; args: readonly string[] }[] = [];
+    const run: RunFileFn = (file, args) => {
+      calls.push({ file, args });
+      const done = (stdout: string, exitCode = 0) =>
+        Promise.resolve({ exitCode, signal: null, stdout, stderr: '', timedOut: false });
+      if (path.posix.basename(file) !== 'xdg-mime') return done('', 127);
+      if (p.fail === true) return done('', 1);
+      if (args[0] === 'query') return done(mime.handler === null ? '' : `${mime.handler}\n`);
+      if (args[0] === 'default') {
+        mime.handler = args[1] ?? null;
+        return done('');
+      }
+      return done('', 2);
+    };
+    return { run, calls, mime, fs: memoryDesktopFs() };
+  }
+
+  const command = (extra: readonly string[], homeArg: string | null): Promise<StartCommand> =>
+    Promise.resolve({
+      node: LINUX_NODE,
+      args: [
+        `${LINUX_REPO}/src/server/launcher/main.ts`,
+        ...(homeArg === null ? [] : [`--home=${homeArg}`]),
+        ...extra,
+      ],
+      cwd: LINUX_REPO,
+    });
+
+  function execOf(text: string | undefined): string[] | null {
+    const exec = text === undefined ? null : desktopExecValue(text);
+    return exec === null ? null : parseDesktopExec(exec);
+  }
+
+  function linux(d: ReturnType<typeof desktop>, extra: { installRoot?: string; home?: string } = {}) {
+    return createSystemIntegration({
+      available: true,
+      repoRoot: LINUX_REPO,
+      ...(extra.installRoot === undefined ? {} : { installRoot: extra.installRoot }),
+      home: extra.home ?? `${HOME}/.local/share/parallax`,
+      run: d.run,
+      env: { HOME, DISPLAY: ':0' },
+      platform: 'linux',
+      command,
+      desktopFs: d.fs,
+      memo: memoryMemo(),
+    });
+  }
+
+  it('on: autostart entry, handler entry and xdg-mime default; the toast gets the launch URI', async () => {
+    const d = desktop();
+    const integration = linux(d);
+    await integration.apply(settings(true, true));
+    expect(integration.warnings()).toEqual([]);
+    expect(execOf(d.fs.files.get(AUTOSTART))).toEqual([
+      LINUX_NODE,
+      `${LINUX_REPO}/src/server/launcher/main.ts`,
+      '--autostart',
+    ]);
+    expect(d.fs.files.get(AUTOSTART)).toContain('StartupWMClass=parallax');
+    expect(d.fs.files.get(AUTOSTART)).toContain(`Path=${LINUX_REPO}`);
+    const handler = d.fs.files.get(HANDLER) ?? '';
+    expect(handler).toContain(`MimeType=${URL_HANDLER_MIME};`);
+    expect(handler).toContain('NoDisplay=true');
+    expect(desktopExecValue(handler)).toMatch(/ --open %u$/);
+    expect(d.calls.map((c) => c.args.join(' '))).toEqual([
+      `query default ${URL_HANDLER_MIME}`,
+      `default ${URL_HANDLER_FILE} ${URL_HANDLER_MIME}`,
+    ]);
+    expect(d.mime.handler).toBe(URL_HANDLER_FILE);
+    expect(integration.toastLaunchUri(SAMPLE_IDS.entry)).toBe(`parallax://session/${SAMPLE_IDS.entry}`);
+    // No program entry for a clone.
+    expect(d.fs.files.has(PROGRAM)).toBe(false);
+  });
+
+  it('another data directory: the commands carry --home', async () => {
+    const d = desktop();
+    await linux(d, { home: '/srv/px-live' }).apply(settings(true, true));
+    expect(execOf(d.fs.files.get(AUTOSTART))).toContain('--home=/srv/px-live');
+    expect(execOf(d.fs.files.get(HANDLER))).toEqual([
+      LINUX_NODE,
+      `${LINUX_REPO}/src/server/launcher/main.ts`,
+      '--home=/srv/px-live',
+      '--open',
+    ]);
+  });
+
+  it('off: removes the own entries; foreign entries and another default handler stay', async () => {
+    const d = desktop();
+    await linux(d).apply(settings(true, true));
+    const off = linux(d);
+    await off.apply(settings(false, false));
+    expect(d.fs.files.has(AUTOSTART)).toBe(false);
+    expect(d.fs.files.has(HANDLER)).toBe(false);
+    expect(off.warnings()).toEqual([]);
+
+    const foreign = desktop({ handler: 'other-app.desktop' });
+    foreign.fs.files.set(AUTOSTART, '[Desktop Entry]\nType=Application\nExec=/usr/bin/other-app --tray\n');
+    const integration = linux(foreign);
+    await integration.apply(settings(true, true));
+    expect(integration.warnings().map((x) => [x.id, x.error.params.reason])).toEqual([
+      [AUTOSTART_WARNING_ID, 'foreign'],
+      [PROTOCOL_WARNING_ID, 'foreign'],
+    ]);
+    expect(foreign.fs.files.get(AUTOSTART)).toContain('other-app');
+    expect(foreign.fs.files.has(HANDLER)).toBe(false);
+    expect(foreign.mime.handler).toBe('other-app.desktop');
+    await linux(foreign).apply(settings(false, false));
+    expect(foreign.fs.files.get(AUTOSTART)).toContain('other-app');
+  });
+
+  it('failures are warnings: no HOME, xdg-mime failing', async () => {
+    const d = desktop({ fail: true });
+    const integration = linux(d);
+    await integration.apply(settings(false, true));
+    expect(integration.warnings().map((x) => x.error.params.reason)).toEqual(['xdg-mime exit 1: ']);
+    expect(d.fs.files.has(HANDLER)).toBe(false);
+
+    const noHome = createSystemIntegration({
+      available: true,
+      repoRoot: LINUX_REPO,
+      home: '/srv/px',
+      run: d.run,
+      env: {},
+      platform: 'linux',
+      command,
+      desktopFs: d.fs,
+      memo: memoryMemo(),
+    });
+    await noHome.apply(settings(true, true));
+    expect(noHome.warnings().map((x) => x.error.params.reason)).toEqual([HOME_MISSING, HOME_MISSING]);
+    expect(d.fs.files.size).toBe(0);
+  });
+
+  it('installation: <root>/start.mjs, the program entry with <root>/parallax.svg, a clone entry bent over', async () => {
+    const d = desktop();
+    // The clone's autostart entry of an earlier start.
+    await linux(d).apply(settings(true, false));
+    expect(execOf(d.fs.files.get(AUTOSTART))?.[1]).toBe(`${LINUX_REPO}/src/server/launcher/main.ts`);
+    const installed = (extra: readonly string[]): Promise<StartCommand> =>
+      Promise.resolve({ node: LINUX_NODE, args: [`${INSTALL}/start.mjs`, ...extra], cwd: INSTALL });
+    const integration = createSystemIntegration({
+      available: true,
+      repoRoot: `${INSTALL}/app`,
+      installRoot: INSTALL,
+      home: `${HOME}/.local/share/parallax`,
+      run: d.run,
+      env: { HOME, DISPLAY: ':0' },
+      platform: 'linux',
+      command: installed,
+      desktopFs: d.fs,
+      memo: memoryMemo(),
+    });
+    await integration.apply(settings(true, false));
+    expect(integration.warnings()).toEqual([]);
+    expect(execOf(d.fs.files.get(AUTOSTART))).toEqual([LINUX_NODE, `${INSTALL}/start.mjs`, '--autostart']);
+    const program = d.fs.files.get(PROGRAM) ?? '';
+    expect(execOf(program)).toEqual([LINUX_NODE, `${INSTALL}/start.mjs`]);
+    expect(program).toContain(`Icon=${INSTALL}/parallax.svg`);
+    expect(program).toContain('Categories=Development;');
+
+    // The clone afterwards leaves the installation's entry alone (deferred, no warning).
+    const clone = linux(d);
+    await clone.apply(settings(true, false));
+    expect(clone.warnings()).toEqual([]);
+    expect(execOf(d.fs.files.get(AUTOSTART))?.[1]).toBe(`${INSTALL}/start.mjs`);
   });
 });

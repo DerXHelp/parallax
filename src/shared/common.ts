@@ -26,6 +26,10 @@ export type DecisionId = z.infer<typeof decisionIdSchema>;
 export const clientIdSchema = hex32('cl');
 export type ClientId = z.infer<typeof clientIdSchema>;
 
+/** Embedded terminal (WP-99): `tm_` + 32 hex; here since 102e because `ExternalHandoff` names one. */
+export const terminalIdSchema = hex32('tm');
+export type TerminalId = z.infer<typeof terminalIdSchema>;
+
 export const STANDARD_PROFILE_ID = 'standard' as const;
 
 /** Built-in profile `standard` or `pf_` + 32 hex. */

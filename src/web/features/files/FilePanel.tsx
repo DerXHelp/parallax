@@ -2,13 +2,14 @@ import { RefreshCwIcon } from 'lucide-react';
 import { lazy, Suspense, useState } from 'react';
 import { LIMITS } from '@shared/common';
 import type { FileInfo } from '@shared/model';
-import { windowsPathKey } from '@shared/paths';
+import type { PathRules } from '@shared/paths';
 import { useI18n } from '@web/i18n';
 import { formatFileSize } from '@web/lib/bytes';
 import { cn } from '@web/lib/cn';
 import { languageForPath } from '@web/lib/languages';
 import { useFeatureSlots, type FilePanelSlotProps } from '@web/shell/slots';
 import { useNow } from '@web/state/clock';
+import { useSessionCapabilities, useSessionPaths } from '@web/state/host-platform';
 import { Alert } from '@web/ui/alert';
 import { Badge } from '@web/ui/badge';
 import { Button } from '@web/ui/button';
@@ -36,10 +37,12 @@ type MarkdownMode = 'rendered' | 'source';
  * refresh, editor, Explorer, default program, copy path; Markdown rendered/source), then the content
  * by kind: Markdown through the slot `Markdown` (relative links against the file's folder), text/code
  * in the virtualized code view (line jump, column mark), image, PDF; binary files and folders get the
- * actions only. Read-only (F2). Live: see state/file-document.ts. Mounted per path (`key`).
+ * actions only. Read-only (F2). Live: see state/file-document.ts. Mounted per path (`key`, by the
+ * rules of the session's host – WP-104).
  */
 export function FilePanel(props: FilePanelSlotProps) {
-  return <FileViewer key={windowsPathKey(props.path)} {...props} />;
+  const rules = useSessionPaths(props.sessionKey);
+  return <FileViewer key={rules.key(props.path)} {...props} />;
 }
 
 function LoadingRows({ label }: { label: string }) {
@@ -68,6 +71,7 @@ function ActionButtons({ actions }: { actions: readonly FileAction[] }) {
 
 function Header({
   path,
+  rules,
   info,
   doc,
   actions,
@@ -75,6 +79,7 @@ function Header({
   onModeChange,
 }: {
   path: string;
+  rules: PathRules;
   info: FileInfo | null;
   doc: FileDocumentHandle;
   actions: readonly FileAction[];
@@ -83,11 +88,16 @@ function Header({
 }) {
   const { t, format } = useI18n();
   const now = useNow(30_000);
-  const folder = parentPath(path);
+  const folder = parentPath(path, rules);
   return (
     <div data-slot="file-panel-header" className="flex shrink-0 flex-col gap-1 border-b px-3 py-2">
       <div className="flex min-w-0 items-center gap-1.5">
-        <FileIcon path={path} kind={info?.kind ?? null} className="text-muted-foreground size-4 shrink-0" />
+        <FileIcon
+          path={path}
+          kind={info?.kind ?? null}
+          rules={rules}
+          className="text-muted-foreground size-4 shrink-0"
+        />
         <Tooltip>
           <TooltipTrigger asChild>
             {/* The name keeps its room; the folder gives way first and is shortened from the start. */}
@@ -96,7 +106,7 @@ function Header({
               className="flex min-w-0 flex-1 items-baseline gap-1.5 text-sm outline-none"
               data-slot="file-panel-title"
             >
-              <span className="max-w-full shrink-0 truncate font-medium">{fileName(path)}</span>
+              <span className="max-w-full shrink-0 truncate font-medium">{fileName(path, rules)}</span>
               {folder === '' ? null : (
                 <PathText path={folder} className="text-muted-foreground flex-1 font-mono text-2xs" />
               )}
@@ -171,6 +181,7 @@ function Header({
 function Content({
   sessionKey,
   path,
+  rules,
   line,
   col,
   doc,
@@ -180,6 +191,7 @@ function Content({
 }: {
   sessionKey: string;
   path: string;
+  rules: PathRules;
   line: number | null;
   col: number | null;
   doc: FileDocumentHandle;
@@ -189,7 +201,7 @@ function Content({
 }) {
   const { t } = useI18n();
   const { Markdown } = useFeatureSlots();
-  const name = fileName(path);
+  const name = fileName(path, rules);
   const loading = <LoadingRows label={t('files.viewer.loading')} />;
 
   if (info.kind === 'directory' || info.kind === 'binary' || !info.previewable) {
@@ -225,7 +237,7 @@ function Content({
   if (info.kind === 'markdown' && mode === 'rendered') {
     return (
       <div data-slot="markdown-view" className="min-h-0 flex-1 overflow-auto px-4 py-3">
-        <Markdown text={doc.text} sessionKey={sessionKey} baseDir={parentPath(path)} />
+        <Markdown text={doc.text} sessionKey={sessionKey} baseDir={parentPath(path, rules)} />
       </div>
     );
   }
@@ -248,7 +260,17 @@ function FileViewer({ sessionKey, path, line, col }: FilePanelSlotProps) {
   // A line to jump to is a line of the source: Markdown opens as source then.
   const [mode, setMode] = useState<MarkdownMode>(line === null ? 'rendered' : 'source');
   const info = doc.info;
-  const headerActions = fileActions({ sessionKey, path, line, col, kind: info?.kind ?? null, viewer: false });
+  const rules = useSessionPaths(sessionKey);
+  const capabilities = useSessionCapabilities(sessionKey);
+  const headerActions = fileActions({
+    sessionKey,
+    path,
+    line,
+    col,
+    kind: info?.kind ?? null,
+    viewer: false,
+    host: { rules, capabilities },
+  });
 
   return (
     <section
@@ -259,7 +281,15 @@ function FileViewer({ sessionKey, path, line, col }: FilePanelSlotProps) {
       aria-busy={doc.loading || doc.busy}
       className="flex min-h-0 flex-1 flex-col"
     >
-      <Header path={path} info={info} doc={doc} actions={headerActions} mode={mode} onModeChange={setMode} />
+      <Header
+        path={path}
+        rules={rules}
+        info={info}
+        doc={doc}
+        actions={headerActions}
+        mode={mode}
+        onModeChange={setMode}
+      />
       {doc.error === null ? null : (
         <div className="shrink-0 px-3 pt-3">
           <Alert
@@ -290,6 +320,7 @@ function FileViewer({ sessionKey, path, line, col }: FilePanelSlotProps) {
         <Content
           sessionKey={sessionKey}
           path={path}
+          rules={rules}
           line={line}
           col={col}
           doc={doc}

@@ -7,6 +7,7 @@
  * in memory and DPAPI-protected on disk; never in logs, HostState, errors or the browser.
  */
 import type { KeyObject } from 'node:crypto';
+import type { KeyStoreScheme } from '@shared/model';
 
 /**
  * `identity` (sharing computer's key) and `coupling:<hostId>` (controlling computer, one key per
@@ -37,6 +38,11 @@ export class KeyStoreError extends Error {
  * Tests use an in-memory implementation – never DPAPI for files that outlive a test.
  */
 export interface KeyStore {
+  /**
+   * 102e (WP-76 §B.14): the scheme written into key files (`keyFileSchema.scheme`); absent = `dpapi`. A key
+   * file of another scheme is not read (a new pairing is needed, never a silent re-encryption).
+   */
+  readonly scheme?: KeyStoreScheme;
   /** Is the store usable here (probe once, cached)? Never throws. */
   available(): Promise<boolean>;
   /** Throws KeyStoreError. */

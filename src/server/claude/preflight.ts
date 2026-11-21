@@ -9,12 +9,14 @@
  * (profileIssues) are listed before its claude check. Pure
  * formatting/rating functions plus `runPreflight` with injectable seams. Output is English (Plan:
  * preflight and logs stay English). Never prints e-mail/org (parseAuthStatus) or env values.
+ * WP-103: `PreflightDeps.platform` (default `process.platform`) picks the pnpm lookup, the hints and
+ * the data folder rule; the Linux checks of Chrome and the key store follow with WP-106/107.
  */
 import path from 'node:path';
 import type { ErrorPayload } from '@shared/errors';
 import type { ClaudeInstallStatus, Profile, ProfileIssue } from '@shared/model';
-import { windowsPathIssue } from '@shared/paths';
-import { findChrome, readExeVersion } from '../lib/chrome';
+import { pathFlavorOf, pathRules } from '@shared/paths';
+import { findChrome, findChromeLinux, readChromeVersion, readExeVersion } from '../lib/chrome';
 import type { FsOps } from '../lib/fs';
 import { errnoCode, runFile, type RunFileFn } from '../lib/process';
 import { parseRegValues, regKeyQuery, regQuery, type RegKeyQuery, type RegQuery } from '../lib/registry';
@@ -136,6 +138,7 @@ export function checkProfileStatus(
   profile: Pick<Profile, 'id' | 'name'>,
   status: ClaudeInstallStatus,
   requiredVersion: string | null,
+  platform: NodeJS.Platform = process.platform,
 ): PreflightCheck[] {
   const label = `profile "${profile.name}"`;
   const claude: PreflightCheck = { id: `claude:${profile.id}`, title: 'claude', level: 'ok', detail: '' };
@@ -144,7 +147,10 @@ export function checkProfileStatus(
   if (status.state === 'not_found') {
     claude.level = 'fail';
     claude.detail = `not found (${label})`;
-    claude.hint = 'Install Claude Code (claude.exe on the PATH) or set a fixed path in the profile.';
+    claude.hint =
+      platform === 'win32'
+        ? 'Install Claude Code (claude.exe on the PATH) or set a fixed path in the profile.'
+        : 'Install Claude Code with the native installer (~/.local/bin/claude) or set a fixed path in the profile.';
     return [claude];
   }
   if (status.path === null) {
@@ -383,8 +389,22 @@ export async function chromePolicyValues(
   return values;
 }
 
-export function checkChrome(chrome: { path: string; version: string | null } | null): PreflightCheck {
+export function checkChrome(
+  chrome: { path: string; version: string | null } | null,
+  platform: NodeJS.Platform = 'win32',
+): PreflightCheck {
   const base = { id: 'chrome', title: 'chrome' };
+  if (chrome === null && platform !== 'win32') {
+    // WP-109: a server without desktop opens no window – other computers steer it.
+    return {
+      ...base,
+      level: 'warn',
+      detail: 'not found',
+      hint:
+        'On a desktop Parallax opens its window with Google Chrome or Chromium - install one. The server ' +
+        'mode (parallax --server) needs neither.',
+    };
+  }
   if (chrome === null) {
     return {
       ...base,
@@ -406,8 +426,21 @@ export function checkChrome(chrome: { path: string; version: string | null } | n
  * other users must not be able to read it. Under %LOCALAPPDATA% new folders are private; elsewhere
  * (`--home` on another drive) the user checks the rights – Parallax does not query them.
  */
-export function checkHomeLocation(home: string, localAppData: string | undefined): PreflightCheck {
+export function checkHomeLocation(
+  home: string,
+  localAppData: string | undefined,
+  platform: NodeJS.Platform = process.platform,
+): PreflightCheck {
   const base = { id: 'home', title: 'data dir' };
+  if (platform !== 'win32') {
+    // POSIX (WP-103): Parallax creates its folders with mode 0700; a folder made by hand may be wider.
+    return {
+      ...base,
+      level: 'info',
+      detail: `${home} (rights not checked)`,
+      hint: `It holds the launcher token and the cookie secret – make sure only you can read it, e.g. chmod 700 '${home}'.`,
+    };
+  }
   const root = localAppData === undefined ? null : path.win32.resolve(localAppData).toLowerCase();
   const inside =
     root !== null && path.win32.resolve(home).toLowerCase().startsWith(`${root}${path.win32.sep}`);
@@ -457,14 +490,16 @@ export async function findPnpm(
   env: Readonly<Record<string, string | undefined>>,
   fs: FsProbe,
   nodeExecutable: string,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<PnpmCommand | null> {
-  const execPath = getEnvVar(env, 'npm_execpath');
-  if (execPath !== undefined && windowsPathIssue(execPath) === null && (await fs.isFile(execPath))) {
-    const ext = path.win32.extname(execPath).toLowerCase();
-    if (ext === '.exe') return { file: execPath, prefix: [] };
-    if (['.js', '.cjs', '.mjs'].includes(ext)) return { file: nodeExecutable, prefix: [execPath] };
+  const rules = pathRules(pathFlavorOf(platform));
+  const execPath = getEnvVar(env, 'npm_execpath', platform);
+  if (execPath !== undefined && rules.issue(execPath) === null && (await fs.isFile(execPath))) {
+    const ext = rules.extension(execPath);
+    if (platform === 'win32' && ext === 'exe') return { file: execPath, prefix: [] };
+    if (['js', 'cjs', 'mjs'].includes(ext)) return { file: nodeExecutable, prefix: [execPath] };
   }
-  const exe = await resolveExecutable('pnpm', env, fs);
+  const exe = await resolveExecutable('pnpm', env, fs, platform);
   return exe === null ? null : { file: exe, prefix: [] };
 }
 
@@ -514,6 +549,8 @@ export interface PreflightDeps {
   profilesSource?: PreflightCheck;
   /** Findings per profile (profileIssues); omitted = not checked. */
   profileIssues?: (profile: Profile) => ProfileIssue[];
+  /** Lookups, hints and the data folder rule of this platform (default `process.platform`, WP-103). */
+  platform?: NodeJS.Platform;
 }
 
 export interface PreflightReport {
@@ -524,12 +561,13 @@ export interface PreflightReport {
 export async function runPreflight(deps: PreflightDeps): Promise<PreflightReport> {
   const fs = deps.fs ?? nodeFsProbe;
   const run = deps.runFile ?? runFile;
+  const platform = deps.platform ?? process.platform;
   const checks: PreflightCheck[] = [checkNode(deps.nodeVersion)];
 
-  const pnpm = await findPnpm(deps.env, fs, deps.nodeExecutable);
+  const pnpm = await findPnpm(deps.env, fs, deps.nodeExecutable, platform);
   const pnpmVersion =
     (pnpm === null ? null : await runText(run, pnpm.file, [...pnpm.prefix, '--version'], deps.cwd)) ??
-    pnpmVersionFromUserAgent(getEnvVar(deps.env, 'npm_config_user_agent'));
+    pnpmVersionFromUserAgent(getEnvVar(deps.env, 'npm_config_user_agent', platform));
   checks.push(checkPnpm(pnpmVersion));
   const registry =
     pnpm === null
@@ -545,7 +583,7 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightReport
     if (config !== null) checks.push(config);
     try {
       const status = await deps.integration.checkProfile(profile.id);
-      checks.push(...checkProfileStatus(profile, status, deps.sdk?.claudeCodeVersion ?? null));
+      checks.push(...checkProfileStatus(profile, status, deps.sdk?.claudeCodeVersion ?? null, platform));
     } catch (error) {
       checks.push({
         id: `claude:${profile.id}`,
@@ -556,11 +594,25 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightReport
     }
   }
 
-  const chrome = await findChrome({ regQuery: deps.regQuery ?? regQuery(run), fs, env: deps.env });
-  const chromeVersion = chrome === null ? null : await (deps.exeVersion ?? readExeVersion)(chrome);
-  checks.push(checkChrome(chrome === null ? null : { path: chrome, version: chromeVersion }));
-  checks.push(checkChromePolicies(await chromePolicyValues(deps.regKeyQuery ?? regKeyQuery(run))));
+  // WP-106/109: Windows Chrome from the registry (version resource, never started); Linux Chrome or
+  // Chromium from the PATH or the Snap (`--version`). Chrome policies only from the Windows registry.
+  const chrome =
+    platform === 'win32'
+      ? await findChrome({ regQuery: deps.regQuery ?? regQuery(run), fs, env: deps.env })
+      : await findChromeLinux({ fs, env: deps.env });
+  const chromeVersion =
+    chrome === null
+      ? null
+      : platform === 'win32'
+        ? await (deps.exeVersion ?? readExeVersion)(chrome)
+        : await (deps.exeVersion ?? ((file: string) => readChromeVersion(file, platform, run)))(chrome);
+  checks.push(checkChrome(chrome === null ? null : { path: chrome, version: chromeVersion }, platform));
+  if (platform === 'win32') {
+    checks.push(checkChromePolicies(await chromePolicyValues(deps.regKeyQuery ?? regKeyQuery(run))));
+  }
   const home = deps.home ?? null;
-  if (home !== null) checks.push(checkHomeLocation(home, getEnvVar(deps.env, 'LOCALAPPDATA')));
+  if (home !== null) {
+    checks.push(checkHomeLocation(home, getEnvVar(deps.env, 'LOCALAPPDATA', platform), platform));
+  }
   return { checks, exitCode: preflightExitCode(checks) };
 }

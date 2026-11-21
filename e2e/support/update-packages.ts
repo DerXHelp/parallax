@@ -47,7 +47,7 @@ import type { TestKey } from '../../src/server/install/testPackage';
 import { sleep } from '../../src/server/lib/async';
 import { runFile, systemTool } from '../../src/server/lib/process';
 import { storeSchemaHashes } from '../../src/server/store/schemas';
-import { zipFolders, zipPath } from '../../src/server/update/testRelease';
+import { archiveFolders, archivePath } from '../../src/server/update/testRelease';
 import { REPO_ROOT } from './paths';
 
 const CACHE_ROOT = path.join(REPO_ROOT, 'node_modules', '.cache', 'parallax-update-e2e');
@@ -192,11 +192,12 @@ export async function makeMiniSdk(dir: string): Promise<MiniSdk> {
     dir,
     `${AGENT_SDK_PACKAGE.replace(/^@/u, '').replace('/', '-')}-${SDK_VERSION}.tgz`,
   );
-  const result = await runFile(systemTool('tar.exe'), ['-c', '-z', '-f', tarball, '-C', source, 'package'], {
+  const tar = systemTool(process.platform === 'win32' ? 'tar.exe' : 'tar');
+  const result = await runFile(tar, ['-c', '-z', '-f', tarball, '-C', source, 'package'], {
     cwd: source,
     timeoutMs: 60_000,
   });
-  if (result.exitCode !== 0) throw new Error(`tar.exe failed: ${result.stderr}`);
+  if (result.exitCode !== 0) throw new Error(`tar failed: ${result.stderr}`);
   return {
     tarball,
     bytes: await readFile(tarball),
@@ -243,8 +244,8 @@ export interface TestPackage {
   /** `<out>\parallax-<v>` */
   dir: string;
   release: ReleaseInfo;
-  /** `<out>\parallax-<v>-win.zip` once `zip()` ran. */
-  zip: () => Promise<{ file: string; bytes: Buffer }>;
+  /** The release archive of this host next to the folder (`parallax-<v>-win.zip`, Linux `…-linux-x64.tar.gz`). */
+  archive: () => Promise<{ file: string; bytes: Buffer }>;
 }
 
 /** Writes `<out>\parallax-<version>\` like release-pack (without node_modules) and signs release.json. */
@@ -304,17 +305,17 @@ export async function writeTestPackage(out: string, spec: PackageSpec): Promise<
     path.join(dir, RELEASE_SIGNATURE_FILE),
     `${sign(null, bytes, spec.key.privateKey).toString('base64')}\n`,
   );
-  let zipped: { file: string; bytes: Buffer } | null = null;
+  let archived: { file: string; bytes: Buffer } | null = null;
   return {
     version: spec.version,
     dir,
     release,
-    zip: async () => {
-      if (zipped !== null) return zipped;
-      const file = zipPath(out, spec.version);
+    archive: async () => {
+      if (archived !== null) return archived;
+      const file = archivePath(out, spec.version);
       await rm(file, { force: true });
-      zipped = { file, bytes: await zipFolders(out, [path.basename(dir)], file) };
-      return zipped;
+      archived = { file, bytes: await archiveFolders(out, [path.basename(dir)], file) };
+      return archived;
     },
   };
 }

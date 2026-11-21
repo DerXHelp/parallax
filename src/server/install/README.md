@@ -44,10 +44,11 @@ und gibt die Quelle zurück (`cache` | `tarball` | `npm` | `download`).
 | `nodeDeps.ts` | echte Abhängigkeiten (SDK, Startmenü und Einträge aus `system/installation.ts`, laufender Server, Sperre, `node.exe` mit dieser Konsole) |
 | `args.ts` | Kommandozeile: `--dir`, `--registry`, `--sdk-tarball`, `--use`, `--uninstall`, `--install` und `--install-root` (von `start.mjs`) |
 | `install.ts` | `installPackage` (Signatur, Dateien, Staging, SDK, Umbenennen, Stammdateien, `current.json`, Startmenü, Aufräumen), `useVersion`; seit WP-87 aus den Teilen unten zusammengesetzt |
-| `uninstall.ts` | Einträge entfernen, dann genau die Namen aus `ROOT_ENTRIES`; fremde Dateien bleiben, Daten bleiben |
+| `uninstall.ts` | Einträge entfernen, dann genau die Namen aus `rootEntries()` der Plattform; fremde Dateien bleiben, Daten bleiben |
 | `versions.ts` | installierte Versionen, Version eines laufenden Servers (Build-ID), Aufräumen über `.trash-*` |
 | `layout.ts` | Ordner und Dateinamen, `current.json`, `defaultInstallRoot`, Testsperre `assertNotRealUserFolder` |
-| `templates.ts` | `start.mjs`, `parallax.cmd` und `install.cmd` (eine Quelle; `.cmd` mit CRLF) |
+| `templates.ts` | `start.mjs`, `parallax.cmd` und `install.cmd` (eine Quelle; `.cmd` mit CRLF); Linux: `parallax`, `install.sh` und der Befehl (POSIX-`sh`, LF) |
+| `command.ts` | Linux: der Befehl `~/.local/bin/parallax` (Markierungszeile mit dem Stammordner; fremde Dateien bleiben) |
 | `parallax.ico` | Symbol des Startmenü-Eintrags (aus `favicon.svg` gerendert, 16–256 px) |
 | `testPackage.ts` | nur für Tests: kleines synthetisches Paket, signiert mit einem Test-Schlüssel (`rootFiles: true` liefert `root/` mit) |
 
@@ -83,3 +84,27 @@ Teile einzeln.
   (`packageRootFiles(minNode)`) ins Paket, gelistet in `release.json` und damit signiert. `writeRootFiles` nimmt
   jede der beiden aus `versions\<v>\root\`, wenn sie dort liegt, sonst die Vorlage des laufenden Codes – nach einer
   Übergabe schreibt so die neue Version ihre eigenen Stammdateien.
+
+## Linux (WP-108, Ablage nach WP-100 E7)
+
+- **Ordner:** Programm `~/.local/lib/parallax` (`versions/<v>`, `current.json`, `start.mjs`, Startskript `parallax`,
+  Symbol `parallax.svg`), Befehl `~/.local/bin/parallax`, Daten `$XDG_DATA_HOME/parallax` (`config.ts`). Die Namen je
+  Plattform liefern `startCommandFile()`, `iconFile()`, `rootEntries()`, `defaultInstallRoot()`, `defaultBinDir()`;
+  Pfade prüfen `installPathRules()` (POSIX: exakt, keine Pseudo-Dateisysteme).
+- **Einstieg:** `sh install.sh` sucht `node` nur in absoluten `PATH`-Einträgen, prüft, dass es startet (fehlendes
+  `libatomic1` auf minimalen Systemen) und mindestens `minNode` ist, und startet `dist/install.js` ohne Node-Flags.
+  `cli.ts` nennt ein OpenSSL älter als 3.5 (`opensslNote`; „Mehrere Rechner“ braucht es, der offizielle Build bringt es).
+- **Befehl** (`command.ts`): `ensureCommand` schreibt `~/.local/bin/parallax` (Modus 755), wenn er fehlt oder zum
+  selben Stammordner gehört; ein Befehl einer anderen Installation, eine fremde Datei oder ein Link bleiben
+  (`ok: false` mit Grund – gestartet wird dann über `<root>/parallax`). `removeCommand` entfernt nur den eigenen.
+  `isOnPath` entscheidet die Meldung (Ubuntu nimmt `~/.local/bin` ab der nächsten Anmeldung in den `PATH`).
+- **Stammdateien:** `writeRootFiles` schreibt `start.mjs`, das Startskript der Plattform (Linux mit Modus 755) und das
+  Symbol der Plattform. Ein Paket trägt beide Plattformen (`root/parallax.cmd`, `root/parallax`, `install.cmd`,
+  `install.sh`, `parallax.ico`, `parallax.svg`).
+- **SDK:** npm des offiziellen Builds unter `<prefix>/lib/node_modules/npm/bin/npm-cli.js` (`npmCliPath`), Entpacken
+  mit `/usr/bin/tar` (GNU, `--no-same-owner --no-same-permissions`, `tarTool`/`unpackArgs`). `npmrc.ts`: `$HOME/.npmrc`,
+  `${VAR}` exakt, `npm_config_*` in jeder Schreibweise.
+- **Deinstallation:** Menüeintrag, Autostart und `parallax:` über `system/installation.ts` (WP-106), der Befehl hier,
+  der Benutzerdienst über `NodeInstallerOptions.removeService` (WP-107 verdrahtet ihn). Die Daten bleiben.
+- **Tests:** eigene Ordner (`HOME` bzw. `--dir` im Testordner); `templates.test.ts` startet `parallax` und
+  `install.sh` unter Linux wirklich mit `/bin/sh`.

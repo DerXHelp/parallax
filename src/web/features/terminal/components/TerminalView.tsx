@@ -1,4 +1,12 @@
-import { ClipboardPasteIcon, CopyIcon, EraserIcon, RotateCcwIcon, TextSelectIcon, XIcon } from 'lucide-react';
+import {
+  ClipboardPasteIcon,
+  CopyIcon,
+  EraserIcon,
+  RotateCcwIcon,
+  TerminalIcon,
+  TextSelectIcon,
+  XIcon,
+} from 'lucide-react';
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import type { TerminalExitReason, TerminalInfo } from '@shared/terminal';
 import { useT } from '@web/i18n';
@@ -16,6 +24,7 @@ import {
   ContextMenuTrigger,
 } from '@web/ui/context-menu';
 import { useTerminalT } from '../i18n';
+import { SHORT_SHELL_KEYS } from '../lib/shells';
 import type { TerminalController } from '../state/controller';
 import { useTerminalEnvironment } from '../state/environment';
 import { setScreenReaderMode, useScreenReaderMode } from '../state/terminals';
@@ -68,6 +77,9 @@ export function TerminalView({ info, name, active, controller, focusToken, exitR
   const [pasteFailed, setPasteFailed] = useState(false);
   const { terminalId } = info;
   const running = info.state === 'running';
+  // WP-105: claude of "Continue in terminal" – no restart while it runs (it would end claude), after
+  // it ended "Restart" opens the shell.
+  const claude = info.command === 'claude';
 
   // Esc stays in the terminal: the newest Esc handler of the registry wins, so it is pushed again
   // whenever the focus enters the terminal (after the side panel's handler). `focus` in the capture
@@ -218,10 +230,12 @@ export function TerminalView({ info, name, active, controller, focusToken, exitR
             {tt('menu.screenReader')}
           </ContextMenuCheckboxItem>
           <ContextMenuSeparator />
-          <ContextMenuItem data-action="terminal-restart" onSelect={restart}>
-            <RotateCcwIcon aria-hidden />
-            {tt('menu.restart')}
-          </ContextMenuItem>
+          {claude && running ? null : (
+            <ContextMenuItem data-action="terminal-restart" onSelect={restart}>
+              {claude ? <TerminalIcon aria-hidden /> : <RotateCcwIcon aria-hidden />}
+              {claude ? tt('exit.shell', { shell: tt(SHORT_SHELL_KEYS[info.shell]) }) : tt('menu.restart')}
+            </ContextMenuItem>
+          )}
           <ContextMenuItem data-action="terminal-close" variant="destructive" onSelect={close}>
             <XIcon aria-hidden />
             {tt('menu.close')}
@@ -249,7 +263,14 @@ export function TerminalView({ info, name, active, controller, focusToken, exitR
         </div>
       ) : null}
       {running ? null : (
-        <ExitBar exitCode={info.exitCode} reason={exitReason} onRestart={restart} onClose={close} />
+        <ExitBar
+          exitCode={info.exitCode}
+          reason={exitReason}
+          command={info.command}
+          shell={info.shell}
+          onRestart={restart}
+          onClose={close}
+        />
       )}
     </div>
   );

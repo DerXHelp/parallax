@@ -90,6 +90,23 @@ export const en = {
       'Registers the link type “parallax:” for your Windows user; a click opens the session in a new app window.',
     openOnClickForeign:
       'Another program is already registered for “parallax:” links on your Windows user. Parallax does not replace it.',
+    /** WP-104: the texts on a Linux computer (its desktop's notifications; none without a desktop). */
+    linux: {
+      eventsHint:
+        'Per event: a desktop notification and a sound. Parallax shows every notification only once.',
+      eventsHintNoDesktop:
+        'Per event: a sound. This computer has no desktop, so there are no desktop notifications.',
+      toast: 'Desktop notification',
+      toastFor: 'Desktop notification: {event}',
+      doNotDisturbHint:
+        'No desktop notifications and no sounds. Hints in the window and the count in the window title stay.',
+      focusedElsewhereSystem: 'Show a desktop notification',
+      openOnClick: 'Clicking a desktop notification opens the session',
+      openOnClickHint:
+        'Registers the link type “parallax:” for your user; a click opens the session in a new app window.',
+      openOnClickForeign:
+        'Another program is already registered for “parallax:” links for your user. Parallax does not replace it.',
+    },
   },
   sessions: {
     idleSleep: 'Put idle sessions to sleep',
@@ -238,6 +255,9 @@ export const en = {
         replaceConfirm: 'Pair a new computer',
         keep: 'Keep the pairing',
         failed: 'Pairing could not start.',
+        // WP-107 (WP-76 §B.13): the access is chosen here, before the code shows.
+        level: 'Access of the paired computer',
+        levelOnCard: 'Access',
       },
       peer: {
         heading: 'Paired computer',
@@ -270,6 +290,19 @@ export const en = {
         renewed: 'The key was renewed.',
         cancel: 'Cancel',
         failed: 'The action failed.',
+        // WP-107 (WP-76 §B.13)
+        level: 'Access',
+        raise: 'Allow managing…',
+        lower: 'Control only…',
+        raiseTitle: 'Let {name} manage this computer?',
+        raiseBody:
+          '{name} may then also change the settings, profiles (with their environment values), updates and the server of this computer. Its connections close once and reconnect with the new access.',
+        raiseConfirm: 'Allow managing',
+        lowerTitle: 'Let {name} only control this computer?',
+        lowerBody:
+          'Settings, profiles, updates and the server can then be changed only on this computer. The connections of {name} close once and reconnect.',
+        lowerConfirm: 'Control only',
+        levelChanged: 'The access was changed.',
       },
       listener: {
         heading: 'Port and address',
@@ -313,6 +346,10 @@ export const en = {
           connected: 'Connected',
           disconnected: 'Disconnected',
           unpaired: 'Pairing removed',
+          // WP-102 (WP-76 §B.13)
+          level_changed: 'Access level changed',
+          manage_command: 'Administration',
+          terminal_opened: 'Terminal opened',
         },
       },
     },
@@ -399,6 +436,15 @@ export const en = {
         doneUnreachable: '{name} was removed here. Remove the pairing on {name} yourself.',
       },
     },
+    /** WP-107 (WP-76 §B.13): what a paired computer may do on this one. */
+    levels: {
+      control: 'Control',
+      controlHint:
+        'Sessions, files and the terminal. Through the terminal the other computer can do anything your account can do here – pair only your own computers.',
+      manage: 'Manage',
+      manageHint:
+        'Also settings, profiles (with their environment values), updates, the server and this pairing. Only needed when this computer runs without a desktop of its own.',
+    },
   },
   /** Section "Files" (WP-58, ADR-144): the editor for "Open in editor". */
   files: {
@@ -410,6 +456,12 @@ export const en = {
       vscode: 'Visual Studio Code',
       custom: 'Own program',
       system: 'Windows default program',
+      vscodium: 'VSCodium',
+      zed: 'Zed',
+      sublime: 'Sublime Text',
+      kate: 'Kate',
+      gnome_text_editor: 'GNOME Text Editor',
+      gedit: 'gedit',
     },
     defaultBadge: 'Default',
     detecting: 'Looking for the program…',
@@ -442,6 +494,24 @@ export const en = {
       too_many: 'At most {max} arguments.',
       invalid: 'This entry is not valid.',
     },
+    /** WP-104: the texts on a Linux computer. */
+    posix: {
+      system: 'Default program of the desktop',
+      systemHint:
+        'Opens a file with the program the desktop assigns to its type – only for harmless types ({extensions}). Other files cannot be opened this way.',
+      path: 'Program',
+      pathOptionalHint:
+        'Empty = the installation Parallax found. Enter the full path of a program to use another one.',
+      customHint: 'The full path of the program on this computer.',
+      pathPlaceholder: '/usr/bin/editor',
+      pathIssue: 'Enter a full path (like /usr/bin/…) – no relative path.',
+      noEditor: 'This computer has no desktop: files open in the viewer of Parallax.',
+      /** WP-106 */
+      editorHint:
+        'Parallax opens a file in this program at the referenced line. The default program of the desktop is the default; the change applies to the next file you open.',
+      blockedIssue:
+        'This program cannot be the editor (shells, interpreters, terminal emulators and openers like xdg-open are blocked).',
+    },
   },
   /** Section "Console" (WP-97, ADR-238): "Open shell in folder". */
   console: {
@@ -452,6 +522,12 @@ export const en = {
       cmd: 'Command Prompt (cmd)',
       powershell: 'Windows PowerShell',
       gitbash: 'Git Bash',
+      /** WP-104: the shells of a Linux computer. */
+      login: 'Login shell',
+      bash: 'Bash',
+      zsh: 'Zsh',
+      fish: 'fish',
+      pwsh: 'PowerShell 7',
     },
     defaultBadge: 'Default',
     gitBashWindow: 'Git Bash window',
@@ -491,5 +567,12 @@ export const en = {
     /** Notice when a sound was blocked by the browser's autoplay rule (once per window run). */
     locked:
       'Enable sounds: click anywhere in this window or press a key – browsers only play sounds after that.',
+  },
+  /** WP-107 (WP-76 §B.13): the settings of another computer this window may manage. */
+  manage: {
+    computer: 'Computer',
+    thisComputer: 'This computer',
+    managed: '{name} (managed)',
+    hint: 'Settings of {name}: every change is saved there. Profiles and updates of {name} are not shown here yet.',
   },
 };

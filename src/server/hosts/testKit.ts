@@ -3,6 +3,7 @@
  * real sync hub and memory source) and a hosts service with the memory key store. Everything on
  * 127.0.0.1 with port 0 and a temp home – never 0.0.0.0, never DPAPI.
  */
+import type { Logger } from 'pino';
 import type { ClientId, EntryId, HostId } from '@shared/common';
 import type { RemoteHost, RemoteHostStatus } from '@shared/model';
 import type { Notification } from '@shared/protocol';
@@ -15,6 +16,7 @@ import { TEST_HOST } from '../secure/testKit';
 import { createSyncHub, type SyncHub } from '../sync/hub';
 import { createMemorySessionSource, type MemorySessionSource } from '../sync/memorySource';
 import { CommandError } from '../sync/ports';
+import type { TerminalService } from '../terminal/ports';
 import { createHostsService, type Hosts, type HostsServiceOptions } from './service';
 
 export { TEST_HOST };
@@ -50,6 +52,10 @@ export async function startSharing(
     registerContent?: RegisterRemoteContent;
     /** Puts something between the listener and the real hub (tests of odd sharing sides). */
     wrapHub?: (hub: SyncHub) => RemoteHubAttach;
+    /** WP-107: the embedded terminal the coupled computer may use (E3). */
+    terminal?: TerminalService;
+    /** WP-107: the remote-access service's logger (log spies). */
+    logger?: Logger;
   } = {},
 ): Promise<SharingSide> {
   const instance = {
@@ -63,6 +69,8 @@ export async function startSharing(
     hub: options.wrapHub === undefined ? hub : options.wrapHub(hub),
     ...(options.home === undefined ? {} : { home: options.home }),
     ...(options.registerContent === undefined ? {} : { registerContent: options.registerContent }),
+    ...(options.terminal === undefined ? {} : { terminal: options.terminal }),
+    ...(options.logger === undefined ? {} : { logger: options.logger }),
   });
   return {
     harness,

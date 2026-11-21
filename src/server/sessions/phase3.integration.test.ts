@@ -6,6 +6,7 @@
  * (ADR-147) and the CR2 regression of `pendingRename`. Everything published passes the hub-like
  * validation of the memory publisher.
  */
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LIMITS, type EntryId } from '@shared/common';
 import { makeError } from '@shared/errors';
@@ -694,7 +695,7 @@ describe('plan versions (ADR-148)', () => {
     ]);
     expect((await view(h, entryId)).detail.latestPlanVersion).toBe(1);
     // The fake writes the plan file for real, below the harness's filesRoot (WP-52).
-    expect(v1.planFilePath?.startsWith(`${h.filesRoot}\\`)).toBe(true);
+    expect(v1.planFilePath?.startsWith(`${h.filesRoot}${path.sep}`)).toBe(true);
     // WP-93: annotations of the open version travel as decision.upsert and stay with the record.
     const note = samplePlanAnnotation();
     expect(
@@ -1107,7 +1108,12 @@ describe('approve_fresh_context (ADR-147)', () => {
     const h = await setup();
     const entryId = await idleEntry(h, 'fake:context-high');
     const { context } = await h.cmd({ name: 'session.getContext', entryId, detail: 'summary' });
-    expect(context).toMatchObject({ percentage: 75, totalTokens: 150_000, maxTokens: 200_000, source: 'sdk' });
+    expect(context).toMatchObject({
+      percentage: 75,
+      totalTokens: 150_000,
+      maxTokens: 200_000,
+      source: 'sdk',
+    });
     await h.cmd({ name: 'session.sendPrompt', entryId, prompt: { text: 'fake:plan' } });
     const decision = await openPlan(h, entryId);
     // During the turn the streamed usage keeps the gauge there (a lower usage would move the estimate).
@@ -1316,7 +1322,10 @@ describe('approve_fresh_context (ADR-147)', () => {
     const cancelRetry = vi.spyOn(EntryState.prototype, 'cancelRetry');
     try {
       expect(
-        await respondPlanError(h, entryId, decision.id, { behavior: 'approve_fresh_context', mode: 'default' }),
+        await respondPlanError(h, entryId, decision.id, {
+          behavior: 'approve_fresh_context',
+          mode: 'default',
+        }),
       ).toEqual({ code: 'SESSION_BUSY', params: { entryId } });
       expect(cancelRetry).not.toHaveBeenCalled();
     } finally {
@@ -1341,13 +1350,18 @@ describe('approve_fresh_context (ADR-147)', () => {
   it('WP61-01: `@` mentions of the plan reach the fresh session neutralized (U+200B); the plan file keeps them', async () => {
     const planPath = `${HARNESS_CWD}\\PLAN.md`;
     const plan = '# Plan\n\n1. Read @README.md\n2. Update @"docs/my notes.md" (mail dev@example.com)\n';
-    const h = await setup({ scenario: (_req, n) => (n === 0 ? retroPlanScenario(planPath, plan) : interactiveScenario()) });
+    const h = await setup({
+      scenario: (_req, n) => (n === 0 ? retroPlanScenario(planPath, plan) : interactiveScenario()),
+    });
     const entryId = await h.create('plan it');
     const decision = await openPlan(h, entryId);
     expect(decision.plan).toBe(plan);
     await respondPlan(h, entryId, decision.id, { behavior: 'approve_fresh_context', mode: 'default' });
-    const neutral = '# Plan\n\n1. Read \u200b@README.md\n2. Update \u200b@"docs/my notes.md" (mail dev@example.com)\n';
-    expect(h.session(entryId).sent[0]?.content).toEqual([{ type: 'text', text: freshPrompt(neutral, planPath) }]);
+    const neutral =
+      '# Plan\n\n1. Read \u200b@README.md\n2. Update \u200b@"docs/my notes.md" (mail dev@example.com)\n';
+    expect(h.session(entryId).sent[0]?.content).toEqual([
+      { type: 'text', text: freshPrompt(neutral, planPath) },
+    ]);
     expect(h.stores.decisions.plan(entryId, 1)).toBe(plan);
     await untilIdle(h, entryId);
   });
@@ -1356,11 +1370,15 @@ describe('approve_fresh_context (ADR-147)', () => {
     const planPath = `${HARNESS_CWD}\\PLAN.md`;
     const h = await setup({
       options: { freshContextResultMs: 3_000 },
-      scenario: (_req, n) => (n === 0 ? retroPlanScenario(planPath, '# Plan', { resultAfterDeny: false }) : interactiveScenario()),
+      scenario: (_req, n) =>
+        n === 0 ? retroPlanScenario(planPath, '# Plan', { resultAfterDeny: false }) : interactiveScenario(),
     });
     const entryId = await h.create('plan it');
     const decision = await openPlan(h, entryId);
-    const answered = respondPlan(h, entryId, decision.id, { behavior: 'approve_fresh_context', mode: 'default' });
+    const answered = respondPlan(h, entryId, decision.id, {
+      behavior: 'approve_fresh_context',
+      mode: 'default',
+    });
     await h.waitFor(() => h.timers.pending().some((t) => t.ms === 3_000));
     expect(h.sessions(entryId)).toHaveLength(1);
     expect(h.session(entryId).state).not.toBe('exited');

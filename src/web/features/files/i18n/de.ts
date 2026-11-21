@@ -15,6 +15,7 @@ export const de: typeof en = {
     viewer: 'Im Viewer öffnen',
     editor: 'Im Editor öffnen',
     explorer: 'Im Explorer zeigen',
+    fileManager: 'Im Dateimanager zeigen',
     default: 'Mit Standardprogramm öffnen',
     copyPath: 'Pfad kopieren',
     menu: 'Aktionen für {name}',

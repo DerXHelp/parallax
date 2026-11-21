@@ -16,9 +16,10 @@ import type { SessionOp } from '@shared/protocol';
 import { SAMPLE_TIME, sampleEntry, sampleId } from '@shared/samples';
 import { FAKE_CONSOLE_PROMPT, fakeConsoleAnswer } from '../backend/fakeBackend';
 import type { HistoryMessage } from '../backend/types';
-import { consoleCommandText, secretPrompt } from '../claude/consoleCommand';
+import { consoleCommandFor, posixSecretPrompt, secretPrompt } from '../claude/consoleCommand';
 import { REDACTED } from '../lib/logger';
 import { CommandError } from '../sync/ports';
+import { withConsolePreflight } from '../system/console';
 import { CONTINUE_PROMPT } from './continuePlan';
 import { HANDOFF_IMPORT_SLACK_MS } from './external';
 import {
@@ -191,10 +192,16 @@ describe('session.openExternal (ADR-104)', () => {
       processStartedAt: SAMPLE_TIME,
       since: SAMPLE_TIME,
       conversationId: entry === undefined ? null : currentConversation(entry).id,
+      terminalId: null,
     });
     expect(entry?.lastRunState).toBe('external');
     expect(h.status(entryId).kind).toBe('external');
-    expect(h.summary(entryId).external).toEqual({ since: SAMPLE_TIME, pid: PID, running: true });
+    expect(h.summary(entryId).external).toEqual({
+      since: SAMPLE_TIME,
+      pid: PID,
+      running: true,
+      terminalId: null,
+    });
     expect(handoffs(h, entryId)).toEqual([
       { phase: 'external', importedItems: 0, order: expect.any(Number) as number },
     ]);
@@ -477,6 +484,37 @@ describe('commands and the shutdown while the console opens (R4-01, R4-03)', () 
     expect(h.session(entryId).state).not.toBe('exited');
     expect(h.facts(entryId).runState).toBe('idle');
   });
+
+  it('WP-106: a launcher preflight that refuses (no terminal emulator) → before the query is closed', async () => {
+    const SECRET = 'sk-fake-preflight-secret-0815';
+    const refusal: { reason: string | null } = { reason: 'no terminal emulator found' };
+    const seen: string[] = [];
+    const { h, launcher } = await setup({ consoleEnv: { API_TOKEN: SECRET } });
+    withConsolePreflight(launcher, (spec) => {
+      seen.push(spec.args.join(' '));
+      return Promise.resolve(refusal.reason);
+    });
+    const entryId = await idleEntry(h);
+    expect(await h.cmdError({ name: 'session.openExternal', entryId })).toEqual({
+      code: 'EXTERNAL_CONSOLE_FAILED',
+      params: { reason: 'no terminal emulator found' },
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain('--resume');
+    expect(launcher.opened).toEqual([]);
+    expect(h.session(entryId).state).not.toBe('exited');
+    expect(h.facts(entryId).runState).toBe('idle');
+    expect(h.stores.registry.get(entryId)?.external).toBeNull();
+    // A refusal never carries a value of the console env.
+    refusal.reason = `no emulator for API_TOKEN=${SECRET}`;
+    const failed = await h.cmdError({ name: 'session.openExternal', entryId });
+    expect(JSON.stringify(failed)).not.toContain(SECRET);
+    expect(h.facts(entryId).runState).toBe('idle');
+    // Usable again → the handoff runs.
+    refusal.reason = null;
+    expect(await h.cmd({ name: 'session.openExternal', entryId })).toEqual({ pid: PID });
+    expect(h.facts(entryId).runState).toBe('external');
+  });
 });
 
 // =====================================================================================
@@ -631,7 +669,12 @@ describe('server restart with an open handoff (ADR-104)', () => {
     const h = await restart(s);
     expect(h.stores.registry.get(entryId)?.external).toMatchObject({ pid: PID });
     expect(h.facts(entryId).runState).toBe('external');
-    expect(h.summary(entryId).external).toEqual({ since: SAMPLE_TIME, pid: PID, running: true });
+    expect(h.summary(entryId).external).toEqual({
+      since: SAMPLE_TIME,
+      pid: PID,
+      running: true,
+      terminalId: null,
+    });
     expect(h.manager.inspect(entryId)?.externalWatched).toBe(true);
     expect(s.launcher.opened).toHaveLength(1);
     s.h = h;
@@ -672,7 +715,7 @@ describe('server restart with an open handoff (ADR-104)', () => {
 // =====================================================================================
 
 describe('session.consoleCommand and secrets (ADR-104)', () => {
-  it('the PowerShell line of the console spec; changes nothing (running, external, archived)', async () => {
+  it('the console line of the spec for the host platform; changes nothing (running, external, archived)', async () => {
     const { h, launcher } = await setup();
     const entryId = await idleEntry(h);
     const sessionId = sessionIdOf(h, entryId);
@@ -685,7 +728,7 @@ describe('session.consoleCommand and secrets (ADR-104)', () => {
       model: null,
       permissionMode: 'default',
     });
-    expect(result).toEqual({ command: consoleCommandText(spec), sessionId });
+    expect(result).toEqual({ command: consoleCommandFor(spec, process.platform), sessionId });
     expect(h.facts(entryId).runState).toBe('idle');
     expect(h.session(entryId).state).not.toBe('exited');
     expect(launcher.opened).toEqual([]);
@@ -706,8 +749,14 @@ describe('session.consoleCommand and secrets (ADR-104)', () => {
     // values of the profile env stay in the line.
     const copy = await h.cmd({ name: 'session.consoleCommand', entryId });
     expect(copy.command).not.toContain(SECRET);
-    expect(copy.command).toContain(`$env:API_TOKEN=${secretPrompt('API_TOKEN')}`);
-    expect(copy.command).toContain(`$env:CLAUDE_CONFIG_DIR='D:\\cfg'`);
+    if (process.platform === 'win32') {
+      expect(copy.command).toContain(`$env:API_TOKEN=${secretPrompt('API_TOKEN')}`);
+      expect(copy.command).toContain(`$env:CLAUDE_CONFIG_DIR='D:\\cfg'`);
+    } else {
+      // WP-106: the POSIX line of a Linux host, the same rule.
+      expect(copy.command).toContain(`API_TOKEN=${posixSecretPrompt('API_TOKEN')}`);
+      expect(copy.command).toContain(`CLAUDE_CONFIG_DIR='D:\\cfg'`);
+    }
 
     launcher.failNext(`Start-Process failed for API_TOKEN=${SECRET} in D:\\cfg`);
     const failed = await h.cmdError({ name: 'session.openExternal', entryId });

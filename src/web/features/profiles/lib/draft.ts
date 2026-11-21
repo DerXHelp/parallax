@@ -14,7 +14,7 @@ import {
   type ProfileIssue,
   type ProfileSummary,
 } from '@shared/model';
-import { windowsPathKey } from '@shared/paths';
+import { WIN32_PATHS, type PathRules } from '@shared/paths';
 import type { TranslationKey, TranslationParams } from '@web/i18n';
 import { numberRange } from '@web/lib/zod-range';
 import { issueArgIndex, issueEnvKey, issueField } from '@web/shell/new-session/profile-issues';
@@ -291,9 +291,16 @@ export function draftKey(draft: ProfileDraft): string {
   ]);
 }
 
-/** The config folder changed in a way that matters (case-insensitive, like Windows). */
-export function configDirChanged(before: string | null, after: string): boolean {
-  return windowsPathKey((before ?? '').trim()) !== windowsPathKey(after.trim());
+/**
+ * The config folder changed in a way that matters, by the rules of the profile's host
+ * (case-insensitive on Windows, case-sensitive on Linux – WP-104).
+ */
+export function configDirChanged(
+  before: string | null,
+  after: string,
+  rules: PathRules = WIN32_PATHS,
+): boolean {
+  return rules.key((before ?? '').trim()) !== rules.key(after.trim());
 }
 
 export function sameField(a: DraftField, b: DraftField): boolean {

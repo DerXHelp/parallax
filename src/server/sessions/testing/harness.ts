@@ -17,6 +17,7 @@ import { z } from 'zod';
 import type { ClientId, EntryId, PromptPriority } from '@shared/common';
 import type { ErrorPayload } from '@shared/errors';
 import type { Decision, DecisionResponse, Profile, SessionSummary } from '@shared/model';
+import { pathFlavorOfShape, pathRules } from '@shared/paths';
 import {
   commandResultSchemas,
   commandSchema,
@@ -45,7 +46,7 @@ import { CommandError, type ClientPresence, type HostCommandHandler } from '../.
 import type { ConsoleLauncher } from '../../system/ports';
 import { createMemoryCatalogStore, type MemoryCatalogStore } from '../catalogStore';
 import { createMemoryCommandCatalogStore, type MemoryCommandCatalogStore } from '../commandCatalog';
-import { NEVER_SLEEP, type ProcDeps, type SleepPolicy } from '../entryState';
+import { NEVER_SLEEP, type EngineTerminal, type ProcDeps, type SleepPolicy } from '../entryState';
 import { createManualTimers, type ManualTimers } from '../lib/timers';
 import {
   createSessionManager,
@@ -113,6 +114,8 @@ export interface EngineHarnessOptions {
   /** HostState.port / systemIntegration (default: absent → null / false). */
   port?: () => number | null;
   systemIntegration?: boolean;
+  /** WP-107: `HostState.platform` of the engine (default `win32`, HARNESS_HOST). */
+  platform?: string;
   /** Start of the virtual clock (default SAMPLE_TIME); `timers.advance(ms)` moves it. */
   clockStart?: string;
   /** Hub-like validation of everything published (default true). */
@@ -125,6 +128,8 @@ export interface EngineHarnessOptions {
   start?: boolean;
   /** Phase 2 (WP-34): the console of `session.openExternal` (default: none). */
   consoleLauncher?: ConsoleLauncher;
+  /** 102e: the terminal of `session.openInTerminal` (default: none). */
+  terminal?: EngineTerminal;
   /** Phase 2 (WP-34): `SystemIntegration.toastLaunchUri` (click target of native toasts). */
   toastLaunchUri?: (entryId: EntryId) => string | null;
   /** Phase 2 (WP-34): env (secrets) of every console spec of the fake integration. */
@@ -320,6 +325,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
       ...HARNESS_HOST,
       ...(options.port === undefined ? {} : { port: options.port }),
       ...(options.systemIntegration === undefined ? {} : { systemIntegration: options.systemIntegration }),
+      ...(options.platform === undefined ? {} : { platform: options.platform }),
     },
     ...(options.hostCommands === undefined ? {} : { hostCommands: options.hostCommands }),
     ...(options.onSettingsChanged === undefined ? {} : { onSettingsChanged: options.onSettingsChanged }),
@@ -328,7 +334,8 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
     checkCwd:
       options.checkCwd ??
       ((cwd) => {
-        assertSafePath(cwd);
+        // WP-103: the rules of the cwd's own shape – the harness cwds are Windows samples on every host.
+        assertSafePath(cwd, pathRules(pathFlavorOfShape(cwd)));
         return Promise.resolve();
       }),
     proc,
@@ -339,6 +346,7 @@ export async function createEngineHarness(options: EngineHarnessOptions = {}): P
       : { onShutdownRequested: options.onShutdownRequested }),
     ...(options.toasts === undefined ? {} : { toasts: options.toasts }),
     ...(options.consoleLauncher === undefined ? {} : { consoleLauncher: options.consoleLauncher }),
+    ...(options.terminal === undefined ? {} : { terminal: options.terminal }),
     ...(options.toastLaunchUri === undefined
       ? {}
       : { systemIntegration: { toastLaunchUri: options.toastLaunchUri } }),

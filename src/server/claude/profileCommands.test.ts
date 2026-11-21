@@ -34,7 +34,7 @@ async function setup(counts: Record<string, number> = {}) {
     home,
     warnings: createStoreWarnings(),
     debounceMs: 5,
-    issueContext: () => ({ env: {}, persistentEnv: new Map(), exists: () => true }),
+    issueContext: () => ({ env: {}, persistentEnv: new Map(), exists: () => true, platform: 'win32' }),
   });
   const calls: { args: readonly string[]; options: RunFileOptions }[] = [];
   const run = (_file: string, args: readonly string[], options: RunFileOptions): Promise<RunFileResult> => {
@@ -43,6 +43,7 @@ async function setup(counts: Record<string, number> = {}) {
   };
   const integration = createClaudeIntegration({
     appVersion: '1.2.3',
+    platform: 'win32',
     profiles: store,
     baseEnv: () => ({ Path: 'C:\\Windows', CLAUDECODE: '1' }),
     persistentEnv: () => Promise.resolve(null),

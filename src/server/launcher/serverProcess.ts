@@ -4,6 +4,10 @@
  * `pnpm run` or a shell; `detached`, `windowsHide` (lib/process.ts), stdout/stderr appended to
  * `PARALLAX_HOME/logs/server.out.log` (crashes before the logger is up land there), `unref()` so the
  * launcher can exit. Plus the port probe for a clear "port in use" message before the start.
+ *
+ * WP-107 (`--server`, docs/wp/WP-100.md §5.3): `startServerForeground` keeps the server attached –
+ * its output (the log on stdout) goes to the launcher's console (systemd's journal), the launcher
+ * waits for its end and passes SIGINT/SIGTERM/SIGHUP on.
  */
 import { closeSync, fstatSync, openSync } from 'node:fs';
 import { mkdir, open, rename, stat } from 'node:fs/promises';
@@ -112,6 +116,50 @@ export async function startServerProcess(options: StartServerOptions): Promise<S
     // The child has its own handle; the launcher's copy must not stay open.
     closeSync(fd);
   }
+}
+
+/** WP-107: a server in the foreground (`--server`). */
+export interface ForegroundServer extends StartedServer {
+  /** Passes a signal the launcher got on to the server. */
+  signal(name: NodeJS.Signals): void;
+}
+
+/**
+ * WP-107: spawns the server attached (stdout/stderr = the launcher's), hidden on Windows, in its own
+ * process group on POSIX (the launcher passes signals on exactly once). Resolves once the process
+ * exists; `outLogOffset` is 0 (nothing goes to server.out.log).
+ */
+export async function startServerForeground(options: StartServerOptions): Promise<ForegroundServer> {
+  await mkdir(logsDir(options.home), { recursive: true });
+  const child = spawnHidden(
+    options.nodePath,
+    [...(options.nodeArgs ?? []), options.serverScript, ...options.args],
+    {
+      cwd: options.cwd,
+      env: serverEnv(options.env),
+      stdio: ['ignore', 'inherit', 'inherit'],
+    },
+  );
+  const exited = new Promise<ServerExit>((resolve) => {
+    child.once('exit', (code, signal) => {
+      resolve({ code, signal });
+    });
+  });
+  const pid = await new Promise<number>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('spawn', () => {
+      if (child.pid === undefined) reject(new Error('server process has no pid'));
+      else resolve(child.pid);
+    });
+  });
+  return {
+    pid,
+    exited,
+    outLogOffset: 0,
+    signal: (name) => {
+      if (child.exitCode === null && child.signalCode === null) child.kill(name);
+    },
+  };
 }
 
 /** Output of the server since `offset` (at most the last `maxBytes`), '' if none. Never throws. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { sampleTerminalId, sampleTerminalInfo } from '../testing';
-import { assignNumbers, pickActive } from './terminals';
+import { assignNumbers, pickActive, terminalKind } from './terminals';
 
 const one = sampleTerminalInfo({ terminalId: sampleTerminalId(1), shell: 'cmd' });
 const two = sampleTerminalInfo({ terminalId: sampleTerminalId(2), shell: 'powershell' });
@@ -27,5 +27,16 @@ describe('terminal store helpers (WP-99b)', () => {
     // … and the next cmd takes the free number 1.
     const four = sampleTerminalInfo({ terminalId: sampleTerminalId(4), shell: 'cmd' });
     expect(assignNumbers(afterClose, [two, three, four])[four.terminalId]).toBe(1);
+  });
+
+  it('numbers claude terminals apart from the shells (WP-105)', () => {
+    const claude = sampleTerminalInfo({ terminalId: sampleTerminalId(5), shell: 'cmd', command: 'claude' });
+    expect(terminalKind(claude)).toBe('claude');
+    expect(terminalKind(one)).toBe('cmd');
+    expect(assignNumbers({}, [one, claude, three])).toEqual({
+      [one.terminalId]: 1,
+      [claude.terminalId]: 1,
+      [three.terminalId]: 2,
+    });
   });
 });

@@ -10,13 +10,18 @@
  * 3. One installer per root at a time (pipe lock `install`), then install, `--use` or `--uninstall`.
  *
  * Exit codes: 0 = done, 2 = bad option, else 1. Messages are English like the launcher's.
+ *
+ * Linux (WP-108): the same flow with `sh install.sh`, the root `~/.local/lib/parallax`, the command
+ * `~/.local/bin/parallax` and a note when this Node's OpenSSL is older than 3.5 ("Several
+ * computers" needs it; the official Node build bundles it).
  */
 import { access, rmdir } from 'node:fs/promises';
 import path from 'node:path';
-import { isWindowsPathInside } from '@shared/paths';
+import { compareVersions } from '@shared/version';
 import { toError } from '../lib/async';
 import { PACKAGE_NODE_FLAGS, readReleaseInfo, ReleaseInfoError } from '../launcher/release';
-import { handOverArgs, INSTALLER_USAGE, parseInstallerArgs, type InstallerArgs } from './args';
+import { handOverArgs, installerUsage, parseInstallerArgs, type InstallerArgs } from './args';
+import { isOnPath } from './command';
 import {
   checkNodeVersion,
   installPackage,
@@ -24,7 +29,16 @@ import {
   type InstallDeps,
   type InstallResult,
 } from './install';
-import { InstallError, START_CMD, START_SCRIPT, defaultInstallRoot, readCurrent } from './layout';
+import {
+  INSTALL_CMD,
+  INSTALL_SH,
+  InstallError,
+  START_SCRIPT,
+  defaultInstallRoot,
+  installPathRules,
+  readCurrent,
+  startCommandFile,
+} from './layout';
 import { SdkError } from './sdk';
 import { uninstall, type UninstallDeps } from './uninstall';
 
@@ -40,6 +54,8 @@ export interface InstallerCliDeps {
   execArgv: readonly string[];
   /** Default `process.versions.node`. */
   nodeVersion?: string;
+  /** Default `process.versions.openssl` (Linux: the note about OpenSSL older than 3.5). */
+  opensslVersion?: string;
   /** Runs `node.exe <args>` with this console; resolves with the exit code. */
   runNode: (args: readonly string[]) => Promise<number>;
   /** The exclusive installer lock of `root`; null = another installer holds it. */
@@ -56,6 +72,23 @@ export interface InstallerCliDeps {
   fail: (line: string) => void;
 }
 
+/** OpenSSL that "Several computers" needs (ML-KEM/ML-DSA in TLS, secure/tlsProfile.ts). */
+export const MIN_OPENSSL = '3.5.0';
+
+/**
+ * Linux: a note when `version` (`process.versions.openssl`, e.g. `3.0.13` of a distribution build
+ * linked to the system OpenSSL) is older than 3.5, else null – Parallax runs, only "Several
+ * computers" cannot.
+ */
+export function opensslNote(version: string | undefined): string | null {
+  const core = /^\d+\.\d+\.\d+/u.exec(version ?? '')?.[0];
+  if (core === undefined || (compareVersions(core, MIN_OPENSSL) ?? -1) >= 0) return null;
+  return (
+    `Note: this Node.js uses OpenSSL ${core}; "Several computers" needs OpenSSL 3.5 or newer - ` +
+    'install the official Node.js build from https://nodejs.org/ (it brings its own OpenSSL).'
+  );
+}
+
 async function exists(file: string): Promise<boolean> {
   try {
     await access(file);
@@ -65,12 +98,13 @@ async function exists(file: string): Promise<boolean> {
   }
 }
 
-function installMessages(result: InstallResult, root: string): string[] {
-  const cmd = path.join(root, START_CMD);
+function installMessages(result: InstallResult, root: string, env: NodeJS.ProcessEnv): string[] {
+  const windows = process.platform === 'win32';
+  const start = path.join(root, startCommandFile());
   const lines = [`Parallax ${result.version} is installed in ${root}.`];
   if (result.previous !== null) {
     lines.push(
-      `The previous version ${result.previous} stays for the way back ("${cmd}" --use ${result.previous}).`,
+      `The previous version ${result.previous} stays for the way back ("${start}" --use ${result.previous}).`,
     );
   }
   if (result.runningOther !== null) {
@@ -81,19 +115,46 @@ function installMessages(result: InstallResult, root: string): string[] {
   } else if (result.runningForeign) {
     lines.push(
       'A Parallax from another folder (e.g. a git checkout) is running on the data directory: choose ' +
-        '"Stop server" in its menu (gear), then start Parallax from the Start menu.',
+        `"Stop server" in its menu (gear), then start Parallax ${windows ? 'from the Start menu' : 'again'}.`,
     );
   }
-  lines.push(
-    result.startMenuProblem === null
-      ? `Start Parallax from the Start menu ("Parallax") or with "${cmd}".`
-      : `Note: no Start menu entry (${result.startMenuProblem}) - start Parallax with "${cmd}".`,
-  );
+  if (windows) {
+    lines.push(
+      result.startMenuProblem === null
+        ? `Start Parallax from the Start menu ("Parallax") or with "${start}".`
+        : `Note: no Start menu entry (${result.startMenuProblem}) - start Parallax with "${start}".`,
+    );
+  } else {
+    lines.push(...linuxStartMessages(result, start, env));
+  }
   if (result.cleanup.problems.length > 0) {
     lines.push(
       `Note: old versions could not be removed yet (${result.cleanup.problems.join('; ')}) - the next ` +
         'installation tries again.',
     );
+  }
+  return lines;
+}
+
+/** Linux: how to start – the command (on the PATH or not), the menu entry, else `<root>/parallax`. */
+function linuxStartMessages(result: InstallResult, start: string, env: NodeJS.ProcessEnv): string[] {
+  const lines: string[] = [];
+  const menu = result.startMenuProblem === null ? ' or from the application menu ("Parallax")' : '';
+  const command = result.command;
+  if (command?.ok === true) {
+    const binDir = path.dirname(command.file);
+    lines.push(
+      isOnPath(binDir, env)
+        ? `Start Parallax with "parallax"${menu}.`
+        : `Start Parallax with "${command.file}"${menu} - ${binDir} is not on the PATH yet (Ubuntu adds ` +
+            'it at the next login when the folder exists).',
+    );
+  } else {
+    if (command !== null) lines.push(`Note: no command ${command.file} (${command.reason}).`);
+    lines.push(`Start Parallax with "${start}"${menu}.`);
+  }
+  if (result.startMenuProblem !== null) {
+    lines.push(`Note: no application menu entry (${result.startMenuProblem}).`);
   }
   return lines;
 }
@@ -113,7 +174,7 @@ async function act(args: InstallerArgs, root: string, deps: InstallerCliDeps): P
         },
         steps,
       );
-      for (const line of installMessages(result, root)) deps.out(line);
+      for (const line of installMessages(result, root, deps.env)) deps.out(line);
       return 0;
     }
     case 'use': {
@@ -148,12 +209,14 @@ async function act(args: InstallerArgs, root: string, deps: InstallerCliDeps): P
 
 export async function runInstallerCli(argv: readonly string[], deps: InstallerCliDeps): Promise<number> {
   const args = parseInstallerArgs(argv, deps.cwd);
+  const usage = installerUsage();
+  const windows = process.platform === 'win32';
   if (args.help) {
-    deps.out(INSTALLER_USAGE);
+    deps.out(usage);
     return 0;
   }
   if (args.problem !== null) {
-    deps.fail(`Invalid option: ${args.problem}\n\n${INSTALLER_USAGE}`);
+    deps.fail(`Invalid option: ${args.problem}\n\n${usage}`);
     return 2;
   }
   try {
@@ -168,16 +231,27 @@ export async function runInstallerCli(argv: readonly string[], deps: InstallerCl
     }
     const root = args.installRoot ?? args.dir ?? defaultInstallRoot(deps.env);
     if (root === null) {
-      deps.fail('LOCALAPPDATA is not set - choose the installation folder with --dir <folder>.');
+      deps.fail(
+        `${windows ? 'LOCALAPPDATA' : 'HOME'} is not set or not usable - choose the installation folder ` +
+          'with --dir <folder>.',
+      );
       return 2;
     }
     if (
-      isWindowsPathInside(deps.ownDir, root) &&
+      installPathRules().isInside(deps.ownDir, root) &&
       args.installRoot === null &&
       args.action.kind === 'install'
     ) {
-      deps.fail(`Unpack the package outside the installation folder ${root} and start install.cmd there.`);
+      deps.fail(
+        `Unpack the package outside the installation folder ${root} and start ` +
+          `${windows ? INSTALL_CMD : INSTALL_SH} there.`,
+      );
       return 2;
+    }
+    // Once per run from a package (a hand-over to the installed version does not repeat it).
+    if (!windows && args.action.kind === 'install' && args.installRoot === null) {
+      const note = opensslNote(deps.opensslVersion ?? process.versions.openssl);
+      if (note !== null) deps.out(note);
     }
 
     if (args.installRoot === null) {

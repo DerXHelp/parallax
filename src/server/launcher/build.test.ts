@@ -370,19 +370,23 @@ describe('build steps (= pnpm build)', () => {
 describe('build lock (R3-04, CR-04, CR-08)', () => {
   it('CR-04: a checkout on a UNC share is keyed by its spelling, without any file system access', async () => {
     const realpath = vi.fn((dir: string) => Promise.resolve(dir));
-    expect(await buildLockKey('\\\\NAS\\share\\Parallax\\', { realpath })).toBe(
-      windowsPathKey('\\\\nas\\share\\parallax'),
-    );
-    expect(await buildLockKey('//nas/share/parallax', { realpath })).toBe(
-      await buildLockKey('\\\\NAS\\Share\\Parallax', { realpath }),
-    );
+    const key = (dir: string, fs: { realpath: (d: string) => Promise<string> } = { realpath }) =>
+      buildLockKey(dir, fs, 'win32');
+    expect(await key('\\\\NAS\\share\\Parallax\\')).toBe(windowsPathKey('\\\\nas\\share\\parallax'));
+    expect(await key('//nas/share/parallax')).toBe(await key('\\\\NAS\\Share\\Parallax'));
     expect(realpath).not.toHaveBeenCalled();
     // A drive path: its real path (junctions, subst) – the same key as before (pipe name stable).
     realpath.mockResolvedValueOnce('D:\\Real\\Parallax');
-    expect(await buildLockKey('S:\\Parallax', { realpath })).toBe('d:\\real\\parallax');
-    expect(await buildLockKey('D:\\gone', { realpath: () => Promise.reject(new Error('ENOENT')) })).toBe(
-      'd:\\gone',
-    );
+    expect(await key('S:\\Parallax')).toBe('d:\\real\\parallax');
+    expect(await key('D:\\gone', { realpath: () => Promise.reject(new Error('ENOENT')) })).toBe('d:\\gone');
+  });
+
+  it('POSIX (review WP-109): the real path, compared exactly', async () => {
+    const realpath = vi.fn((dir: string) => Promise.resolve(dir === '/home/u/link' ? '/home/u/Repo' : dir));
+    expect(await buildLockKey('/home/u/link/', { realpath }, 'linux')).toBe('/home/u/Repo');
+    expect(await buildLockKey('/home/u/repo', { realpath }, 'linux')).not.toBe('/home/u/Repo');
+    const gone = { realpath: () => Promise.reject(new Error('ENOENT')) };
+    expect(await buildLockKey('/home/u/gone', gone, 'linux')).toBe('/home/u/gone');
   });
 
   it.runIf(process.platform === 'win32')(

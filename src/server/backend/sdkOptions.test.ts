@@ -366,17 +366,42 @@ describe('Phase 3 options (WP-52)', () => {
     expect(flagSettingsAfterStart(req)).toEqual(after);
   });
 
-  it.each<[string, readonly string[] | undefined, string | null | undefined, string[] | undefined]>([
+  type DirCase = [string, readonly string[] | undefined, string | null | undefined, string[] | undefined];
+  // The host's path rules decide what the same folder is (WP-103).
+  const sameFolderCases: DirCase[] =
+    process.platform === 'win32'
+      ? [
+          [
+            'attachment folder already in the profile (case/slash differ)',
+            ['C:\\PX\\Att\\'],
+            'c:/px/att',
+            ['C:\\PX\\Att\\'],
+          ],
+          [
+            'duplicate profile folders are dropped too',
+            ['D:\\a', 'd:\\A', 'D:\\b'],
+            null,
+            ['D:\\a', 'D:\\b'],
+          ],
+        ]
+      : [
+          // POSIX hosts compare exactly; only a trailing or doubled slash is the same folder.
+          ['attachment folder already in the profile (slash differs)', ['/px/att/'], '/px/att', ['/px/att/']],
+          ['duplicate profile folders are dropped too', ['/a', '/a/', '/A', '/b'], null, ['/a', '/A', '/b']],
+        ];
+  it.each<DirCase>([
     ['no folders → omitted', undefined, undefined, undefined],
     ['attachment folder null → omitted', [], null, undefined],
     ['empty attachment folder string → omitted', undefined, '', undefined],
     ['only the attachment folder', undefined, 'C:\\px\\attachments\\en_1', ['C:\\px\\attachments\\en_1']],
     ['profile folders + attachment folder', ['D:\\shared'], 'C:\\px\\att', ['D:\\shared', 'C:\\px\\att']],
-    ['attachment folder already in the profile (case/slash differ)', ['C:\\PX\\Att\\'], 'c:/px/att', ['C:\\PX\\Att\\']],
-    ['duplicate profile folders are dropped too', ['D:\\a', 'd:\\A', 'D:\\b'], null, ['D:\\a', 'D:\\b']],
+    ...sameFolderCases,
   ])('additionalDirectories: %s', (_label, profileDirs, attachmentsDir, expected) => {
     const sdkOptions = profileDirs === undefined ? {} : { additionalDirectories: [...profileDirs] };
-    const req = request({ launch: launch({ sdkOptions }), ...(attachmentsDir === undefined ? {} : { attachmentsDir }) });
+    const req = request({
+      launch: launch({ sdkOptions }),
+      ...(attachmentsDir === undefined ? {} : { attachmentsDir }),
+    });
     const options = buildQueryOptions(req, hooks);
     if (expected === undefined) expect(options).not.toHaveProperty('additionalDirectories');
     else expect(options.additionalDirectories).toEqual(expected);

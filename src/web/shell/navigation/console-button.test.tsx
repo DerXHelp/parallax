@@ -128,7 +128,12 @@ describe('header button (WP-97)', () => {
     const user = userEvent.setup();
     await act(async () => {
       await updateSettings({
-        console: { defaultShell: 'powershell', gitBashWindow: 'mintty', gitDir: null },
+        console: {
+          defaultShell: 'powershell',
+          gitBashWindow: 'mintty',
+          gitDir: null,
+          terminalEmulator: null,
+        },
       });
     });
     await user.click(await screen.findByRole('button', { name: 'Open PowerShell in the project folder' }));

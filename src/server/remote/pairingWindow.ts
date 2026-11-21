@@ -4,6 +4,9 @@
  * per address and PAIRING_MAX_FAILURES_TOTAL in all (security review: garbage from another device
  * must not close the window for the right one; the 128-bit code needs no tighter limit), single use. A new window replaces an open one. The code never leaves this module except as the
  * formatted string in the ack of `remoteAccess.pair`; the buffer is zeroed when the window closes.
+ *
+ * WP-107 (§B.13): the window holds the coupling level chosen on site (`control`/`manage`) next to its
+ * id – in memory only, never sent; a successful pairing writes exactly this level into the peer.
  */
 import { randomBytes, randomUUID } from 'node:crypto';
 import {
@@ -12,6 +15,7 @@ import {
   PAIRING_WINDOW_MS,
   formatPairingCode,
 } from '@shared/pairing';
+import type { RemotePeerLevel } from '@shared/model';
 import { registerSecret, unregisterSecret } from '../lib/logger';
 
 /**
@@ -29,6 +33,8 @@ export interface OpenPairingWindow {
   readonly expiresAt: Date;
   /** Failed attempts from all addresses. */
   readonly failures: number;
+  /** WP-107: the level a pairing through this window gets. */
+  readonly level: RemotePeerLevel;
 }
 
 export interface PairingWindowOptions {
@@ -46,6 +52,7 @@ interface WindowState {
   code: Buffer;
   formatted: string;
   expiresAt: Date;
+  level: RemotePeerLevel;
   failures: number;
   byAddress: Map<string, number>;
   timer: NodeJS.Timeout;
@@ -68,7 +75,12 @@ export class PairingWindow {
   }
 
   /** Opens a new window (replacing an open one); returns the formatted code for the ack only. */
-  open(): { id: string; code: string; expiresAt: Date } {
+  open(level: RemotePeerLevel = 'control'): {
+    id: string;
+    code: string;
+    expiresAt: Date;
+    level: RemotePeerLevel;
+  } {
     this.close('replaced');
     const code = randomBytes(PAIRING_CODE_BYTES);
     const formatted = formatPairingCode(code);
@@ -79,14 +91,22 @@ export class PairingWindow {
       if (this.state?.id === id) this.close('expired');
     }, this.windowMs);
     timer.unref();
-    this.state = { id, code, formatted, expiresAt, failures: 0, byAddress: new Map(), timer };
-    return { id, code: formatted, expiresAt };
+    this.state = { id, code, formatted, expiresAt, level, failures: 0, byAddress: new Map(), timer };
+    return { id, code: formatted, expiresAt, level };
   }
 
   /** The open window (also one past its end until the timer fired – callers check `isExpired`). */
   current(): OpenPairingWindow | null {
     const state = this.state;
-    return state === null ? null : { id: state.id, expiresAt: state.expiresAt, failures: state.failures };
+    return state === null
+      ? null
+      : { id: state.id, expiresAt: state.expiresAt, failures: state.failures, level: state.level };
+  }
+
+  /** WP-107: the level of window `id`, or null when `id` is not the open window. */
+  levelFor(id: string): RemotePeerLevel | null {
+    const state = this.state;
+    return state?.id === id ? state.level : null;
   }
 
   /** End of the open window, or null. */

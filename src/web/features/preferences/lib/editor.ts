@@ -1,5 +1,11 @@
 import { LIMITS } from '@shared/common';
-import { editorSettingsSchema, type EditorPreset, type EditorSettings } from '@shared/model';
+import {
+  editorExecutableIssue,
+  editorSettingsSchema,
+  type EditorPreset,
+  type EditorSettings,
+} from '@shared/model';
+import { WIN32_PATHS, type PathRules } from '@shared/paths';
 
 /**
  * The editor setting as a form (section "Files", WP-58; ADR-144): a draft with the path and the
@@ -69,12 +75,19 @@ function isKnownIssue(value: string): value is EditorIssue {
   return (EDITOR_ISSUES as readonly string[]).includes(value);
 }
 
-/** The client check: `editorSettingsSchema` (the server's schema), mapped to the two fields. */
-export function editorIssues(draft: EditorDraft): EditorIssues {
-  const parsed = editorSettingsSchema.safeParse(editorOfDraft(draft));
-  if (parsed.success) return NO_ISSUES;
+/** Issues of the path rules (`editorExecutableIssue`) – the host's rules may replace them. */
+const RULE_ISSUES: readonly EditorIssue[] = ['path', 'not_exe', 'blocked'];
+
+/**
+ * The client check: `editorSettingsSchema` (the server's schema), mapped to the two fields – plus the
+ * executable against the rules of the host being edited (WP-102): the schema accepts a path of either
+ * shape (Windows or POSIX), the host only its own.
+ */
+export function editorIssues(draft: EditorDraft, rules: PathRules = WIN32_PATHS): EditorIssues {
+  const editor = editorOfDraft(draft);
+  const parsed = editorSettingsSchema.safeParse(editor);
   const issues: EditorIssues = { executable: null, args: null };
-  for (const issue of parsed.error.issues) {
+  for (const issue of parsed.success ? [] : parsed.error.issues) {
     const field = issue.path[0];
     if (field !== 'executable' && field !== 'args') continue;
     if (issues[field] !== null) continue;
@@ -85,7 +98,12 @@ export function editorIssues(draft: EditorDraft): EditorIssues {
     else mapped = field === 'args' && issue.path.length === 1 ? 'too_many' : 'too_long';
     issues[field] = mapped;
   }
-  return issues;
+  const current = issues.executable;
+  if (editor.executable !== null && (current === null || RULE_ISSUES.includes(current))) {
+    const hostIssue = editorExecutableIssue(editor.executable, rules);
+    if (hostIssue !== null) issues.executable = hostIssue;
+  }
+  return hasIssues(issues) ? issues : NO_ISSUES;
 }
 
 export function hasIssues(issues: EditorIssues): boolean {

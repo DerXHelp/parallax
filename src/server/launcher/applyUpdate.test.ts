@@ -9,6 +9,7 @@ import {
   InstallError,
   currentFileSchema,
   readCurrent,
+  startCommandFile,
   versionDir,
   type CurrentFile,
 } from '../install/layout';
@@ -703,7 +704,7 @@ describe('runApplyUpdate with the real backup and switch functions (temp folders
     const snapshot = async () => ({
       current: await readFile(path.join(root, 'current.json')),
       start: await readFile(path.join(root, 'start.mjs')),
-      cmd: await readFile(path.join(root, 'parallax.cmd')),
+      cmd: await readFile(path.join(root, startCommandFile())),
       settings: await readFile(path.join(home, 'settings.json'), 'utf8'),
     });
     const before = await snapshot();
@@ -785,6 +786,12 @@ describe('update log and notification texts', () => {
     expect(en.body).toContain('1.0.1');
     expect(en.body).toContain(LOG);
     expect(en.body.length).toBeLessThanOrEqual(300);
-    expect(failureNotification('de', '1.0.1', null).body).toMatch(/Startmenü/);
+    expect(failureNotification('de', '1.0.1', null, 'win32').body).toMatch(/Startmenü/);
+    // Linux (WP-108): the application menu and the command instead of the Start menu.
+    const linux = failureNotification('en', '1.0.1', LOG, 'linux');
+    expect(linux.body).toContain('application menu');
+    expect(linux.body).not.toContain('Start menu');
+    expect(linux.body.length).toBeLessThanOrEqual(300);
+    expect(failureNotification('de', '1.0.1', null, 'linux').body).toMatch(/Anwendungsmenü/);
   });
 });

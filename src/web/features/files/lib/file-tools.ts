@@ -1,11 +1,12 @@
 import type { JsonValue } from '@shared/common';
 import type { ToolCallItem, TranscriptItem } from '@shared/model';
-import { fromGitBashPath, windowsPathIssue, windowsPathKey } from '@shared/paths';
+import { WIN32_PATHS, fromGitBashPath, type PathFlavor, type PathRules } from '@shared/paths';
 
 /**
  * File tool calls of a transcript (ADR-143, ADR-145): which tools touch which file, so the viewer
  * reloads after a finished write, the stat cache drops a stale answer and "Files of this session"
- * refreshes. Pure; cached per `view.items` array (cheap for every selector call).
+ * refreshes. Pure; cached per `view.items` array (cheap for every selector call). WP-104: paths follow
+ * the rules of the session's host (`rules`, default Windows).
  */
 
 /** Tools that change a file (the viewer reloads at once when one of them finishes). */
@@ -31,16 +32,19 @@ function inputString(input: JsonValue, key: string): string | null {
 }
 
 /**
- * Absolute Windows path a file tool call works on (Git Bash `/c/…` converted), or null – also for
- * paths that fail the C.10 filter (they are never used for anything).
+ * Absolute path a file tool call works on (Windows host: Git Bash `/c/…` converted), or null – also
+ * for paths that fail the C.10 filter of the host (they are never used for anything).
  */
-export function toolFilePath(item: Pick<ToolCallItem, 'toolName' | 'input'>): string | null {
+export function toolFilePath(
+  item: Pick<ToolCallItem, 'toolName' | 'input'>,
+  rules: PathRules = WIN32_PATHS,
+): string | null {
   const key = PATH_KEYS[item.toolName];
   if (key === undefined) return null;
   const raw = inputString(item.input, key);
   if (raw === null) return null;
-  const path = raw.startsWith('/') ? (fromGitBashPath(raw) ?? raw) : raw;
-  return windowsPathIssue(path) === null ? path : null;
+  const path = rules.flavor === 'win32' && raw.startsWith('/') ? (fromGitBashPath(raw) ?? raw) : raw;
+  return rules.issue(path) === null ? path : null;
 }
 
 /** Time (ms) a tool call finished: its result time, else the item time. */
@@ -50,7 +54,7 @@ function finishedAt(item: ToolCallItem): number {
 }
 
 export interface FileToolIndex {
-  /** `windowsPathKey` → time (ms) of the newest finished write tool on that file. */
+  /** `rules.key(path)` → time (ms) of the newest finished write tool on that file. */
   writes: ReadonlyMap<string, number>;
   /**
    * Changes whenever a file tool call finishes (or a task with an output file ends) – the trigger of
@@ -59,9 +63,16 @@ export interface FileToolIndex {
   signature: string;
 }
 
-const cache = new WeakMap<readonly TranscriptItem[], FileToolIndex>();
+const caches: Readonly<Record<PathFlavor, WeakMap<readonly TranscriptItem[], FileToolIndex>>> = {
+  win32: new WeakMap(),
+  posix: new WeakMap(),
+};
 
-export function fileToolIndex(items: readonly TranscriptItem[]): FileToolIndex {
+export function fileToolIndex(
+  items: readonly TranscriptItem[],
+  rules: PathRules = WIN32_PATHS,
+): FileToolIndex {
+  const cache = caches[rules.flavor];
   const cached = cache.get(items);
   if (cached !== undefined) return cached;
   const writes = new Map<string, number>();
@@ -73,12 +84,12 @@ export function fileToolIndex(items: readonly TranscriptItem[]): FileToolIndex {
     const task = item.task;
     if (typeof task?.outputFile === 'string' && typeof task.endedAt === 'string') outputs++;
     if (item.status !== 'done') continue;
-    const path = toolFilePath(item);
+    const path = toolFilePath(item, rules);
     if (path === null) continue;
     finished++;
     last = item.toolUseId;
     if (!FILE_WRITE_TOOLS.has(item.toolName) || item.result?.isError === true) continue;
-    const key = windowsPathKey(path);
+    const key = rules.key(path);
     const at = finishedAt(item);
     if (at > (writes.get(key) ?? -1)) writes.set(key, at);
   }

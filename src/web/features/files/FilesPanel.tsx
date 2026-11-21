@@ -5,6 +5,7 @@ import { useI18n } from '@web/i18n';
 import { fuzzyFilter } from '@web/lib/fuzzy';
 import { toScreenPx } from '@web/lib/zoom';
 import { useNow } from '@web/state/clock';
+import { useSessionCapabilities, useSessionPaths } from '@web/state/host-platform';
 import { useSummarySelector } from '@web/state/hooks';
 import { useZoom } from '@web/state/zoom';
 import { Alert } from '@web/ui/alert';
@@ -55,8 +56,10 @@ const FileRow = memo(function FileRow({
 }) {
   const { t, format } = useI18n();
   const { file, display } = row;
-  const actions = fileActions({ sessionKey, path: file.path });
-  const name = fileName(file.path);
+  const rules = useSessionPaths(sessionKey);
+  const capabilities = useSessionCapabilities(sessionKey);
+  const actions = fileActions({ sessionKey, path: file.path, host: { rules, capabilities } });
+  const name = fileName(file.path, rules);
   return (
     <div
       role="listitem"
@@ -74,7 +77,11 @@ const FileRow = memo(function FileRow({
               openInViewer({ sessionKey, path: file.path });
             }}
           >
-            <FileIcon path={file.path} className="text-muted-foreground mt-0.5 size-3.5 shrink-0" />
+            <FileIcon
+              path={file.path}
+              rules={rules}
+              className="text-muted-foreground mt-0.5 size-3.5 shrink-0"
+            />
             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
               {/* The name keeps its room; the path gives way first and is shortened from the start. */}
               <span className="flex min-w-0 items-baseline gap-1.5 text-xs">
@@ -116,6 +123,7 @@ function byLastAtDesc(a: SessionFile, b: SessionFile): number {
 export function FilesPanel({ sessionKey }: { sessionKey: string }) {
   const { t, tError } = useI18n();
   const cwd = useSummarySelector(sessionKey, (summary) => summary.cwd, null);
+  const rules = useSessionPaths(sessionKey);
   const { files, truncated, error, loading, refresh } = useSessionFiles(sessionKey);
   const [query, setQuery] = useState('');
   const now = useNow(30_000);
@@ -125,12 +133,12 @@ export function FilesPanel({ sessionKey }: { sessionKey: string }) {
     () =>
       [...(files ?? [])]
         .sort(byLastAtDesc)
-        .map((file) => ({ file, display: relativeToRoot(file.path, cwd) ?? file.path })),
-    [files, cwd],
+        .map((file) => ({ file, display: relativeToRoot(file.path, cwd, rules) ?? file.path })),
+    [files, cwd, rules],
   );
   const visible = useMemo(
-    () => fuzzyFilter(rows, query, (row) => [row.display, fileName(row.file.path)]),
-    [rows, query],
+    () => fuzzyFilter(rows, query, (row) => [row.display, fileName(row.file.path, rules)]),
+    [rows, query, rules],
   );
 
   return (

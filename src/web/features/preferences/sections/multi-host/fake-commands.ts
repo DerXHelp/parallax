@@ -9,6 +9,7 @@ import {
   type RemoteEvent,
   type RemoteEventKind,
   type RemotePeer,
+  type RemotePeerLevel,
 } from '@shared/model';
 import { PAIRING_WINDOW_MS, formatPairingCode } from '@shared/pairing';
 import {
@@ -38,14 +39,20 @@ export type MultiHostCommandName = keyof MultiHostCommands;
 
 export interface FakeMultiHost {
   readonly commands: MultiHostCommands;
-  /** Every call in order, e.g. `configure:{"role":"share"}`, `pair`, `events:true`. */
+  /**
+   * Every call in order, e.g. `configure:{"role":"share"}`, `pair` (level control), `pair:manage`,
+   * `events:true`, `setPeerLevel:manage`.
+   */
   readonly calls: string[];
   /** The next call of `name` fails with `error` (queued). */
   failNext(name: MultiHostCommandName, error: ErrorPayload): void;
   /** Calls of `name` wait until `release(name)` (busy states in tests). */
   hold(name: MultiHostCommandName): void;
   release(name: MultiHostCommandName): void;
-  /** The controlling computer typed the code: the window closes, the new pairing replaces the old one. */
+  /**
+   * The controlling computer typed the code: the window closes, the new pairing replaces the old one
+   * (at the level of the last `pair`).
+   */
   completePairing(name?: string): void;
   /** A rejected attempt arrives (log entry, unseen counter). */
   rejectAttempt(kind?: RemoteEventKind, claimedName?: string | null): void;
@@ -131,6 +138,8 @@ export function createFakeMultiHost(
    * host state on first use (a demo attaches its FakeHost after creating the fake).
    */
   let storedPeer: RemotePeer | null | undefined;
+  /** Level of the last pairing window (bound to the window like on the server). */
+  let windowLevel: RemotePeerLevel = 'control';
   const currentPeer = (): RemotePeer | null => {
     storedPeer ??= host.hostState.remoteAccess?.peer ?? null;
     return storedPeer;
@@ -235,9 +244,10 @@ export function createFakeMultiHost(
         write(next, remoteAccess);
         return next;
       }),
-    pair: () =>
-      run('pair', '', () => {
+    pair: (level) =>
+      run('pair', level === 'control' ? '' : level, () => {
         const current = requireShare();
+        windowLevel = level;
         const expiresAt = new Date(now() + PAIRING_WINDOW_MS).toISOString();
         patchAccess({ pairingExpiresAt: expiresAt });
         return {
@@ -285,6 +295,19 @@ export function createFakeMultiHost(
         requireShare();
         patchAccess({ unseenRejected: 0 });
       }),
+    setPeerLevel: (level) =>
+      run('setPeerLevel', level, () => {
+        requireShare();
+        const peer = currentPeer();
+        if (peer === null)
+          throw new ClientCommandError(makeError('VALIDATION_FAILED', { reason: 'not_paired' }));
+        if (peer.level === level) return;
+        // Every connection of the coupling ends; it connects again with the new level.
+        const next: RemotePeer = { ...peer, level, connected: false, connections: 0 };
+        addEvent('level_changed', 'local', null);
+        setPeer(next);
+        patchAccess({ peer: next });
+      }),
   };
 
   return {
@@ -307,7 +330,14 @@ export function createFakeMultiHost(
     },
     completePairing(name = 'Computer A') {
       const at = new Date(now()).toISOString();
-      const peer = sampleRemotePeer({ name, pairedAt: at, lastSeenAt: at, connected: true, connections: 1 });
+      const peer = sampleRemotePeer({
+        name,
+        level: windowLevel,
+        pairedAt: at,
+        lastSeenAt: at,
+        connected: true,
+        connections: 1,
+      });
       setPeer(peer);
       addEvent('pair_ok', '192.0.2.10', name);
       patchAccess({ peer, pairingExpiresAt: null });

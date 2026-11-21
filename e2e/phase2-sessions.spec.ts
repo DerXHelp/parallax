@@ -10,6 +10,7 @@
  *   launch env carries PATH, `git branch --show-current` names the branch).
  * Own server per test where the sidebar must contain exactly the sessions of the test.
  */
+import path from 'node:path';
 import type { Page } from '@playwright/test';
 import { runFile } from '../src/server/lib/process';
 import { resolveExecutable } from '../src/server/lib/windows';
@@ -82,8 +83,10 @@ test('three sessions in three folders work in parallel; the sidebar shows them f
   await first.locator('[data-action="new-session-here"]').click();
   const dialog = page.locator('[data-slot="new-session-dialog"]');
   await expect(dialog.locator('input[name="cwd"]')).toHaveValue(folders[0] ?? '');
-  // The same folder in another spelling (Windows paths are case-insensitive) joins the group.
-  await dialog.locator('input[name="cwd"]').fill((folders[0] ?? '').toUpperCase());
+  // The same folder in another spelling joins the group: Windows paths are case-insensitive, on Linux
+  // only a doubled or trailing "/" does not count (WP-109).
+  const spelling = process.platform === 'win32' ? (folders[0] ?? '').toUpperCase() : `${folders[0] ?? ''}/`;
+  await dialog.locator('input[name="cwd"]').fill(spelling);
   await dialog.locator('button[type="submit"]').click();
   await expect(dialog).toBeHidden();
   const fourth = await app.waitForSelection((key) => key !== null && !sessions.some((s) => s.key === key));
@@ -204,8 +207,8 @@ test('git branch of a fresh repository (no commit yet) in the sidebar row (V3-11
 /** Last two path segments as the sidebar shows them (`pathTail(cwd, 2)`). */
 function pathTail(cwd: string): string {
   return cwd
-    .split('\\')
+    .split(path.sep)
     .filter((part) => part !== '')
     .slice(-2)
-    .join('\\');
+    .join(path.sep);
 }

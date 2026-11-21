@@ -6,7 +6,8 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { isWindowsPathInside } from '@shared/paths';
+import { POSIX_PATHS, WIN32_PATHS } from '@shared/paths';
+import { HOST_PATH_RULES } from '../../lib/paths';
 import { FAKE_FILES_DIR_NAME, FakeFiles, defaultFakeFilesRoot, patchHunks } from './files';
 
 const temp = mkdtempSync(path.join(os.tmpdir(), 'parallax-fake-files-unit-'));
@@ -19,7 +20,7 @@ const SESSION = '5e550000-0000-4000-8000-0000000000aa';
 describe('FakeFiles', () => {
   it('the default root is %TEMP%\\parallax-fake-files', () => {
     expect(defaultFakeFilesRoot()).toBe(path.join(os.tmpdir(), FAKE_FILES_DIR_NAME));
-    expect(isWindowsPathInside(defaultFakeFilesRoot(), os.tmpdir())).toBe(true);
+    expect(HOST_PATH_RULES.isInside(defaultFakeFilesRoot(), os.tmpdir())).toBe(true);
   });
 
   it('writes, appends and reads below <root>\\<sessionId>', async () => {
@@ -39,17 +40,17 @@ describe('FakeFiles', () => {
   it('rejects every path that leaves the session folder – before touching the disk', async () => {
     const root = mkdtempSync(path.join(temp, 'escape-'));
     const files = new FakeFiles(root, SESSION);
-    for (const bad of [
-      '..\\escape.txt',
-      'plans\\..\\..\\escape.txt',
-      '../escape.txt',
-      'C:\\Windows\\escape.txt',
-      '\\\\fake-host\\share\\x.txt',
-      '\\\\?\\C:\\escape.txt',
-      'notes.txt:stream',
-      '',
-      '.',
-    ]) {
+    // Windows: drive paths, shares, device paths and streams, too; POSIX (WP-103): absolute paths.
+    const hostBad =
+      process.platform === 'win32'
+        ? [
+            'C:\\Windows\\escape.txt',
+            '\\\\fake-host\\share\\x.txt',
+            '\\\\?\\C:\\escape.txt',
+            'notes.txt:stream',
+          ]
+        : ['/etc/escape.txt', '//fake-host/share/x.txt', '\\\\fake-host\\share\\x.txt'];
+    for (const bad of ['..\\escape.txt', 'plans\\..\\..\\escape.txt', '../escape.txt', '', '.', ...hostBad]) {
       expect(() => files.path(bad), bad).toThrow();
       await expect(files.write(bad, 'x'), bad).rejects.toThrow();
     }
@@ -65,6 +66,22 @@ describe('FakeFiles', () => {
     for (const root of ['\\\\fake-host\\share', 'relative\\root', '\\\\?\\C:\\x']) {
       expect(() => new FakeFiles(root, SESSION), root).toThrow();
     }
+  });
+
+  it('WP-103: the rules of the host – POSIX takes a backslash as a separator, too (no disk access)', () => {
+    const posix = new FakeFiles('/srv/fake-root', SESSION, POSIX_PATHS);
+    expect(posix.path('plans\\fake-plan.md')).toBe(`/srv/fake-root/${SESSION}/plans/fake-plan.md`);
+    expect(posix.path('C:\\Windows\\x.txt')).toBe(`/srv/fake-root/${SESSION}/C:/Windows/x.txt`);
+    for (const bad of ['/etc/passwd', '..\\x.txt', 'a/../../x.txt'])
+      expect(() => posix.path(bad), bad).toThrow();
+    expect(() => new FakeFiles('D:\\fake-root', SESSION, POSIX_PATHS)).toThrow();
+
+    const windows = new FakeFiles('D:\\fake-root', SESSION, WIN32_PATHS);
+    expect(windows.path('plans/fake-plan.md')).toBe(`D:\\fake-root\\${SESSION}\\plans\\fake-plan.md`);
+    for (const bad of ['C:\\Windows\\x.txt', '/etc/passwd', 'notes.txt:stream']) {
+      expect(() => windows.path(bad), bad).toThrow();
+    }
+    expect(() => new FakeFiles('/srv/fake-root', SESSION, WIN32_PATHS)).toThrow();
   });
 });
 

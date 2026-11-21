@@ -36,10 +36,11 @@ import {
 } from './prepare';
 import {
   FakeReleaseServer,
+  archiveFolders,
+  archivePath,
   hangingResponse,
   serveRelease,
   testUpdateEndpoints,
-  zipFolders,
 } from './testRelease';
 import { ZipError } from './zip';
 
@@ -84,7 +85,7 @@ async function world() {
     const dir = path.join(parent, `parallax-${version}`);
     await makeTestPackage(dir, { version, key, ...options });
     for (const [rel, content] of Object.entries(extra ?? {})) await writeFile(path.join(dir, rel), content);
-    return zipFolders(parent, [`parallax-${version}`], path.join(parent, `parallax-${version}-win.zip`));
+    return archiveFolders(parent, [`parallax-${version}`], archivePath(parent, version));
   };
   const env = (patch: Partial<PrepareEnv> = {}): PrepareEnv => ({
     root,

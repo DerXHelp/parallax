@@ -16,7 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@web/ui/tabs';
 import { useTerminalT } from '../i18n';
 import { SHORT_SHELL_KEYS } from '../lib/shells';
 import type { TerminalController } from '../state/controller';
-import type { TerminalSessionState } from '../state/terminals';
+import { terminalKind, type TerminalSessionState } from '../state/terminals';
 import { AddTerminalMenu } from './AddTerminalMenu';
 import { TerminalView } from './TerminalView';
 
@@ -24,6 +24,8 @@ export interface TerminalTabsProps {
   state: TerminalSessionState;
   controller: TerminalController;
   defaultShell: ShellKind;
+  /** The shells of the session's computer (WP-104). */
+  shells?: readonly ShellKind[];
   onOpen: (shell: ShellKind) => void;
 }
 
@@ -90,14 +92,14 @@ function TabNameInput({
 }
 
 /**
- * The strip of terminal tabs ("cmd 1", "PowerShell 1", or the name the user gave – × closes) with
+ * The strip of terminal tabs ("cmd 1", "PowerShell 1", WP-105 "claude 1", or the name the user gave – × closes) with
  * "+" and below it every terminal's view; only the active one is visible, the others stay mounted
  * (their engines keep the output). A click on a tab also moves the focus into its terminal; arrow
  * keys only switch tabs. A double click, F2 or the tab's context menu renames it (empty = default name);
  * dragging a tab, or "Move left/right" in its context menu, changes the order – both are kept by the
  * server for every window.
  */
-export function TerminalTabs({ state, controller, defaultShell, onOpen }: TerminalTabsProps) {
+export function TerminalTabs({ state, controller, defaultShell, shells, onOpen }: TerminalTabsProps) {
   const tt = useTerminalT();
   const { items, activeId, numbers } = state;
   const [editing, setEditing] = useState<TerminalId | null>(null);
@@ -109,7 +111,10 @@ export function TerminalTabs({ state, controller, defaultShell, onOpen }: Termin
       new Map<TerminalId, string>(
         items.map((item) => [
           item.terminalId,
-          tt('tabs.name', { shell: tt(SHORT_SHELL_KEYS[item.shell]), number: numbers[item.terminalId] ?? 1 }),
+          tt('tabs.name', {
+            shell: tt(SHORT_SHELL_KEYS[terminalKind(item)]),
+            number: numbers[item.terminalId] ?? 1,
+          }),
         ]),
       ),
     [items, numbers, tt],
@@ -295,9 +300,13 @@ export function TerminalTabs({ state, controller, defaultShell, onOpen }: Termin
         </TabsList>
         <AddTerminalMenu
           defaultShell={defaultShell}
+          {...(shells === undefined ? {} : { shells })}
           atLimit={atLimit}
           max={state.limits.perEntry}
           onOpen={onOpen}
+          onFocusTerminal={() => {
+            controller.focusActive();
+          }}
         />
       </div>
       {items.map((item) => (

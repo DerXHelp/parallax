@@ -16,6 +16,7 @@ import { nodeFsOps, withFsRetry, writeFileAtomic, type FsOps } from '../lib/fs';
 import { logger as rootLogger } from '../lib/logger';
 import { fsErrorCode } from '../lib/paths';
 import { StoreVersionTooNewError, fileTimestamp, type StoreWarningSink } from '../store/jsonStore';
+import { secureFsOps } from './privateFiles';
 
 export interface StrictFileOptions {
   fs?: FsOps;
@@ -104,7 +105,8 @@ export async function writeStrictJson(
   options: StrictFileOptions = {},
 ): Promise<void> {
   await writeFileAtomic(file, `${JSON.stringify(value, null, 2)}\n`, {
-    fs: options.fs ?? nodeFsOps,
+    // POSIX (WP-107): these files hold keys or kAuth – 0600 in 0700 folders.
+    fs: options.fs ?? secureFsOps(),
     backup: false,
     retryDelaysMs: options.retryDelaysMs,
   });

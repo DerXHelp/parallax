@@ -11,12 +11,16 @@
  *   (PROFILE_ENV_REF_UNRESOLVED {name, key}; a start then fails until the variable exists).
  * - `info`: PROFILE_ARG_PASSED_RAW.
  * A missing configDir folder is no finding (the CLI creates it at the login).
+ *
+ * WP-103 (B4): paths are checked with the rules of the platform (`ProfileIssueContext.platform`,
+ * default `process.platform`). Windows: an absolute `.exe`; POSIX: an absolute path by the POSIX
+ * rules, no extension required (the native `claude` has none; resolveClaude checks it is ELF).
  */
 import { errorSpec, makeError, type ErrorPayload } from '@shared/errors';
 import type { Profile, ProfileExecutable, ProfileInput, ProfileIssue } from '@shared/model';
-import { windowsPathIssue } from '@shared/paths';
+import { pathFlavorOf, pathRules } from '@shared/paths';
 import { buildEnvReport } from './env';
-import { parseProfileArgs } from './profileArgs';
+import { profileArgsParser } from './profileArgs';
 
 /** Reasons of PROFILE_INVALID {field:'executable'}. */
 export type ExecutableIssueReason = 'not_absolute' | 'not_exe' | 'unsafe' | 'not_found';
@@ -26,21 +30,24 @@ export interface ProfileIssueContext {
   env: NodeJS.ProcessEnv;
   /** Persistent environment (HKCU/HKLM, upper-cased names) – the buildEnv exception (ADR-021). */
   persistentEnv: ReadonlyMap<string, string>;
-  /** True for an existing file; only called with safe absolute `.exe` paths. */
+  /** True for an existing file; only called with safe absolute paths (`.exe` on Windows). */
   exists(path: string): boolean;
+  /** Path rules and env semantics of this platform (default `process.platform`). */
+  platform?: NodeJS.Platform;
 }
 
 /** The reason an `executable` cannot be used, or null (`auto` is always fine). */
 export function executableIssue(
   executable: ProfileExecutable,
   exists: (path: string) => boolean,
+  platform: NodeJS.Platform = process.platform,
 ): ExecutableIssueReason | null {
   if (executable.kind === 'auto') return null;
   const file = executable.path;
-  const pathIssue = windowsPathIssue(file);
+  const pathIssue = pathRules(pathFlavorOf(platform)).issue(file);
   if (pathIssue === 'not_absolute' || pathIssue === 'empty') return 'not_absolute';
   if (pathIssue !== null) return 'unsafe';
-  if (!/\.exe$/i.test(file)) return 'not_exe';
+  if (platform === 'win32' && !/\.exe$/i.test(file)) return 'not_exe';
   return exists(file) ? null : 'not_found';
 }
 
@@ -55,14 +62,16 @@ export function profileIssues(profile: Profile | ProfileInput, ctx: ProfileIssue
   const warnings: ProfileIssue[] = [];
   const infos: ProfileIssue[] = [];
 
-  const args = parseProfileArgs(profile.args, profile.passRawArgs);
+  const platform = ctx.platform ?? process.platform;
+  const rules = pathRules(pathFlavorOf(platform));
+  const args = profileArgsParser(rules)(profile.args, profile.passRawArgs);
   for (const error of args.errors) errors.push(issue('error', error));
 
-  const executable = executableIssue(profile.executable, (file) => ctx.exists(file));
+  const executable = executableIssue(profile.executable, (file) => ctx.exists(file), platform);
   if (executable !== null) {
     errors.push(issue('error', makeError('PROFILE_INVALID', { field: 'executable', reason: executable })));
   }
-  if (profile.configDir !== null && windowsPathIssue(profile.configDir) !== null) {
+  if (profile.configDir !== null && rules.issue(profile.configDir) !== null) {
     errors.push(issue('error', makeError('PROFILE_INVALID', { field: 'configDir', reason: 'unsafe' })));
   }
 
@@ -73,6 +82,7 @@ export function profileIssues(profile: Profile | ProfileInput, ctx: ProfileIssue
     entryId: null,
     clientApp: 'parallax',
     persistent: ctx.persistentEnv,
+    platform,
   });
   for (const warning of args.warnings) {
     if (errorSpec(warning.code).severity === 'info') infos.push(issue('info', warning));

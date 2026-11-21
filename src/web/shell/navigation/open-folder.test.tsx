@@ -3,10 +3,11 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
 import { makeError } from '@shared/errors';
-import { SAMPLE_IDS, sampleFileInfo, sampleSummary } from '@shared/samples';
+import type { HostCapabilities } from '@shared/model';
+import { SAMPLE_IDS, sampleFileInfo, sampleHostState, sampleSummary } from '@shared/samples';
 import { NAVIGATION_ENTRIES, NAVIGATION_SESSION_KEYS } from '@web/playground/navigation-scenario';
 import { startScenario, type RunningScenario } from '@web/playground/PlaygroundScenario';
-import { resetClientStore } from '@web/state/store';
+import { clientStore, resetClientStore, updateHost } from '@web/state/store';
 import { AppShell } from '../AppShell';
 import { installShortcutListener } from '../shortcuts';
 import { resetRename } from './rename';
@@ -45,6 +46,69 @@ async function chooseOpenFolder(user: ReturnType<typeof userEvent.setup>): Promi
   const menu = await screen.findByRole('menu');
   await user.click(within(menu).getByRole('menuitem', { name: 'Open folder in Explorer' }));
 }
+
+const LINUX_DESKTOP: HostCapabilities = {
+  desktop: true,
+  externalConsole: true,
+  shellWindow: true,
+  editor: true,
+  fileManager: true,
+  autostart: true,
+  protocolHandler: true,
+};
+const LINUX_SERVER: HostCapabilities = {
+  desktop: false,
+  externalConsole: false,
+  shellWindow: false,
+  editor: false,
+  fileManager: false,
+  autostart: false,
+  protocolHandler: false,
+};
+
+describe('session actions by the platform of the session host (WP-104)', () => {
+  const key = makeSessionKey(LOCAL_HOST_ID, SAMPLE_IDS.entry);
+  const actions = () => sessionActions(HEADER_ACTIONS, key, sampleSummary(), 'header');
+  const action = (id: string) => actions().find((item) => item?.id === id) ?? null;
+
+  it('Windows host: Explorer, the Windows shells and the external console', () => {
+    updateHost(clientStore, LOCAL_HOST_ID, () => ({ hostState: sampleHostState() }));
+    expect(action('openFolder')?.label).toBe('navigation.actions.openFolder');
+    expect(action('openShell')?.children?.map((child) => child.id)).toEqual(['cmd', 'powershell', 'gitbash']);
+    expect(action('openExternal')).not.toBeNull();
+  });
+
+  it('Linux desktop: the file manager and the Linux shells, the default falling back to the login shell', () => {
+    updateHost(clientStore, LOCAL_HOST_ID, () => ({
+      hostState: sampleHostState({ platform: 'linux', capabilities: LINUX_DESKTOP }),
+    }));
+    expect(action('openFolder')?.label).toBe('navigation.actions.openFolderFileManager');
+    const shell = action('openShell');
+    expect(shell?.children?.map((child) => child.id)).toEqual(['login', 'bash', 'zsh', 'fish', 'pwsh']);
+    expect(shell?.children?.find((child) => child.badge !== undefined)?.id).toBe('login');
+  });
+
+  it('Linux server without desktop: no folder, shell window or external console', () => {
+    updateHost(clientStore, LOCAL_HOST_ID, () => ({
+      hostState: sampleHostState({ platform: 'linux', capabilities: LINUX_SERVER }),
+    }));
+    const ids = actions().map((item) => item?.id ?? null);
+    expect(ids).not.toContain('openFolder');
+    expect(ids).not.toContain('openShell');
+    expect(ids).not.toContain('openExternal');
+    expect(ids).toContain('copyConsoleCommand');
+  });
+
+  it('never sends a cwd that the host rules reject (a Windows path on Linux)', () => {
+    updateHost(clientStore, LOCAL_HOST_ID, () => ({
+      hostState: sampleHostState({ platform: 'linux', capabilities: LINUX_DESKTOP }),
+    }));
+    openFolderInExplorer(key, sampleSummary({ cwd: 'D:\\work' }));
+    expect(clientStore.getState().notices.at(-1)?.content).toEqual({
+      error: { code: 'PATH_REJECTED', params: {} },
+    });
+  });
+});
 
 describe('"Open folder in Explorer" (WP-58, ADR-144)', () => {
   it('only the local host offers it – after "Open in new window" in both menus', () => {

@@ -16,7 +16,7 @@
  */
 import { access, mkdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { windowsPathIssue } from '@shared/paths';
+import { pathFlavorOfShape, windowsPathIssue } from '@shared/paths';
 import { PRODUCT_NAME } from '@shared/product';
 import { toError } from '../lib/async';
 import { windowsCommandLine } from '../lib/cmdline';
@@ -65,13 +65,15 @@ export async function launcherCommand(
   opts: LauncherCommandOptions = {},
 ): Promise<StartCommand> {
   const node = await (opts.realpath ?? realpath)(opts.execPath ?? process.execPath);
+  // WP-106: joined the way the repo root is written (`/…` on Linux), Windows as before.
+  const join = (pathFlavorOfShape(repoRoot) === 'posix' ? path.posix : path.win32).join;
   return {
     node,
     args: [
-      path.win32.join(repoRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs'),
+      join(repoRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs'),
       '--tsconfig',
-      path.win32.join(repoRoot, 'src', 'server', 'tsconfig.json'),
-      path.win32.join(repoRoot, 'src', 'server', 'launcher', 'main.ts'),
+      join(repoRoot, 'src', 'server', 'tsconfig.json'),
+      join(repoRoot, 'src', 'server', 'launcher', 'main.ts'),
       ...homeArgs(opts.home ?? null),
       ...extra,
     ],
@@ -110,7 +112,8 @@ export const AUTOSTART_TIMEOUT_MS = 30_000;
 
 /** `<APPDATA>\Microsoft\Windows\Start Menu\Programs`, or null without a safe APPDATA. */
 function programsFolder(env: NodeJS.ProcessEnv): string | null {
-  const appData = getEnvVar(env, 'APPDATA');
+  // Windows semantics on every host (case-insensitive names): this is the Windows folder.
+  const appData = getEnvVar(env, 'APPDATA', 'win32');
   if (appData === undefined || windowsPathIssue(appData) !== null) return null;
   return path.win32.join(appData, 'Microsoft', 'Windows', 'Start Menu', 'Programs');
 }

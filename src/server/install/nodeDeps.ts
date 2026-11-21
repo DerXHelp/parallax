@@ -4,16 +4,22 @@
  * integration), the running server of the default data directory, the pipe lock per root and
  * `node.exe` with this console. main.ts uses them for dist/install.js; `scripts/release/smoke.ts`
  * for the unsigned trial (with its own environment).
+ *
+ * Linux (WP-108): the same entries through system/installation.ts (application menu entry,
+ * autostart, link handler – the Linux side belongs to the system integration), plus the `parallax`
+ * command in `~/.local/bin` (install/command.ts) and, when wired in, the removal of the user
+ * service (`removeService`).
  */
 import { once } from 'node:events';
 import os from 'node:os';
-import { isWindowsPathInside } from '@shared/paths';
 import { defaultHome } from '../config';
 import { acquireDirectoryLock } from '../lib/homeLock';
 import { spawnHidden } from '../lib/process';
 import { findRunningServer } from '../launcher/client';
 import { ensureStartMenuEntry, removeInstallationEntries } from '../system/installation';
 import type { InstallerCliDeps } from './cli';
+import { ensureCommand, removeCommand, type CommandResult } from './command';
+import { COMMAND_NAME, defaultBinDir, installPathRules } from './layout';
 import { provideSdk } from './sdk';
 
 export interface NodeInstallerOptions {
@@ -26,6 +32,13 @@ export interface NodeInstallerOptions {
   execArgv?: readonly string[];
   /** Only the unsigned trial of the smoke test. */
   keys?: readonly string[];
+  /** Linux: the folder of the `parallax` command (default `defaultBinDir(env)`, `~/.local/bin`). */
+  binDir?: string | null;
+  /**
+   * Linux: removes the systemd user service of the server mode on `--uninstall`; resolves with a
+   * problem or null. Missing = no service step (the server mode wires it in).
+   */
+  removeService?: () => Promise<string | null>;
   out: (line: string) => void;
   fail: (line: string) => void;
 }
@@ -40,6 +53,16 @@ async function runNode(args: readonly string[], env: NodeJS.ProcessEnv): Promise
 export function createNodeInstallerDeps(options: NodeInstallerOptions): InstallerCliDeps {
   const env = options.env ?? process.env;
   const home = defaultHome(env);
+  const windows = process.platform === 'win32';
+  const binDir = options.binDir !== undefined ? options.binDir : defaultBinDir(env);
+  const commandStep = (root: string, step: typeof ensureCommand): Promise<CommandResult> =>
+    binDir === null
+      ? Promise.resolve({
+          ok: false,
+          file: `~/.local/bin/${COMMAND_NAME}`,
+          reason: 'HOME is not set or not usable',
+        })
+      : step({ root, binDir });
   const runningBuildId = async (): Promise<string | null> => {
     const found = await findRunningServer({ home });
     return found.kind === 'running' ? found.health.buildId : null;
@@ -63,6 +86,7 @@ export function createNodeInstallerDeps(options: NodeInstallerOptions): Installe
         const result = await ensureStartMenuEntry({ installRoot, env });
         return result.ok ? null : result.reason;
       },
+      ...(windows ? {} : { command: (installRoot: string) => commandStep(installRoot, ensureCommand) }),
       runningBuildId,
       log: options.out,
       removeEntries: async () => {
@@ -76,12 +100,18 @@ export function createNodeInstallerDeps(options: NodeInstallerOptions): Installe
         for (const [name, result] of steps) {
           if (!result.ok) problems.push(`${name}: ${result.reason}`);
         }
+        if (!windows) {
+          const command = await commandStep(root, removeCommand);
+          if (!command.ok) problems.push(`command ${command.file}: ${command.reason}`);
+          const service = options.removeService === undefined ? null : await options.removeService();
+          if (service !== null) problems.push(`user service: ${service}`);
+        }
         return problems;
       },
     }),
     dataDir: home,
     leave: (root) => {
-      if (isWindowsPathInside(process.cwd(), root)) process.chdir(os.tmpdir());
+      if (installPathRules().isInside(process.cwd(), root)) process.chdir(os.tmpdir());
     },
     ...(options.keys === undefined ? {} : { keys: options.keys }),
     out: options.out,

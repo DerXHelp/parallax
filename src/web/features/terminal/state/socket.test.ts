@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SAMPLE_IDS } from '@shared/samples';
+import { LOCAL_HOST_ID } from '@shared/common';
+import { SAMPLE_IDS, SAMPLE_REMOTE_HOST_ID } from '@shared/samples';
 import { TERMINAL_CLOSE_CODES, TERMINAL_LIMITS, TERMINAL_PROTOCOL_VERSION } from '@shared/terminal';
 import {
   createFakeSocketFactory,
@@ -75,8 +76,12 @@ function sink(cols = 100, rows = 30) {
 
 describe('terminal socket (WP-99b)', () => {
   it('builds the URL like the main connection', () => {
-    expect(terminalSocketUrl({ protocol: 'http:', host: '127.0.0.1:4712' })).toBe(
+    expect(terminalSocketUrl(LOCAL_HOST_ID, { protocol: 'http:', host: '127.0.0.1:4712' })).toBe(
       'ws://127.0.0.1:4712/api/terminal/ws',
+    );
+    // WP-105 (E3): another computer's terminal through the relay of this server.
+    expect(terminalSocketUrl(SAMPLE_REMOTE_HOST_ID, { protocol: 'https:', host: 'parallax.example' })).toBe(
+      `wss://parallax.example/api/hosts/${SAMPLE_REMOTE_HOST_ID}/terminal/ws`,
     );
   });
 

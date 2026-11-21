@@ -16,7 +16,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EntryId } from '@shared/common';
 import { makeError } from '@shared/errors';
 import { API_PATHS, attachmentUploadResponseSchema, authCookieName, fileUrl } from '@shared/http';
-import { sessionFilesFileSchema, type HostWarning, type Settings } from '@shared/model';
+import {
+  sessionFilesFileSchema,
+  WINDOWS_HOST_CAPABILITIES,
+  type HostWarning,
+  type Settings,
+} from '@shared/model';
 import { commandResultSchemas, type Command } from '@shared/protocol';
 import {
   sampleConversation,
@@ -38,6 +43,7 @@ import { readServerLock, serverLockPath } from '../launcher/lockFile';
 import type { ServerShutdown, SignalTarget } from '../launcher/shutdown';
 import { acquireHomeLock, type HomeLock } from '../lib/homeLock';
 import { createLogger } from '../lib/logger';
+import { hostCapabilities } from '../lib/platform';
 import { attachmentsDir } from '../store/attachments';
 import { entryDir } from '../store/decisions';
 import type { CommandContext } from '../sync/ports';
@@ -45,10 +51,12 @@ import type { SystemIntegration } from '../system/ports';
 import type { UpdateService } from '../update/ports';
 import { createFakeUpdateService } from '../update/testing';
 import {
+  desktopCapabilities,
   FAKE_FILES_HOME_DIR,
   fileEntryLookup,
   observedPublisher,
   resumedSessionId,
+  safeHomeDir,
   terminalClosingPublisher,
   StartupError,
   startServer,
@@ -384,7 +392,7 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
     const { manager } = server;
     expect(manager.hostState()).toMatchObject({ port: server.port, systemIntegration: false });
 
-    const saved = await manager.handleCommand({ name: 'profile.save', profile: sampleProfileInput() }, ctx());
+    const saved = await manager.handleCommand({ name: 'profile.save', profile: hostProfileInput() }, ctx());
     const profileId = (saved as { profileId: string }).profileId;
     expect(manager.hostState().profiles.map((p) => p.name)).toEqual(['Standard', 'Work']);
     // A new profile is checked in the background – it never stays "checking" (WP-40).
@@ -424,7 +432,7 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
     const home = await tempHome();
     const { server } = await start(home);
     const changed = vi.spyOn(server.manager, 'onProfileChanged');
-    await server.manager.handleCommand({ name: 'profile.save', profile: sampleProfileInput() }, ctx());
+    await server.manager.handleCommand({ name: 'profile.save', profile: hostProfileInput() }, ctx());
     expect(changed).toHaveBeenCalled();
   });
 
@@ -432,7 +440,7 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
     const home = await tempHome();
     const { server } = await start(home);
     const { manager } = server;
-    const input = sampleProfileInput({ env: {}, configDir: null });
+    const input = hostProfileInput({ env: {}, configDir: null });
     const saved = await manager.handleCommand({ name: 'profile.save', profile: input }, ctx());
     const profileId = (saved as { profileId: string }).profileId;
     const claude = () => manager.hostState().profiles.find((p) => p.id === profileId)?.claude;
@@ -638,7 +646,8 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
         sampleConversation({ id: sampleId('cv', 2) }),
       ],
     });
-    const profile = sampleProfile({ args: ['--add-dir', 'D:\\shared', '--add-dir', 'E:\\docs'] });
+    const dirs = WINDOWS_HOST ? ['D:\\shared', 'E:\\docs'] : ['/srv/shared', '/srv/docs'];
+    const profile = sampleProfile({ args: ['--add-dir', dirs[0] ?? '', '--add-dir', dirs[1] ?? ''] });
     const lookup = fileEntryLookup(
       { get: (id) => (id === entry.id ? entry : undefined) },
       { get: (id) => (id === profile.id ? profile : undefined) },
@@ -646,7 +655,7 @@ describe('startServer: Phase-2 wiring (WP-40)', () => {
     expect(entry.profileId).toBe(profile.id);
     expect(lookup.entry(entry.id)).toEqual({
       cwd: 'D:\\work\\Sample',
-      additionalDirectories: ['D:\\shared', 'E:\\docs'],
+      additionalDirectories: dirs,
       conversationIds: [sampleId('cv', 1), sampleId('cv', 2)],
     });
     expect(lookup.entry(sampleId('en', 999))).toBeNull();
@@ -802,7 +811,12 @@ describe('startServer: Phase-3 wiring (WP-60)', () => {
       manager.handleCommand({ name: 'file.stat', entryId, path: '\\\\fake-host\\share\\x.txt' }, ctx()),
     ).rejects.toMatchObject({ error: { code: 'PATH_REJECTED' } });
 
-    // FakeBackend → recording opener: logs, starts nothing.
+    // FakeBackend → recording opener: logs, starts nothing. VS Code is a preset on both platforms (the
+    // default Notepad++ opens like the default program on Linux, which refuses `.ts`).
+    await run({
+      name: 'settings.update',
+      patch: { editor: { preset: 'vscode', executable: null, args: [] } },
+    });
     await run({ name: 'file.open', entryId, path: appPath, target: 'editor', line: 12, col: null });
     await run({ name: 'file.open', entryId, path: project, target: 'explorer', line: null, col: null });
     const opened = lines
@@ -880,6 +894,61 @@ describe('startServer: Phase-3 wiring (WP-60)', () => {
   });
 });
 
+const WINDOWS_HOST = process.platform === 'win32';
+
+/** `sampleProfileInput` with folders this host's profile checks accept (WP-103: POSIX paths on Linux). */
+function hostProfileInput(
+  p: Parameters<typeof sampleProfileInput>[0] = {},
+): ReturnType<typeof sampleProfileInput> {
+  const base = sampleProfileInput(p);
+  if (WINDOWS_HOST) return base;
+  return {
+    ...base,
+    configDir: base.configDir === null ? null : '/home/demo/.claude-work',
+    args: ['--add-dir', '/srv/shared'],
+    ...p,
+  };
+}
+
 function ctx(): CommandContext {
   return { clientId: sampleId('cl', 1), cmdId: randomUUID() };
 }
+
+describe('safeHomeDir (102e)', () => {
+  it('passes a home folder the host accepts and drops unsafe or failing ones', () => {
+    const home = process.platform === 'win32' ? 'D:\\Home\\demo' : '/home/demo';
+    expect(safeHomeDir(() => home)).toBe(home);
+    expect(safeHomeDir(() => '')).toBeNull();
+    expect(safeHomeDir(() => 'relative')).toBeNull();
+    expect(
+      safeHomeDir(() => {
+        throw new Error('no home');
+      }),
+    ).toBeNull();
+  });
+});
+
+describe('desktopCapabilities (WP-106, WP-109)', () => {
+  const never = () => {
+    throw new Error('the terminal setting is only read on Linux with the SDK backend');
+  };
+
+  it('Windows: everything; the FakeBackend everything (it only records); other platforms hostCapabilities()', async () => {
+    expect(await desktopCapabilities({ backend: 'sdk', desktop: 'auto' }, never, 'win32')).toEqual(
+      WINDOWS_HOST_CAPABILITIES,
+    );
+    expect(await desktopCapabilities({ backend: 'fake', desktop: 'auto' }, never, 'linux')).toEqual(
+      WINDOWS_HOST_CAPABILITIES,
+    );
+    expect(await desktopCapabilities({ backend: 'sdk', desktop: 'auto' }, never, 'darwin')).toEqual(
+      hostCapabilities('darwin'),
+    );
+  });
+
+  it('server mode (--desktop=off): no desktop action on any platform', async () => {
+    for (const platform of ['win32', 'linux'] as const) {
+      const capabilities = await desktopCapabilities({ backend: 'sdk', desktop: 'off' }, never, platform);
+      expect(Object.values(capabilities).every((value) => !value)).toBe(true);
+    }
+  });
+});

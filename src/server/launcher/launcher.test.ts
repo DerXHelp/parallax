@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { takeAuthCodeFromHash, type ServerLockFile } from '@shared/http';
 import {
@@ -571,7 +572,8 @@ describe('launcher: start failures', () => {
     const error = await failure(runLauncher(options(), w.deps));
     expect(error.reason).toBe('server_exited');
     expect(error.message).toContain('exit code 1');
-    expect(error.message).toContain(`${HOME}\\logs\\server.out.log`);
+    // WP-107: the separators of this computer (path.join in serverProcess.ts).
+    expect(error.message).toContain(path.join(HOME, 'logs', 'server.out.log'));
     expect(error.message).toContain('Server output: Error: Cannot find module x');
   });
 
@@ -597,7 +599,12 @@ describe('launcher: Chrome (ADR-136)', () => {
     const error = await failure(runLauncher(options(), w.deps));
     expect(error.reason).toBe('chrome_not_found');
     expect(error.exitCode).toBe(1);
-    expect(error.message).toContain('Google Chrome was not found');
+    // WP-109: the places searched are the platform's (Linux: Chrome or Chromium on the PATH, the Snap).
+    expect(error.message).toContain(
+      process.platform === 'win32'
+        ? 'Google Chrome was not found'
+        : 'Neither Google Chrome nor Chromium was found',
+    );
     expect(error.message).toContain('Install Google Chrome');
     expect(error.message).toContain('--print-url');
     expect(error.message).toContain(`PID ${String(SERVER_PID)}`);

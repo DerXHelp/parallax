@@ -76,7 +76,12 @@ export function summaryOf(
     external:
       entry.external === null
         ? null
-        : { since: entry.external.since, pid: entry.external.pid, running: o.externalRunning ?? true },
+        : {
+            since: entry.external.since,
+            pid: entry.external.pid,
+            running: o.externalRunning ?? true,
+            terminalId: entry.external.terminalId,
+          },
     remoteControl: {
       state: remote.state,
       sessionUrl:

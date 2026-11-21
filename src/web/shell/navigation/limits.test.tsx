@@ -209,10 +209,17 @@ describe('one block per account (WP41-05)', () => {
     });
   }
 
-  function setHost(profiles: ProfileSummary[], accountLimits: Record<string, RateLimitInfo>): void {
+  function setHost(
+    profiles: ProfileSummary[],
+    accountLimits: Record<string, RateLimitInfo>,
+    platform = 'win32',
+  ): void {
     clientStore.setState({
       hosts: {
-        local: { ...emptyHostRecord('local'), hostState: sampleHostState({ profiles, accountLimits }) },
+        local: {
+          ...emptyHostRecord('local'),
+          hostState: sampleHostState({ profiles, accountLimits, platform }),
+        },
       },
     });
   }
@@ -266,5 +273,13 @@ describe('one block per account (WP41-05)', () => {
       'Profile Work, Work fast',
       'Profil Private',
     ]);
+  });
+
+  it('on a Linux computer config folders that differ in case are two accounts (WP-104)', () => {
+    const upper = { ...WORK, configDir: '/home/user/.Claude-work' };
+    const lower = { ...WORK_FAST, configDir: '/home/user/.claude-work/' };
+    setHost([upper, lower], { [upper.id]: report(0.2, 0), [lower.id]: report(0.3, 0) }, 'linux');
+    render(<AccountLimits />);
+    expect(values()).toEqual(['20', '30']);
   });
 });

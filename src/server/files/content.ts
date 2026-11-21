@@ -9,7 +9,8 @@ import { Readable } from 'node:stream';
 import { LIMITS } from '@shared/common';
 import { makeError } from '@shared/errors';
 import type { FileInfo } from '@shared/model';
-import { windowsBaseName } from '@shared/paths';
+import type { PathRules } from '@shared/paths';
+import { HOST_PATH_RULES } from '../lib/paths';
 import { cutUtf8AtLineEnd, decodeText } from '../lib/textDecode';
 import { CommandError } from '../sync/ports';
 import type { FileContent } from './ports';
@@ -33,9 +34,13 @@ export async function readTextContent(fs: FileFs, file: FileInfo): Promise<Buffe
   return cutUtf8AtLineEnd(Buffer.from(text, 'utf8'), limit, sourceCut);
 }
 
-/** The answer of GET /api/file for a stat'ed, allowed file (see the file comment). */
-export async function openContent(fs: FileFs, file: FileInfo): Promise<FileContent> {
-  const name = windowsBaseName(file.path) || windowsBaseName(file.realPath);
+/** The answer of GET /api/file for a stat'ed, allowed file (see the file comment; `rules` name the file). */
+export async function openContent(
+  fs: FileFs,
+  file: FileInfo,
+  rules: PathRules = HOST_PATH_RULES,
+): Promise<FileContent> {
+  const name = rules.baseName(file.path) || rules.baseName(file.realPath);
   if (isTextKind(file.kind)) {
     const body = await readTextContent(fs, file);
     return {

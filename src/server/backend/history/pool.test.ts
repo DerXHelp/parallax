@@ -109,8 +109,17 @@ afterEach(async () => {
   await Promise.all(pools.splice(0).map((p) => p.dispose()));
 });
 
+const WINDOWS_HOST = process.platform === 'win32';
+
 describe('historyWorkerKey', () => {
-  it('uses the env CLAUDE_CONFIG_DIR, compared like Windows paths', () => {
+  it('uses the env CLAUDE_CONFIG_DIR, compared by the host rules (POSIX: exact)', () => {
+    if (WINDOWS_HOST) return;
+    expect(historyWorkerKey(launch('/home/x/.claude-work/'))).toBe('/home/x/.claude-work');
+    expect(historyWorkerKey(launch('/home/x/.Claude-Work'))).toBe('/home/x/.Claude-Work');
+    expect(historyWorkerKey(launch(null))).toBe(DEFAULT_CONFIG_DIR_KEY);
+  });
+
+  it.runIf(WINDOWS_HOST)('uses the env CLAUDE_CONFIG_DIR, compared like Windows paths', () => {
     expect(historyWorkerKey(launch('C:\\Users\\x\\.claude-work\\'))).toBe('c:\\users\\x\\.claude-work');
     expect(historyWorkerKey(launch('c:/users/X/.claude-work'))).toBe('c:\\users\\x\\.claude-work');
     expect(historyWorkerKey(launch(null))).toBe(DEFAULT_CONFIG_DIR_KEY);
@@ -202,8 +211,11 @@ describe(
       expect(whereOf(defaultDir).configDir).toBeNull();
       expect(new Set([whereOf(a).threadId, whereOf(b).threadId, whereOf(defaultDir).threadId]).size).toBe(3);
       expect(p.size).toBe(3);
-      // Same dir in another spelling → the same worker.
-      const again = await p.run(launch('c:/CFG/a/'), { op: 'messages', sessionId: 's' });
+      // Same dir in another spelling → the same worker (Windows rules; POSIX: only a trailing slash).
+      const again = await p.run(launch(WINDOWS_HOST ? 'c:/CFG/a/' : 'C:\\cfg\\a'), {
+        op: 'messages',
+        sessionId: 's',
+      });
       expect(whereOf(again).threadId).toBe(whereOf(a).threadId);
       expect(p.size).toBe(3);
       expect(process.env.CLAUDE_CONFIG_DIR).toBe(before);

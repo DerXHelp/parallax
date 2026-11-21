@@ -21,6 +21,11 @@ Rechner). Nur Node `crypto`/`tls`, keine eigene Kryptografie.
 | `pairingClient.ts` | `pairWithHost` – Kopplung von der steuernden Seite (§B.7 Schritte 1–2, 5, 8) | WP-78a |
 | `selfTest.ts` | Selbsttest der Prüfung `tls` (§B.11) | WP-78a |
 | `testKit.ts` | Test-Helfer (fremde Zertifikate, TLS-Server auf `127.0.0.1:0`) – nur für Tests | WP-78a |
+| `platformKeyStore.ts` | Auswahl je Plattform (§B.14): Windows DPAPI; Linux Secret Service → `systemd-creds` → Datei nur per Opt-in, Schema der vorhandenen Schlüsseldatei zuerst | WP-107 |
+| `secretServiceKeyStore.ts` | Secret Service (libsecret über `node:ffi` in einem Worker mit Frist): je Zweck ein zufälliger AES-256-GCM-Schlüssel im Schlüsselbund | WP-107 |
+| `systemdCredsKeyStore.ts` | `systemd-creds --user encrypt/decrypt`, Geheimnis nur über stdin/stdout, Zweck im Credential-Namen | WP-107 |
+| `fileKeyStore.ts` | Opt-in `--key-store=file`: Geheimnis hinter einer Markierung, Schutz nur über Dateirechte (Warnung im Check `keystore`) | WP-107 |
+| `privateFiles.ts` | Linux: Dateien 0600 in Ordnern 0700 (`privateFsOps`, `secureFsOps`), `checkPrivateFile` (Rechte, Eigentümer) | WP-107 |
 
 Regeln: private Schlüssel und `kAuth` nie im Log, in Fehlern, in `HostState` oder im Browser; Vergleiche nur mit
 `timingSafeEqual`; Prüfungen werfen nie (fail closed); Tests binden nur `127.0.0.1` mit Port 0.
