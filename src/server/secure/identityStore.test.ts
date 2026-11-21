@@ -6,8 +6,9 @@ import { makeTempHome } from '../http/testServer';
 import { StoreVersionTooNewError } from '../store/jsonStore';
 import { generateIdentity } from './identity';
 import { KEYS_DIR, createIdentityStore, keyFilePath } from './identityStore';
+import { createFileKeyStore } from './fileKeyStore';
 import { createMemoryKeyStore } from './memoryKeyStore';
-import { KeyStoreError } from './ports';
+import { KeyStoreError, type KeyStore } from './ports';
 
 async function setup() {
   const home = await makeTempHome('wp78a-keys-');
@@ -159,5 +160,72 @@ describe('key files (§B.4/B.5)', () => {
     expect(renewed.pin).not.toBe(old.pin);
     expect((await pending)?.pin).toBe(renewed.pin);
     expect((await other.load('identity'))?.pin).toBe(renewed.pin);
+  });
+});
+
+describe('key files per scheme (WP-107, §B.14)', () => {
+  /** The memory store under another scheme name (the bytes stay readable – only the label differs). */
+  const labelled = (store: KeyStore, scheme: KeyStore['scheme']): KeyStore => ({
+    ...(scheme === undefined ? {} : { scheme }),
+    available: () => store.available(),
+    protect: (purpose, plaintext) => store.protect(purpose, plaintext),
+    unprotect: (purpose, ciphertext) => store.unprotect(purpose, ciphertext),
+  });
+
+  it('the file names its scheme; a file of another scheme is never read (pair again)', async () => {
+    const { home, keyStore, store } = await setup();
+    await store.create('identity');
+    const record = JSON.parse(await readFile(keyFilePath(home, 'identity'), 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    expect(record.scheme).toBe('dpapi');
+    const linux = createIdentityStore({
+      home,
+      keyStore: labelled(keyStore, 'secret_service'),
+      platform: 'linux',
+    });
+    await expect(linux.load('identity')).rejects.toMatchObject({ reason: 'unavailable' });
+    // Not quarantined: the file stays for the store it belongs to.
+    expect(await keyFiles(home)).toEqual(['identity.json']);
+    const fresh = createIdentityStore({
+      home,
+      keyStore: labelled(keyStore, 'systemd_creds'),
+      platform: 'linux',
+    });
+    await fresh.create('coupling:pc-n');
+    const written = JSON.parse(await readFile(keyFilePath(home, 'coupling:pc-n'), 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    expect(written.scheme).toBe('systemd_creds');
+  });
+
+  it('a clear-text key file with wider rights is quarantined, the store reports unavailable', async () => {
+    const home = await makeTempHome('wp107-keys-');
+    const warnings: ErrorPayload[] = [];
+    const issues: (null | 'mode')[] = [null, 'mode'];
+    const make = () =>
+      createIdentityStore({
+        home,
+        keyStore: createFileKeyStore({ platform: 'linux' }),
+        platform: 'linux',
+        checkFile: () => Promise.resolve(issues.shift() ?? null),
+        warnings: { add: (error) => warnings.push(error) },
+      });
+    const created = await make().create('identity');
+    const record = JSON.parse(await readFile(keyFilePath(home, 'identity'), 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    expect(record.scheme).toBe('file');
+    expect((await make().load('identity'))?.pin).toBe(created.pin);
+    await expect(make().load('identity')).rejects.toMatchObject({ reason: 'unavailable' });
+    const files = await keyFiles(home);
+    expect(files[0]).toMatch(/^identity\.json\.corrupt-/u);
+    expect(warnings.at(-1)).toMatchObject({
+      code: 'STORE_CORRUPT_QUARANTINED',
+      params: { reason: 'rights_mode' },
+    });
   });
 });

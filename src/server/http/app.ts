@@ -37,6 +37,7 @@ import { registerUpdateRoutes } from '../update/routes';
 import { registerAuthRoutes, type AuthService } from './auth';
 import { contentErrorHandler, registerContentRoutes } from './content';
 import { registerHostRoutes } from './hostRoutes';
+import { registerLauncherRemoteRoute, type LauncherRemoteTarget } from './launcherRemote';
 import { STATIC_ROUTE, checkRequest, requestPath } from './origin';
 import { replyError, sendError } from './reply';
 
@@ -100,6 +101,11 @@ export interface CreateAppOptions {
    * guard class `ws`, second check at the upgrade); missing → no route (404).
    */
   terminal?: TerminalService;
+  /**
+   * WP-107 (WP-76 §B.13): `POST /api/launcher/remote` – "Share" and the coupling from the command
+   * line (`parallax remote …`, launcher token, guard class `launcher`); missing → no route (404).
+   */
+  launcherRemote?: LauncherRemoteTarget;
   /** WP-87: close code of the shutdown (4504 when it is a restart for an update); default 4503. */
   closeCode?: () => number;
   /** Built web UI (`dist/web`); not served when null or missing (dev mode uses Vite). */
@@ -253,6 +259,9 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   }));
 
   registerAuthRoutes(app, auth, { port });
+  if (options.launcherRemote !== undefined) {
+    registerLauncherRemoteRoute(app, { auth, target: options.launcherRemote, logger: log });
+  }
 
   // Blob, file content (ADR-142, guard class "file": Sec-Fetch-Site same-origin required, Origin
   // if present allowed, cookie) and the upload (ADR-103/146, guard class "mutation": Origin,

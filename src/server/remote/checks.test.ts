@@ -5,7 +5,7 @@ import { generateIdentity } from '../secure/identity';
 import { createMemoryKeyStore } from '../secure/memoryKeyStore';
 import { KeyStoreError } from '../secure/ports';
 import { TEST_HOST } from '../secure/testKit';
-import { probePort, runRemoteChecks, type RemoteCheckDeps } from './checks';
+import { keystoreCheck, probePort, runRemoteChecks, type RemoteCheckDeps } from './checks';
 
 function deps(overrides: Partial<RemoteCheckDeps> = {}): RemoteCheckDeps {
   return {
@@ -107,5 +107,23 @@ describe('checks when sharing is switched on (§4.2, §B.11)', () => {
       );
     }
     expect(await probePort(TEST_HOST, port)).toBe('ok');
+  });
+});
+
+describe('key store check per scheme (WP-107, §B.14)', () => {
+  it('Windows unchanged; Linux names its scheme; the file is a warning with params.scheme', () => {
+    expect(keystoreCheck(true, undefined)).toEqual({ id: 'keystore', status: 'ok', params: {} });
+    expect(keystoreCheck(true, 'dpapi')).toEqual({ id: 'keystore', status: 'ok', params: {} });
+    expect(keystoreCheck(true, 'systemd_creds')).toEqual({
+      id: 'keystore',
+      status: 'ok',
+      params: { scheme: 'systemd_creds' },
+    });
+    expect(keystoreCheck(true, 'file')).toEqual({
+      id: 'keystore',
+      status: 'warning',
+      params: { scheme: 'file' },
+    });
+    expect(keystoreCheck(false, 'secret_service')).toMatchObject({ id: 'keystore', status: 'error' });
   });
 });

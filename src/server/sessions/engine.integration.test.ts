@@ -1151,6 +1151,36 @@ describe('orphans', () => {
     await h.cmd({ name: 'session.close', entryId });
   });
 
+  it('WP-107 heartbeat on Linux: only PID and start time count (the process name is no identity)', async () => {
+    const h = await setup({
+      scenario: () => eventsScenario('turn', textTurnEvents()),
+      options: { processSnapshotMs: 30_000, processSnapshotFirstMs: 10_000 },
+      platform: 'linux',
+    });
+    const entryId = await h.create('Reply with exactly: OK');
+    await h.settle();
+    const pid = h.session(entryId).pid;
+    const spawned = h.now().getTime();
+    const t = (s: number) => new Date(spawned + s * 1000);
+    // node renames its main thread: the name differs from the spawned program, the start time matches.
+    h.proc.info.set(pid, { pid, name: 'node-MainThread', parentPid: 1, startedAt: t(0) });
+    h.proc.info.set(70_201, { pid: 70_201, name: 'bash', parentPid: pid, startedAt: t(1) });
+    h.timers.advance(10_000);
+    await h.settle();
+    expect(h.stores.processes.records()[0]?.children).toEqual([
+      { pid: 70_201, image: 'bash', startedAt: t(1).toISOString() },
+    ]);
+    // A reused PID (another start time) still lends nothing.
+    h.proc.info.set(pid, { pid, name: 'claude', parentPid: 1, startedAt: t(-3_600) });
+    h.proc.info.set(70_202, { pid: 70_202, name: 'sleep', parentPid: pid, startedAt: t(2) });
+    h.timers.advance(30_000);
+    await h.settle();
+    expect(h.stores.processes.records()[0]?.children).toEqual([
+      { pid: 70_201, image: 'bash', startedAt: t(1).toISOString() },
+    ]);
+    await h.cmd({ name: 'session.close', entryId });
+  });
+
   it('WP22-06 restart: processes of the snapshot that still run exactly as recorded are ended, the root is gone', async () => {
     const shell = { pid: 70_011, image: 'powershell.exe', startedAt: at(5).toISOString() };
     const ping = { pid: 70_012, image: 'PING.EXE', startedAt: at(6).toISOString() };

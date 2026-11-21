@@ -923,15 +923,27 @@ describe('safeHomeDir (102e)', () => {
   });
 });
 
-describe('desktopCapabilities (WP-106)', () => {
+describe('desktopCapabilities (WP-106, WP-109)', () => {
+  const never = () => {
+    throw new Error('the terminal setting is only read on Linux with the SDK backend');
+  };
+
   it('Windows: everything; the FakeBackend and other platforms keep hostCapabilities()', async () => {
-    const never = () => {
-      throw new Error('the terminal setting is only read on Linux with the SDK backend');
-    };
-    expect(await desktopCapabilities({ backend: 'sdk' }, never, 'win32')).toEqual(WINDOWS_HOST_CAPABILITIES);
-    expect(await desktopCapabilities({ backend: 'fake' }, never, 'linux')).toEqual(hostCapabilities('linux'));
-    expect(await desktopCapabilities({ backend: 'sdk' }, never, 'darwin')).toEqual(
+    expect(await desktopCapabilities({ backend: 'sdk', desktop: 'auto' }, never, 'win32')).toEqual(
+      WINDOWS_HOST_CAPABILITIES,
+    );
+    expect(await desktopCapabilities({ backend: 'fake', desktop: 'auto' }, never, 'linux')).toEqual(
+      hostCapabilities('linux'),
+    );
+    expect(await desktopCapabilities({ backend: 'sdk', desktop: 'auto' }, never, 'darwin')).toEqual(
       hostCapabilities('darwin'),
     );
+  });
+
+  it('server mode (--desktop=off): no desktop action on any platform', async () => {
+    for (const platform of ['win32', 'linux'] as const) {
+      const capabilities = await desktopCapabilities({ backend: 'sdk', desktop: 'off' }, never, platform);
+      expect(Object.values(capabilities).every((value) => !value)).toBe(true);
+    }
   });
 });

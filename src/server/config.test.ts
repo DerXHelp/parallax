@@ -35,9 +35,28 @@ describe('loadConfig', () => {
       // Production default 'auto'; this process runs under Vitest → always 'off' (R6).
       systemIntegration: 'off',
       keyStore: 'auto',
+      desktop: 'auto',
       installRoot: null,
       notes: [],
     });
+  });
+
+  it('server mode (WP-109): --desktop=off (flag over env) switches native toasts off', () => {
+    const linux = (argv: string[], vars: NodeJS.ProcessEnv = {}) =>
+      loadConfig({
+        platform: 'linux',
+        argv: ['--home=/tmp/px', ...argv],
+        env: { HOME: '/home/u', ...vars },
+        cwd: '/home/u',
+      });
+    expect(linux([])).toMatchObject({ desktop: 'auto', toasts: 'native' });
+    expect(linux(['--desktop=off'])).toMatchObject({ desktop: 'off', toasts: 'off', notes: [] });
+    expect(linux([], { PARALLAX_DESKTOP: 'off' }).desktop).toBe('off');
+    expect(linux(['--desktop=auto'], { PARALLAX_DESKTOP: 'off' }).desktop).toBe('auto');
+    const explicit = linux(['--desktop=off', '--toasts=native']);
+    expect(explicit.toasts).toBe('off');
+    expect(explicit.notes).toEqual([expect.stringMatching(/server mode has no desktop/)]);
+    expect(() => linux(['--desktop=maybe'])).toThrow(ConfigError);
   });
 
   it('key store opt-in (WP-76 §B.14): flag over env, file only on Linux', () => {

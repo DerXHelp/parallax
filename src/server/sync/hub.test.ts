@@ -1,8 +1,15 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LIMITS, type EntryId } from '@shared/common';
-import type { TranscriptItem } from '@shared/model';
-import { WS_CLOSE, parseServerMessage, type ServerMessage, type SessionOp } from '@shared/protocol';
+import type { RemotePeerLevel, TranscriptItem } from '@shared/model';
+import {
+  REMOTE_DENIED_COMMANDS,
+  REMOTE_MANAGE_COMMANDS,
+  WS_CLOSE,
+  parseServerMessage,
+  type ServerMessage,
+  type SessionOp,
+} from '@shared/protocol';
 import {
   SAMPLE_IDS,
   sampleClientHello,
@@ -19,7 +26,7 @@ import {
 import type { SessionViewState } from '@shared/sync';
 import { createServerInstance } from '../config';
 import { REPEATED_LOG_EVERY, REPEATED_LOG_FIRST, shouldLogRepeated } from '../lib/logger';
-import { HUB_LIMITS, createSyncHub, type HubSocket, type SyncHub } from './hub';
+import { HUB_LIMITS, createSyncHub, type HubSocket, type RemoteSocketAccess, type SyncHub } from './hub';
 import { createMemorySessionSource, type MemorySessionSource } from './memorySource';
 import { CommandError } from './ports';
 
@@ -965,5 +972,110 @@ describe('remote connections: closeRemote (unpair, key renewed, role left)', () 
     hub.closeRemote(WS_CLOSE.HOST_REVOKED);
     expect(local.closedWith).toBeNull();
     expect(hub.presence()).toHaveLength(1);
+  });
+});
+
+// =====================================================================================
+// WP-107: levels (docs/wp/WP-76.md §B.13) – the level of the moment decides every command
+// =====================================================================================
+
+/** A remote socket that tells the hub its coupling level (like remote/peerHttp's GuardedHubSocket). */
+class LevelSocket extends FakeSocket {
+  /** `unknown` so a test can hand the hub a value outside the schema. */
+  current: unknown = 'control';
+  readonly executed: string[] = [];
+  readonly remote: RemoteSocketAccess = {
+    level: () => this.current as RemotePeerLevel | null,
+    executed: (name) => {
+      this.executed.push(name);
+    },
+  };
+}
+
+function connectLevel(level: unknown, clientN = 31): LevelSocket {
+  const socket = new LevelSocket();
+  socket.current = level;
+  hub.handleRemoteConnection(socket, REMOTE_INFO);
+  socket.receive(sampleClientHello({ clientId: sampleId('cl', clientN) }));
+  return socket;
+}
+
+describe('remote connections: levels (WP-107)', () => {
+  it('every manage command: refused for control, let through for manage (checked at command time)', async () => {
+    // One pair of sockets per command: payload errors count towards the invalid-message limit.
+    const pairs = REMOTE_MANAGE_COMMANDS.map((name, i) => {
+      const control = connectLevel('control', 40 + 2 * i);
+      const manage = connectLevel('manage', 41 + 2 * i);
+      control.receive(cmdMessage(1, { name }));
+      manage.receive(cmdMessage(1, { name }));
+      return { name, control, manage };
+    });
+    await tick();
+    for (const { name, control, manage } of pairs) {
+      expect(ackOf(control, 1)).toMatchObject({
+        ok: false,
+        error: { code: 'REMOTE_NOT_ALLOWED', params: { command: name } },
+      });
+      // Through the level check (a payload error at most – these test commands carry no fields).
+      const ack = ackOf(manage, 1);
+      expect(ack?.ok === false ? ack.error.code : null).not.toBe('REMOTE_NOT_ALLOWED');
+    }
+    expect(source.commands.every((c) => c.ctx.access === 'manage')).toBe(true);
+  });
+
+  it('denied commands stay denied with manage; an unknown level counts as control', async () => {
+    const manage = connectLevel('manage');
+    REMOTE_DENIED_COMMANDS.forEach((name, i) => {
+      manage.receive(cmdMessage(i + 1, { name }));
+    });
+    const odd = connectLevel('root', 33);
+    odd.receive(cmdMessage(99, { name: 'settings.update', patch: {} }));
+    await tick();
+    REMOTE_DENIED_COMMANDS.forEach((name, i) => {
+      expect(ackOf(manage, i + 1)).toMatchObject({
+        ok: false,
+        error: { code: 'REMOTE_NOT_ALLOWED', params: { command: name } },
+      });
+    });
+    expect(ackOf(odd, 99)).toMatchObject({ ok: false, error: { code: 'REMOTE_NOT_ALLOWED' } });
+    expect(odd.ofType('hello')[0]?.access).toBe('control');
+    expect(source.commands).toEqual([]);
+  });
+
+  it('the level of the moment: lowered while connected → refused; a stale generation runs nothing', async () => {
+    const socket = connectLevel('manage');
+    socket.current = 'control';
+    socket.receive(cmdMessage(1, { name: 'settings.update', patch: {} }));
+    socket.current = null;
+    socket.receive(cmdMessage(2, { name: 'session.setPinned', entryId: ENTRY, pinned: true }));
+    await tick();
+    expect(ackOf(socket, 1)).toMatchObject({ ok: false, error: { code: 'REMOTE_NOT_ALLOWED' } });
+    expect(ackOf(socket, 2)).toMatchObject({ ok: false, error: { code: 'HOST_REVOKED' } });
+    expect(source.commands).toEqual([]);
+  });
+
+  it('hello.access and CommandContext.access carry the level; the command name is reported', async () => {
+    const local = connect(1);
+    const manage = connectLevel('manage');
+    const plain = connectRemote(11);
+    expect(local.ofType('hello')[0]?.access).toBe('local');
+    expect(manage.ofType('hello')[0]?.access).toBe('manage');
+    expect(plain.ofType('hello')[0]?.access).toBe('control');
+    local.receive(cmdMessage(1, { name: 'session.setPinned', entryId: ENTRY, pinned: true }));
+    manage.receive(cmdMessage(2, { name: 'session.setPinned', entryId: ENTRY, pinned: false }));
+    await tick();
+    expect(source.commands.map((c) => c.ctx.access)).toEqual([undefined, 'manage']);
+    expect(manage.executed).toEqual(['session.setPinned']);
+  });
+
+  it('manage sees the remote-access state and login links; control stays redacted', () => {
+    source.host = { ...source.host, remoteAccess: sampleRemoteAccessState({ unseenRejected: 2 }) };
+    const control = connectLevel('control');
+    const manage = connectLevel('manage', 32);
+    expect(control.ofType('host.state')[0]?.host.remoteAccess).toBeNull();
+    expect(manage.ofType('host.state')[0]?.host.remoteAccess).toEqual(source.host.remoteAccess);
+    hub.publishHostState({ ...source.host, remoteAccess: sampleRemoteAccessState({ unseenRejected: 5 }) });
+    expect(control.ofType('host.state').at(-1)?.host.remoteAccess).toBeNull();
+    expect(manage.ofType('host.state').at(-1)?.host.remoteAccess?.unseenRejected).toBe(5);
   });
 });

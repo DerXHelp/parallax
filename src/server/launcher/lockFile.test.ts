@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { SERVER_LOCK_FILE, serverLockFileSchema } from '@shared/http';
@@ -10,6 +10,7 @@ import { spawnHidden } from '../lib/process';
 import { LOCK_RETRY_DELAYS_MS, readServerLock, serverLockPath, writeServerLock } from './lockFile';
 
 const windowsOnly = process.platform === 'win32' ? it : it.skip;
+const posixOnly = process.platform === 'win32' ? it.skip : it;
 
 /** node -e: reads argv[1] every 20 ms for argv[2] ms, prints {reads, ok, missing, busy, torn}. */
 const POLLING_READER = `
@@ -64,6 +65,21 @@ describe('server lock file (C.8, ADR-015)', () => {
     expect(handle.lock).toMatchObject({ schemaVersion: 1, pid: 1234, port: 4711, launcherToken: token });
     expect(await readServerLock(home)).toEqual({ kind: 'ok', lock: handle.lock });
   });
+
+  posixOnly(
+    'WP-107: the lock file (launcher token) is 0600 on POSIX, also when it replaces a wider one',
+    async () => {
+      const home = await tempHome();
+      await writeFile(serverLockPath(home), '{}', { mode: 0o644 });
+      const handle = await writeServerLock({
+        home,
+        port: 4711,
+        instance: instance(),
+        launcherToken: sampleToken(3),
+      });
+      expect((await stat(handle.file)).mode & 0o777).toBe(0o600);
+    },
+  );
 
   it('defaults the pid to this process', async () => {
     const home = await tempHome();

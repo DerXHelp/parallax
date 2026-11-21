@@ -12,7 +12,10 @@
  *
  * Routes: only REMOTE_PATHS except `pair` (an `onRoute` allowlist refuses any other route, also
  * from `registerContent`); unknown → 404. The WebSocket upgrade exists only on REMOTE_PATHS.ws
- * (`ws`, `noServer`, no compression, `maxPayload`) and hands a guarded socket to the hub.
+ * (`ws`, `noServer`, no compression, `maxPayload`) and hands a guarded socket to the hub – with the
+ * coupling level of the moment (`level()`, null once the generation is stale) and a report of every
+ * command it runs (WP-107, §B.13) – and on REMOTE_PATHS.terminalWs (WP-107, E3), handed to
+ * `onTerminal` (refused with 404 while no terminal is attached).
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -24,14 +27,16 @@ import {
   type FastifyRequest,
 } from 'fastify';
 import type { Logger } from 'pino';
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, type WebSocket } from 'ws';
 import { LIMITS } from '@shared/common';
 import { ERROR_CATALOG, makeError, type ErrorPayload } from '@shared/errors';
 import { REMOTE_PATHS, type RemoteHealthResponse } from '@shared/http';
-import { PROTOCOL_VERSION } from '@shared/protocol';
+import type { RemotePeerLevel } from '@shared/model';
+import { PROTOCOL_VERSION, type CommandName } from '@shared/protocol';
 import type { ServerInstance } from '../config';
 import { sendError } from '../http/reply';
 import { logger as rootLogger } from '../lib/logger';
+import type { RemoteSocketAccess } from '../sync/hub';
 import { CommandError } from '../sync/ports';
 import { hasBrowserHeaders, pathOf, remoteVersionOf } from './headers';
 import { GuardedHubSocket } from './hubSocket';
@@ -71,6 +76,15 @@ export interface PeerHttpHooks {
   unpairSelf(socket: object): Promise<void>;
   /** A WebSocket of the coupled computer opened (+1) or closed (-1). */
   onWebSocket(delta: 1 | -1): void;
+  /** WP-107: the level of the current coupling (absent = `control`). */
+  level?(): RemotePeerLevel;
+  /** WP-107: the hub runs `command` for a window of the coupled computer (connection log). */
+  onCommand?(socket: object, command: CommandName): void;
+  /**
+   * WP-107 (E3): a terminal WebSocket of a proven peer socket; false = no terminal here (the upgrade
+   * is refused with 404).
+   */
+  onTerminal?(ws: WebSocket, current: () => boolean): boolean;
 }
 
 export interface PeerHttpOptions {
@@ -244,21 +258,34 @@ export async function createPeerHttp(options: PeerHttpOptions): Promise<PeerHttp
       })
     )
       return;
-    if (pathOf(req.url) !== REMOTE_PATHS.ws || req.method !== 'GET') {
-      rejectUpgrade(socket, makeError('ROUTE_NOT_FOUND', { path: pathOf(req.url).slice(0, 200) }));
+    const target = pathOf(req.url);
+    const terminal = target === REMOTE_PATHS.terminalWs && hooks.onTerminal !== undefined;
+    if ((target !== REMOTE_PATHS.ws && !terminal) || req.method !== 'GET') {
+      rejectUpgrade(socket, makeError('ROUTE_NOT_FOUND', { path: target.slice(0, 200) }));
       return;
     }
+    const current = (): boolean => hooks.isCurrent(socket);
     wss.handleUpgrade(req, socket, head, (ws) => {
-      if (!hooks.isCurrent(socket)) {
+      if (!current()) {
         ws.terminate();
+        return;
+      }
+      if (terminal) {
+        if (hooks.onTerminal?.(ws, current) !== true) ws.close(1011, 'no terminal');
         return;
       }
       hooks.onWebSocket(1);
       ws.once('close', () => {
         hooks.onWebSocket(-1);
       });
+      const access: RemoteSocketAccess = {
+        level: () => (current() ? (hooks.level?.() ?? 'control') : null),
+        executed: (command) => {
+          hooks.onCommand?.(socket, command);
+        },
+      };
       hooks.hub.handleRemoteConnection(
-        new GuardedHubSocket(ws, () => hooks.isCurrent(socket)),
+        new GuardedHubSocket(ws, current, access),
         hooks.connectionInfo(socket),
       );
     });

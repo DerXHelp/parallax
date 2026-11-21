@@ -10,6 +10,12 @@
  * browser's end closes the connection to the other computer. A browser that stops answering pings
  * is dropped, so is another computer that sends nothing (no message, no ping of its hub) for
  * `upstreamIdleMs`; a side that cannot keep up (buffered bytes) closes both like the hub does (1013).
+ *
+ * WP-107 (E3): the embedded terminal of the other computer uses the same bridge with `flow`
+ * (`bridgeTerminal`): a browser that falls behind pauses the other side's socket instead of closing
+ * (TCP then holds the other computer's terminal output, which pauses its pty reader); reading resumes
+ * below `resumeBytes`, the bridge closes with 1013 above `closeBytes` or after `pauseMaxMs` paused.
+ * Frames are never parsed nor logged (terminal input and output are private).
  */
 import type { Logger } from 'pino';
 import { WebSocket, type RawData } from 'ws';
@@ -17,6 +23,7 @@ import { makeError, type ErrorPayload } from '@shared/errors';
 import { WS_CLOSE } from '@shared/protocol';
 import { HostForwarderError } from '../hosts/ports';
 import { browserCloseCode, closeReason, forwarderErrorCloseCode } from '../hosts/windows';
+import { TERMINAL_BACKPRESSURE } from '../terminal/service';
 
 export interface BridgeLimits {
   /** Browser messages kept while the other computer is being connected (more → protocol error). */
@@ -41,10 +48,29 @@ const SLOW_CONSUMER = 1013;
 /** Normal close towards the other computer (the browser went away). */
 const NORMAL = 1000;
 
+/** WP-107: pause instead of close towards the browser (terminal output). */
+export interface BridgeFlow {
+  /** Browser backlog above which the other side's socket is paused. */
+  pauseBytes: number;
+  /** … and below which it reads again. */
+  resumeBytes: number;
+  /** Backlog that closes the bridge (1013). */
+  closeBytes: number;
+  /** Paused longer than this closes the bridge (1013). */
+  pauseMaxMs: number;
+  /** How often a paused bridge looks at the browser's backlog. */
+  pollMs: number;
+}
+
+/** The terminal's own limits (terminal/service.ts) on the forwarded path. */
+export const TERMINAL_BRIDGE_FLOW: BridgeFlow = { ...TERMINAL_BACKPRESSURE, pollMs: 50 };
+
 export interface BridgeOptions {
   /** Opens the connection to the other computer (rejects with HostForwarderError). */
   connect(signal: AbortSignal): Promise<WebSocket>;
   limits?: Partial<BridgeLimits>;
+  /** WP-107: pause the other side while the browser falls behind (absent = close at `maxBufferedBytes`). */
+  flow?: BridgeFlow;
   logger: Logger;
 }
 
@@ -75,6 +101,9 @@ export function bridgeWindow(browser: WebSocket, options: BridgeOptions): void {
   let ended = false;
   let alive = true;
   let upstreamIdle: NodeJS.Timeout | null = null;
+  /** WP-107: the poll of a paused bridge and when it paused. */
+  let pausePoll: NodeJS.Timeout | null = null;
+  let pausedSince = 0;
 
   const heartbeat = setInterval(() => {
     if (!alive) {
@@ -92,7 +121,10 @@ export function bridgeWindow(browser: WebSocket, options: BridgeOptions): void {
     ended = true;
     clearInterval(heartbeat);
     if (upstreamIdle !== null) clearTimeout(upstreamIdle);
+    if (pausePoll !== null) clearInterval(pausePoll);
     controller.abort();
+    // A paused socket would never read the other side's close frame (WP-107 `flow`).
+    if (upstream?.isPaused === true) upstream.resume();
     if (upstream !== null && upstream.readyState !== WebSocket.CLOSED) upstream.close(NORMAL);
     if (browser.readyState === WebSocket.OPEN || browser.readyState === WebSocket.CONNECTING) {
       browser.close(code, closeReason(code));
@@ -108,6 +140,35 @@ export function bridgeWindow(browser: WebSocket, options: BridgeOptions): void {
       return;
     }
     target.send(toBuffer(data), { binary });
+  };
+
+  /** WP-107 (`flow`): sends to the browser; pauses the other side while the browser falls behind. */
+  const relayPaced = (flow: BridgeFlow, source: WebSocket, data: RawData, binary: boolean): void => {
+    if (!isOpen(browser)) return;
+    browser.send(toBuffer(data), { binary });
+    const backlog = browser.bufferedAmount;
+    if (backlog > flow.closeBytes) {
+      log.warn('forwarded terminal too slow, closing');
+      end(SLOW_CONSUMER);
+      return;
+    }
+    if (backlog <= flow.pauseBytes || pausePoll !== null) return;
+    source.pause();
+    pausedSince = Date.now();
+    pausePoll = setInterval(() => {
+      if (ended) return;
+      if (browser.bufferedAmount < flow.resumeBytes) {
+        if (pausePoll !== null) clearInterval(pausePoll);
+        pausePoll = null;
+        source.resume();
+        return;
+      }
+      if (Date.now() - pausedSince > flow.pauseMaxMs) {
+        log.warn('forwarded terminal paused too long, closing');
+        end(SLOW_CONSUMER);
+      }
+    }, flow.pollMs);
+    pausePoll.unref();
   };
 
   browser.on('pong', () => {
@@ -152,7 +213,9 @@ export function bridgeWindow(browser: WebSocket, options: BridgeOptions): void {
       ws.on('ping', heard);
       ws.on('message', (data: RawData, binary: boolean) => {
         heard();
-        if (!ended) relay(browser, data, binary);
+        if (ended) return;
+        if (options.flow === undefined) relay(browser, data, binary);
+        else relayPaced(options.flow, ws, data, binary);
       });
       ws.on('close', (code: number) => {
         end(browserCloseCode(ws, code));
@@ -170,4 +233,12 @@ export function bridgeWindow(browser: WebSocket, options: BridgeOptions): void {
       end(forwarderErrorCloseCode(failure.code));
     },
   );
+}
+
+/** WP-107 (E3): a forwarded terminal connection (`bridgeWindow` with `flow`). */
+export function bridgeTerminal(
+  browser: WebSocket,
+  options: Omit<BridgeOptions, 'flow'> & { flow?: BridgeFlow },
+): void {
+  bridgeWindow(browser, { ...options, flow: options.flow ?? TERMINAL_BRIDGE_FLOW });
 }

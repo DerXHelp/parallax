@@ -105,7 +105,8 @@ import { createMultiHostService } from '../multihost/service';
 import type { RemoteHubAttach } from '../remote/ports';
 import { createRemoteAccessService, type RemoteAccess } from '../remote/service';
 import type { KeyStore } from '../secure/ports';
-import { createDpapiKeyStore } from '../secure/keyStore';
+import { createPlatformKeyStore, type PlatformKeyStore } from '../secure/platformKeyStore';
+import { narrowPrivateDir } from '../secure/privateFiles';
 import { createDecisionStore } from '../store/decisions';
 import { StoreVersionTooNewError, createStoreWarnings, type StoreWarningRegistry } from '../store/jsonStore';
 import { openRegistryStore } from '../store/registry';
@@ -320,13 +321,25 @@ const NO_CONSOLE_WINDOW: ConsoleLauncher = {
 /**
  * `HostState.capabilities` (WP-103/106): Windows everything; Linux with the SDK backend what the
  * desktop offers (`linuxDesktopCapabilities`); the FakeBackend (dev, E2E) and other platforms keep
- * `hostCapabilities()`.
+ * `hostCapabilities()`; server mode (`--desktop=off`) nothing.
  */
+const NO_DESKTOP_CAPABILITIES: HostCapabilities = {
+  desktop: false,
+  externalConsole: false,
+  shellWindow: false,
+  editor: false,
+  fileManager: false,
+  autostart: false,
+  protocolHandler: false,
+};
+
 export async function desktopCapabilities(
-  config: Pick<ServerConfig, 'backend'>,
+  config: Pick<ServerConfig, 'backend' | 'desktop'>,
   terminalEmulator: () => string | null,
   platform: NodeJS.Platform = process.platform,
 ): Promise<HostCapabilities> {
+  // Server mode (WP-109): no desktop actions at all – other computers steer this one.
+  if (config.desktop === 'off') return { ...NO_DESKTOP_CAPABILITIES };
   if (platform !== 'linux' || config.backend === 'fake') return hostCapabilities(platform);
   return linuxDesktopCapabilities({ terminalEmulator: terminalEmulator() });
 }
@@ -510,7 +523,8 @@ async function createEngine(
   return {
     backend: createSdkBackend(),
     claude: createClaudeIntegration({ appVersion: instance.serverVersion, profiles }),
-    consoleLauncher: createPlatformConsoleLauncher({ terminalEmulator }),
+    // Server mode (WP-109): no console window (EXTERNAL_CONSOLE_FAILED {reason: 'unavailable'}).
+    consoleLauncher: config.desktop === 'off' ? null : createPlatformConsoleLauncher({ terminalEmulator }),
   };
 }
 
@@ -538,6 +552,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   let stores: Stores;
   try {
     stores = await openStores(config, instance, log);
+    // WP-107/109 (WP-76 §B.14): on POSIX the data folder is the user's alone (keys, tokens, sessions).
+    await narrowPrivateDir(config.home);
   } catch (error) {
     if (error instanceof StoreVersionTooNewError) {
       throw new StartupError(SERVER_EXIT_CODES.storeVersionTooNew, error.message, { cause: error });
@@ -561,6 +577,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   let restarting = false;
   /** WP-78a: remote access of a sharing computer and the role of "Several computers". */
   let remoteAccess: RemoteAccess | null = null;
+  let ownKeyStore: PlatformKeyStore | null = null;
   let multiHost: MultiHostService | null = null;
   /** WP-79: the computers this one controls (list, watchers, forwarder). */
   let controlHosts: Hosts | null = null;
@@ -620,6 +637,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         // WP-79: forwarder windows and watchers go before the http step (idempotent).
         await controlHosts?.close();
         await remoteAccess?.close();
+        // WP-107: the Secret Service worker of the key store.
+        ownKeyStore?.close();
       },
     },
     { name: 'http', run: () => app?.close() },
@@ -756,8 +775,11 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       },
     };
     const loggerOption = options.logger === undefined ? {} : { logger: options.logger };
-    // One key store for both sides (DPAPI helper queue, one probe).
-    const keyStore = options.keyStore ?? createDpapiKeyStore(loggerOption);
+    // One key store for both sides (WP-107, WP-76 §B.14: Windows DPAPI; Linux Secret Service, then
+    // systemd-creds, the 0600 file only with `--key-store=file`).
+    const keyStore =
+      options.keyStore ??
+      (ownKeyStore = createPlatformKeyStore({ home: config.home, mode: config.keyStore, ...loggerOption }));
     const share = createRemoteAccessService({
       home: config.home,
       instance,
@@ -825,6 +847,9 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       ...loggerOption,
     });
     terminals = terminalService;
+    // WP-107 (E3): terminals of the coupled computer through the relay; unpairing, a level change,
+    // "Share off" … end them (`closeRemote`).
+    share.attachTerminal(terminalService);
     // WP-106: what the desktop of this host offers, probed once at the start (Linux: terminal
     // emulator, xdg-open, gdbus, xdg-mime; never hangs).
     const capabilities = await desktopCapabilities(
@@ -1015,8 +1040,11 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       // WP-79: forwarder routes `/api/hosts/:hostId/{ws,blob,file,attachments}` (same cookie/origin
       // guards as every route; windows of it close with AUTH_REVOKED on a new launcher code).
       hosts,
-      // WP-99: GET /api/terminal/ws (guard class `ws`; never forwarded to or from another computer).
+      // WP-99: GET /api/terminal/ws (guard class `ws`); WP-107: a coupled computer reaches it only
+      // through the relay (REMOTE_PATHS.terminalWs of the remote-access listener).
       terminal: terminalService,
+      // WP-107: `parallax remote …` (launcher token, guard class `launcher`), as the local user.
+      launcherRemote: sessions,
       closeCode: () => (restarting ? WS_CLOSE.SERVER_RESTARTING : WS_CLOSE.SERVER_SHUTDOWN),
       webRoot,
     });

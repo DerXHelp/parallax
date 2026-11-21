@@ -131,11 +131,14 @@ export interface LauncherDeps {
   startServer(args: readonly string[]): Promise<StartedServer>;
   /** server.out.log since `offset` (the started server's own output). */
   readServerOutput(offset: number): Promise<string>;
-  /** Absolute chrome.exe (lib/chrome.ts `findChrome`) or null. */
+  /** Absolute Chrome (Windows `findChrome`, Linux Chrome or Chromium – lib/chrome.ts) or null. */
   locateChrome(): Promise<string | null>;
   openChrome(chromePath: string, args: readonly string[]): Promise<{ pid: number | null }>;
-  /** WP22-03: Web Notifications allowed for `origin` in the own Chrome profile (never throws). */
-  allowNotifications(home: string, origin: string): Promise<NotificationGrant>;
+  /**
+   * WP22-03: Web Notifications allowed for `origin` in the own Chrome profile (never throws);
+   * `chrome` picks the profile (WP-106: Snap Chromium keeps it in its own folder).
+   */
+  allowNotifications(home: string, origin: string, chrome: string): Promise<NotificationGrant>;
   sleep(ms: number): Promise<void>;
   now(): number;
   /** One line of console output. */
@@ -614,24 +617,28 @@ async function openWindow(
   // ADR-136: Chrome only – no fallback to another browser; --print-url stays the way out.
   const chrome = await deps.locateChrome();
   if (chrome === null) {
+    const searched =
+      process.platform === 'win32'
+        ? 'Google Chrome was not found (App Paths in HKCU/HKLM, Program Files, %LOCALAPPDATA%)'
+        : 'Neither Google Chrome nor Chromium was found (google-chrome-stable, google-chrome, chromium, ' +
+          'chromium-browser on the PATH, /snap/bin/chromium)';
     throw new LauncherError(
       'chrome_not_found',
-      `Google Chrome was not found (App Paths in HKCU/HKLM, Program Files, %LOCALAPPDATA%). The Parallax ` +
-        `server runs on port ${String(lock.port)} (PID ${String(lock.pid)}). Install Google Chrome, or start ` +
-        'the launcher with --print-url and open the printed address in a Chromium-based browser within ' +
-        '60 seconds.',
+      `${searched}. The Parallax server runs on port ${String(lock.port)} (PID ${String(lock.pid)}). Install ` +
+        'Google Chrome, or start the launcher with --print-url and open the printed address in a ' +
+        'Chromium-based browser within 60 seconds.',
     );
   }
   // WP22-03: the app window cannot show Chrome's permission prompt – allow the own origin up front.
-  const grant = await deps.allowNotifications(options.home, serverOrigin(lock.port));
+  const grant = await deps.allowNotifications(options.home, serverOrigin(lock.port), chrome);
   if (grant.kind === 'skipped') {
     deps.out(
       `Note: notifications could not be allowed in the Parallax Chrome profile (${grant.reason}); ` +
-        'Parallax uses Windows notifications instead.',
+        'Parallax uses the system notifications instead.',
     );
   }
   try {
-    const { pid } = await deps.openChrome(chrome, chromeAppArgs({ home: options.home, url }));
+    const { pid } = await deps.openChrome(chrome, chromeAppArgs({ home: options.home, url, chrome }));
     return { ...base, url: null, chromePid: pid, window: true };
   } catch (error) {
     throw new LauncherError(
@@ -705,7 +712,7 @@ export function createNodeLauncherDeps(options: NodeLauncherDepsOptions): Launch
     locateChrome: () => locateChrome(env),
     openChrome: (chromePath, args) =>
       openChromeWindow(chromePath, args, options.spawnChrome, workDir ?? undefined),
-    allowNotifications: (home, origin) => grantChromeNotifications(home, origin),
+    allowNotifications: (home, origin, chrome) => grantChromeNotifications(home, origin, { chrome, env }),
     sleep,
     now: () => Date.now(),
     out: options.out ?? ((line) => process.stdout.write(`${line}\n`)),

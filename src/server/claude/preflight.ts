@@ -16,7 +16,7 @@ import path from 'node:path';
 import type { ErrorPayload } from '@shared/errors';
 import type { ClaudeInstallStatus, Profile, ProfileIssue } from '@shared/model';
 import { pathFlavorOf, pathRules } from '@shared/paths';
-import { findChrome, readExeVersion } from '../lib/chrome';
+import { findChrome, findChromeLinux, readChromeVersion, readExeVersion } from '../lib/chrome';
 import type { FsOps } from '../lib/fs';
 import { errnoCode, runFile, type RunFileFn } from '../lib/process';
 import { parseRegValues, regKeyQuery, regQuery, type RegKeyQuery, type RegQuery } from '../lib/registry';
@@ -389,8 +389,22 @@ export async function chromePolicyValues(
   return values;
 }
 
-export function checkChrome(chrome: { path: string; version: string | null } | null): PreflightCheck {
+export function checkChrome(
+  chrome: { path: string; version: string | null } | null,
+  platform: NodeJS.Platform = 'win32',
+): PreflightCheck {
   const base = { id: 'chrome', title: 'chrome' };
+  if (chrome === null && platform !== 'win32') {
+    // WP-109: a server without desktop opens no window – other computers steer it.
+    return {
+      ...base,
+      level: 'warn',
+      detail: 'not found',
+      hint:
+        'On a desktop Parallax opens its window with Google Chrome or Chromium - install one. The server ' +
+        'mode (parallax --server) needs neither.',
+    };
+  }
   if (chrome === null) {
     return {
       ...base,
@@ -580,10 +594,22 @@ export async function runPreflight(deps: PreflightDeps): Promise<PreflightReport
     }
   }
 
-  const chrome = await findChrome({ regQuery: deps.regQuery ?? regQuery(run), fs, env: deps.env });
-  const chromeVersion = chrome === null ? null : await (deps.exeVersion ?? readExeVersion)(chrome);
-  checks.push(checkChrome(chrome === null ? null : { path: chrome, version: chromeVersion }));
-  checks.push(checkChromePolicies(await chromePolicyValues(deps.regKeyQuery ?? regKeyQuery(run))));
+  // WP-106/109: Windows Chrome from the registry (version resource, never started); Linux Chrome or
+  // Chromium from the PATH or the Snap (`--version`). Chrome policies only from the Windows registry.
+  const chrome =
+    platform === 'win32'
+      ? await findChrome({ regQuery: deps.regQuery ?? regQuery(run), fs, env: deps.env })
+      : await findChromeLinux({ fs, env: deps.env });
+  const chromeVersion =
+    chrome === null
+      ? null
+      : platform === 'win32'
+        ? await (deps.exeVersion ?? readExeVersion)(chrome)
+        : await (deps.exeVersion ?? ((file: string) => readChromeVersion(file, platform, run)))(chrome);
+  checks.push(checkChrome(chrome === null ? null : { path: chrome, version: chromeVersion }, platform));
+  if (platform === 'win32') {
+    checks.push(checkChromePolicies(await chromePolicyValues(deps.regKeyQuery ?? regKeyQuery(run))));
+  }
   const home = deps.home ?? null;
   if (home !== null) {
     checks.push(checkHomeLocation(home, getEnvVar(deps.env, 'LOCALAPPDATA', platform), platform));

@@ -379,3 +379,78 @@ describe('settings section "Several computers" (WP-78b)', () => {
     expect(await within(dialog).findByRole('radio', { name: 'Share' })).toBeTruthy();
   });
 });
+
+describe('access of the pairing (WP-107, WP-76 §B.13)', () => {
+  it('the access is chosen before the code shows; the card and the paired computer name it', async () => {
+    const user = userEvent.setup();
+    const { fake } = await start('share');
+    const choice = document.querySelector<HTMLElement>('[data-slot="pairing-level-choice"]');
+    if (choice === null) throw new Error('no level choice');
+    expect(within(choice).getByRole('radio', { name: 'Control' }).getAttribute('aria-checked')).toBe('true');
+    expect(within(choice).getByText(/Only needed when this computer runs without a desktop/)).toBeTruthy();
+    await user.click(within(choice).getByRole('radio', { name: 'Manage' }));
+    await user.click(screen.getByRole('button', { name: 'Pair a computer' }));
+    const card = await screen.findByRole('group', { name: 'Pairing code' });
+    expect(fake.calls).toContain('pair:manage');
+    expect(card.querySelector('[data-slot="pairing-level"]')?.textContent).toBe('Manage');
+    act(() => {
+      fake.completePairing('Computer A');
+    });
+    expect(await screen.findByText('Paired with Computer A.')).toBeTruthy();
+    expect(part('peer').querySelector('[data-slot="peer-level"]')?.textContent).toBe('Manage');
+  });
+
+  it('the default stays control (plain `pair`)', async () => {
+    const user = userEvent.setup();
+    const { fake } = await start('share');
+    await user.click(screen.getByRole('button', { name: 'Pair a computer' }));
+    const card = await screen.findByRole('group', { name: 'Pairing code' });
+    expect(fake.calls).toContain('pair');
+    expect(card.querySelector('[data-slot="pairing-level"]')?.textContent).toBe('Control');
+  });
+
+  it('changes the access of the paired computer after asking, both ways', async () => {
+    const user = userEvent.setup();
+    const { fake } = await start('paired');
+    const peer = part('peer');
+    expect(peer.querySelector('[data-slot="peer-level"]')?.textContent).toBe('Control');
+
+    await user.click(within(peer).getByRole('button', { name: 'Allow managing…' }));
+    const raise = peer.querySelector<HTMLElement>('[data-slot="peer-confirm"]');
+    expect(raise?.getAttribute('data-confirm')).toBe('level');
+    expect(raise?.textContent).toContain('Let Computer A manage this computer?');
+    expect(raise?.textContent).toContain('environment values');
+    // The harmless choice has the focus; "Cancel" sends nothing.
+    expect(document.activeElement?.textContent).toBe('Cancel');
+    await user.click(within(raise ?? peer).getByRole('button', { name: 'Cancel' }));
+    expect(fake.calls.some((call) => call.startsWith('setPeerLevel'))).toBe(false);
+
+    await user.click(within(peer).getByRole('button', { name: 'Allow managing…' }));
+    await user.click(within(peer).getByRole('button', { name: 'Allow managing' }));
+    expect(await within(peer).findByText('The access was changed.')).toBeTruthy();
+    expect(fake.calls).toContain('setPeerLevel:manage');
+    expect(peer.querySelector('[data-slot="peer-level"]')?.textContent).toBe('Manage');
+
+    await user.click(within(peer).getByRole('button', { name: 'Control only…' }));
+    expect(peer.querySelector('[data-slot="peer-confirm"]')?.textContent).toContain(
+      'Let Computer A only control this computer?',
+    );
+    await user.click(within(peer).getByRole('button', { name: 'Control only' }));
+    await waitFor(() => {
+      expect(fake.calls).toContain('setPeerLevel:control');
+    });
+    expect(peer.querySelector('[data-slot="peer-level"]')?.textContent).toBe('Control');
+  });
+
+  it('a refused change shows the error in the panel and keeps the access', async () => {
+    const user = userEvent.setup();
+    const { fake } = await start('paired');
+    fake.failNext('setPeerLevel', makeError('REMOTE_ACCESS_FAILED', { reason: 'store' }));
+    const peer = part('peer');
+    await user.click(within(peer).getByRole('button', { name: 'Allow managing…' }));
+    await user.click(within(peer).getByRole('button', { name: 'Allow managing' }));
+    const alert = await within(peer).findByRole('alert');
+    expect(alert.textContent).toContain('The action failed.');
+    expect(peer.querySelector('[data-slot="peer-level"]')?.textContent).toBe('Control');
+  });
+});

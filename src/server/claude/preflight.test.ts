@@ -171,6 +171,10 @@ describe('rating', () => {
 
   it('rates Chrome (path and version) and computes the exit code', () => {
     expect(checkChrome(null).level).toBe('fail');
+    // WP-109: on Linux a missing browser only warns (the server mode needs none).
+    const linux = checkChrome(null, 'linux');
+    expect(linux.level).toBe('warn');
+    expect(linux.hint).toMatch(/--server/);
     expect(checkChrome({ path: 'C:\\c\\chrome.exe', version: '156.0.8078.76' })).toEqual({
       id: 'chrome',
       title: 'chrome',

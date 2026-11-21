@@ -89,6 +89,12 @@ describe('classifyRequest (by matched route pattern, default-deny)', () => {
     ['HEAD', HOST_API_PATHS.ws, 'ws'],
     ['POST', HOST_API_PATHS.attachments, 'mutation'],
     ['GET', HOST_API_PATHS.attachments, 'mutation'],
+    // WP-107: the terminal of another computer like the local one; `parallax remote` like the code
+    ['GET', HOST_API_PATHS.terminalWs, 'ws'],
+    ['HEAD', HOST_API_PATHS.terminalWs, 'ws'],
+    ['POST', HOST_API_PATHS.terminalWs, 'mutation'],
+    ['POST', API_PATHS.launcherRemote, 'launcher'],
+    ['GET', API_PATHS.launcherRemote, 'mutation'],
     // a future route that is not in the table is protected automatically
     ['GET', '/api/files', 'mutation'],
     ['GET', '/api/blob/:blobId/raw', 'mutation'],
@@ -268,6 +274,16 @@ describe('checkRequest (architecture §5.1)', () => {
     expect(check('POST', '/api/launcher/code', { origin: ORIGIN })).toMatchObject(rejected('origin'));
     expect(check('POST', '/api/launcher/code', { origin: 'null' })).toMatchObject(rejected('origin-null'));
     expect(check('POST', '/api/launcher/code', { 'sec-fetch-site': 'same-origin' })).toMatchObject(
+      rejected('sec-fetch-site'),
+    );
+    // WP-107: `parallax remote …` – the same rules (a browser page can never reach it).
+    expect(check('POST', API_PATHS.launcherRemote, {})).toEqual({
+      ok: true,
+      route: 'launcher',
+      needsCookie: false,
+    });
+    expect(check('POST', API_PATHS.launcherRemote, { origin: ORIGIN })).toMatchObject(rejected('origin'));
+    expect(check('POST', API_PATHS.launcherRemote, { 'sec-fetch-site': 'same-origin' })).toMatchObject(
       rejected('sec-fetch-site'),
     );
   });

@@ -23,9 +23,10 @@ import { SETTINGS_FILE } from './store/settings';
  *
  * Flags: `--dev`, `--backend=fake|sdk`, `--port=<0..65535>`, `--host=127.0.0.1`, `--home=<dir>`,
  * `--log-level=<level>`, `--validate=off|log|throw`, `--toasts=native|off`,
- * `--system-integration=auto|on|off`, `--key-store=auto|file`. Env: `PARALLAX_HOME`, `PARALLAX_PORT` (0 = any
- * free port), `PARALLAX_HOST`, `PARALLAX_BACKEND`, `PARALLAX_DEV` (`1`/`true`), `PARALLAX_LOG_LEVEL`,
- * `PARALLAX_VALIDATE`, `PARALLAX_TOASTS`, `PARALLAX_SYSTEM_INTEGRATION`, `PARALLAX_KEY_STORE`.
+ * `--system-integration=auto|on|off`, `--key-store=auto|file`, `--desktop=auto|off`. Env: `PARALLAX_HOME`,
+ * `PARALLAX_PORT` (0 = any free port), `PARALLAX_HOST`, `PARALLAX_BACKEND`, `PARALLAX_DEV` (`1`/`true`),
+ * `PARALLAX_LOG_LEVEL`, `PARALLAX_VALIDATE`, `PARALLAX_TOASTS`, `PARALLAX_SYSTEM_INTEGRATION`,
+ * `PARALLAX_KEY_STORE`, `PARALLAX_DESKTOP`.
  *
  * The bind address is always 127.0.0.1 (Plan "Sicherheit", A.8; R1-05, ADR-023): `--host` /
  * `PARALLAX_HOST` stay accepted for ADR-006 compatibility, every other value is a ConfigError –
@@ -93,6 +94,15 @@ export type SystemIntegrationMode = z.infer<typeof systemIntegrationModeSchema>;
 export const keyStoreModeSchema = z.enum(['auto', 'file']);
 export type KeyStoreMode = z.infer<typeof keyStoreModeSchema>;
 
+/**
+ * Desktop of this server (WP-109, WP-100 §5.8): `auto` = what the session offers (Windows always;
+ * Linux with `DISPLAY`/`WAYLAND_DISPLAY`); `off` = server mode (`parallax --server`, systemd, SSH): no
+ * desktop actions (console window, editor, file manager, autostart, `parallax:`), no native toasts –
+ * other computers steer it. Flag `--desktop`, env `PARALLAX_DESKTOP`.
+ */
+export const desktopModeSchema = z.enum(['auto', 'off']);
+export type DesktopMode = z.infer<typeof desktopModeSchema>;
+
 export interface ServerConfig {
   dev: boolean;
   backend: BackendKind;
@@ -113,6 +123,8 @@ export interface ServerConfig {
   systemIntegration: SystemIntegrationMode;
   /** WP-76 §B.14: `file` = the opt-in for the 0600 key file on Linux (WP-107). */
   keyStore: KeyStoreMode;
+  /** WP-109: `off` = server mode without desktop actions and native toasts. */
+  desktop: DesktopMode;
   /**
    * WP-86 `--install-root=<dir>`: root folder of the installation this server runs from (the
    * launcher passes it on in package mode; start.mjs, autostart and protocol handler point there).
@@ -303,6 +315,7 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
         'system-integration': { type: 'string' },
         'install-root': { type: 'string' },
         'key-store': { type: 'string' },
+        desktop: { type: 'string' },
       },
       strict: true,
       allowPositionals: false,
@@ -390,6 +403,9 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
     throw new ConfigError('the file key store exists only on Linux - Windows uses DPAPI');
   }
 
+  const desktopRaw = flag('desktop') ?? nonEmpty(env.PARALLAX_DESKTOP);
+  const desktop = desktopRaw === undefined ? 'auto' : parseOrThrow(desktopModeSchema, desktopRaw, 'desktop');
+
   const installRootRaw = flag('install-root');
   const installRoot = installRootRaw === undefined ? null : paths.resolve(cwd, installRootRaw);
   if (installRoot !== null) {
@@ -410,13 +426,19 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
   let toasts: ToastMode =
     toastsRaw !== undefined
       ? parseOrThrow(toastModeSchema, toastsRaw, 'toasts')
-      : NATIVE_TOAST_PLATFORMS.has(platform) && env.VITEST === undefined && env.NODE_ENV !== 'test'
+      : NATIVE_TOAST_PLATFORMS.has(platform) &&
+          desktop === 'auto' &&
+          env.VITEST === undefined &&
+          env.NODE_ENV !== 'test'
         ? 'native'
         : 'off';
   // Native toasts are Windows toasts and Linux desktop notifications (lib/toast.ts); elsewhere the
   // browser notifications stay.
   if (toasts === 'native' && !NATIVE_TOAST_PLATFORMS.has(platform)) {
     notes.push('native toasts exist only on Windows and Linux - toasts are off');
+    toasts = 'off';
+  } else if (toasts === 'native' && desktop === 'off') {
+    notes.push('server mode has no desktop - native toasts are off');
     toasts = 'off';
   }
 
@@ -432,6 +454,7 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
     logLevel,
     systemIntegration,
     keyStore,
+    desktop,
     installRoot,
     notes,
   };

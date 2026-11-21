@@ -1,13 +1,20 @@
 import { LinkIcon, LoaderCircleIcon } from 'lucide-react';
 import { Fragment, useId, useState } from 'react';
 import type { ErrorPayload } from '@shared/errors';
-import type { RemoteAccessState } from '@shared/model';
+import {
+  REMOTE_PEER_LEVELS,
+  remotePeerLevelSchema,
+  type RemoteAccessState,
+  type RemotePeerLevel,
+} from '@shared/model';
 import { PAIRING_MAX_FAILURES, PAIRING_WINDOW_MS } from '@shared/pairing';
-import { useI18n } from '@web/i18n';
+import { useI18n, useT } from '@web/i18n';
 import { useNow, useNowUntil } from '@web/state/clock';
 import { errorPayloadOf } from '@web/state/connection';
 import { Alert } from '@web/ui/alert';
 import { Button } from '@web/ui/button';
+import { Label } from '@web/ui/label';
+import { RadioGroup, RadioGroupItem } from '@web/ui/radio-group';
 import { countdownText, minutesLeft, pairingGroups, secondsLeft } from '../../lib/multi-host';
 import { useMultiHostCommands, type PairingWindow } from './commands';
 import { Part } from './Part';
@@ -18,6 +25,8 @@ interface ShownCode extends PairingWindow {
   peerAt: string | null;
   /** HostState showed this window open at least once (only then does "closed" mean something). */
   seenOpen: boolean;
+  /** WP-107: the access the computer that types this code gets (chosen before the code showed). */
+  level: RemotePeerLevel;
 }
 
 type Notice =
@@ -82,6 +91,10 @@ function CodeCard({ shown, busy, onCancel }: { shown: ShownCode; busy: boolean; 
         <dd data-slot="pairing-port" className="font-mono">
           {String(shown.port)}
         </dd>
+        <dt className="text-muted-foreground">{t('preferences.multiHost.share.pairing.levelOnCard')}</dt>
+        <dd data-slot="pairing-level" data-level={shown.level}>
+          {t(`preferences.multiHost.levels.${shown.level}`)}
+        </dd>
       </dl>
       <div>
         <Button variant="outline" size="sm" data-action="pairing-cancel" disabled={busy} onClick={onCancel}>
@@ -93,8 +106,61 @@ function CodeCard({ shown, busy, onCancel }: { shown: ShownCode; busy: boolean; 
 }
 
 /**
+ * WP-107 (WP-76 §B.13): the access a new pairing gets – chosen here before the code shows, never
+ * by the other computer. "Manage" is meant for a computer without a desktop of its own.
+ */
+function LevelChoice({
+  level,
+  disabled,
+  onChange,
+}: {
+  level: RemotePeerLevel;
+  disabled: boolean;
+  onChange: (level: RemotePeerLevel) => void;
+}) {
+  const t = useT();
+  const id = useId();
+  return (
+    <div className="grid gap-2">
+      <p id={id} className="text-xs font-medium">
+        {t('preferences.multiHost.share.pairing.level')}
+      </p>
+      <RadioGroup
+        data-slot="pairing-level-choice"
+        aria-labelledby={id}
+        value={level}
+        disabled={disabled}
+        onValueChange={(value) => {
+          const parsed = remotePeerLevelSchema.safeParse(value);
+          if (parsed.success) onChange(parsed.data);
+        }}
+      >
+        {REMOTE_PEER_LEVELS.map((option) => (
+          <div key={option} className="flex items-start gap-2">
+            <RadioGroupItem
+              id={`${id}-${option}`}
+              value={option}
+              aria-describedby={`${id}-${option}-hint`}
+              className="mt-0.5"
+            />
+            <div className="grid gap-0.5">
+              <Label htmlFor={`${id}-${option}`} className="font-normal">
+                {t(`preferences.multiHost.levels.${option}`)}
+              </Label>
+              <p id={`${id}-${option}-hint`} className="text-muted-foreground text-2xs leading-relaxed">
+                {t(`preferences.multiHost.levels.${option}Hint`)}
+              </p>
+            </div>
+          </div>
+        ))}
+      </RadioGroup>
+    </div>
+  );
+}
+
+/**
  * "Pair a computer" (`remoteAccess.pair`, WP-76 §B.7): the code comes only in the ack and stays in
- * this component (never in the store). A new pairing replaces an existing one only after asking;
+ * this component (never in the store). WP-107: with the chosen access (`level`). A new pairing replaces an existing one only after asking;
  * the window ends by success (newer `peer.pairedAt`), expiry, "Cancel" (`cancelPairing`) or the
  * server closing it (too many wrong codes). A window opened by another local window shows without
  * a code and can be replaced or cancelled.
@@ -107,6 +173,7 @@ export function PairingPanel({ state }: { state: RemoteAccessState }) {
   const [error, setError] = useState<ErrorPayload | null>(null);
   const [confirmReplace, setConfirmReplace] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [level, setLevel] = useState<RemotePeerLevel>('control');
   // Re-renders exactly when a window expires (the card ticks on its own).
   const now = useNowUntil([shown?.expiresAt, state.pairingExpiresAt]);
   const peer = state.peer;
@@ -135,11 +202,12 @@ export function PairingPanel({ state }: { state: RemoteAccessState }) {
     setError(null);
     setNotice(null);
     const peerAt = peer?.pairedAt ?? null;
+    const chosen = level;
     commands
-      .pair()
+      .pair(chosen)
       .then(
         (result) => {
-          setShown({ ...result, peerAt, seenOpen: false });
+          setShown({ ...result, peerAt, seenOpen: false, level: chosen });
         },
         (caught: unknown) => {
           setError(errorPayloadOf(caught));
@@ -268,22 +336,25 @@ export function PairingPanel({ state }: { state: RemoteAccessState }) {
           })}
         </Alert>
       ) : (
-        <div>
-          <Button
-            variant="outline"
-            data-action="pairing-start"
-            disabled={busy !== null || confirmReplace || !state.listening}
-            onClick={start}
-          >
-            {busy === 'pair' ? (
-              <LoaderCircleIcon aria-hidden className="motion-safe:animate-spin" />
-            ) : (
-              <LinkIcon aria-hidden />
-            )}
-            {busy === 'pair'
-              ? t('preferences.multiHost.share.pairing.starting')
-              : t('preferences.multiHost.share.pairing.start')}
-          </Button>
+        <div className="grid gap-3">
+          <LevelChoice level={level} disabled={busy !== null || confirmReplace} onChange={setLevel} />
+          <div>
+            <Button
+              variant="outline"
+              data-action="pairing-start"
+              disabled={busy !== null || confirmReplace || !state.listening}
+              onClick={start}
+            >
+              {busy === 'pair' ? (
+                <LoaderCircleIcon aria-hidden className="motion-safe:animate-spin" />
+              ) : (
+                <LinkIcon aria-hidden />
+              )}
+              {busy === 'pair'
+                ? t('preferences.multiHost.share.pairing.starting')
+                : t('preferences.multiHost.share.pairing.start')}
+            </Button>
+          </div>
         </div>
       )}
     </Part>
