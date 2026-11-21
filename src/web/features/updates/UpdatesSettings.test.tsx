@@ -496,7 +496,7 @@ describe('UpdatesSettings: install from file', () => {
     const alert = await screen.findByRole('alert');
     expect(within(alert).getByText('The package could not be installed.')).toBeTruthy();
     expect(within(alert).getByText('This is not a valid Parallax package.')).toBeTruthy();
-    expect(within(alert).getByText('The file is not a readable zip archive.')).toBeTruthy();
+    expect(within(alert).getByText('The file is not a readable package archive.')).toBeTruthy();
   });
 });
 

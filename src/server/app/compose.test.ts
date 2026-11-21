@@ -813,7 +813,10 @@ describe('startServer: Phase-3 wiring (WP-60)', () => {
 
     // FakeBackend → recording opener: logs, starts nothing. VS Code is a preset on both platforms (the
     // default Notepad++ opens like the default program on Linux, which refuses `.ts`).
-    await run({ name: 'settings.update', patch: { editor: { preset: 'vscode', executable: null, args: [] } } });
+    await run({
+      name: 'settings.update',
+      patch: { editor: { preset: 'vscode', executable: null, args: [] } },
+    });
     await run({ name: 'file.open', entryId, path: appPath, target: 'editor', line: 12, col: null });
     await run({ name: 'file.open', entryId, path: project, target: 'explorer', line: null, col: null });
     const opened = lines
@@ -930,12 +933,12 @@ describe('desktopCapabilities (WP-106, WP-109)', () => {
     throw new Error('the terminal setting is only read on Linux with the SDK backend');
   };
 
-  it('Windows: everything; the FakeBackend and other platforms keep hostCapabilities()', async () => {
+  it('Windows: everything; the FakeBackend everything (it only records); other platforms hostCapabilities()', async () => {
     expect(await desktopCapabilities({ backend: 'sdk', desktop: 'auto' }, never, 'win32')).toEqual(
       WINDOWS_HOST_CAPABILITIES,
     );
     expect(await desktopCapabilities({ backend: 'fake', desktop: 'auto' }, never, 'linux')).toEqual(
-      hostCapabilities('linux'),
+      WINDOWS_HOST_CAPABILITIES,
     );
     expect(await desktopCapabilities({ backend: 'sdk', desktop: 'auto' }, never, 'darwin')).toEqual(
       hostCapabilities('darwin'),

@@ -47,7 +47,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Logger } from 'pino';
 import type { EntryId, ProfileId } from '@shared/common';
 import { REMOTE_PATHS, serverOrigin } from '@shared/http';
-import type { HostCapabilities, Settings } from '@shared/model';
+import { WINDOWS_HOST_CAPABILITIES, type HostCapabilities, type Settings } from '@shared/model';
 import { WS_CLOSE, type SessionOp } from '@shared/protocol';
 import { createFakeBackend } from '../backend/fakeBackend';
 import { createFakeClaudeIntegration } from '../backend/fake/integration';
@@ -340,7 +340,10 @@ export async function desktopCapabilities(
 ): Promise<HostCapabilities> {
   // Server mode (WP-109): no desktop actions at all – other computers steer this one.
   if (config.desktop === 'off') return { ...NO_DESKTOP_CAPABILITIES };
-  if (platform !== 'linux' || config.backend === 'fake') return hostCapabilities(platform);
+  // The FakeBackend records every desktop action (nothing opens): it offers all of them on every
+  // platform, so dev and E2E see the whole UI also on Linux without a desktop (WP-109).
+  if (config.backend === 'fake') return { ...WINDOWS_HOST_CAPABILITIES };
+  if (platform !== 'linux') return hostCapabilities(platform);
   return linuxDesktopCapabilities({ terminalEmulator: terminalEmulator() });
 }
 

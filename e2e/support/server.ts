@@ -160,9 +160,12 @@ export async function startE2eServer(options: StartServerOptions = {}): Promise<
   if (options.reuse === undefined) await mkdir(home);
   const startedAt = new Date(Date.now() - 1000);
   let out = '';
+  // Linux (WP-109): CI containers have neither Secret Service nor systemd-creds – the keys of "Several
+  // computers" go to the 0600 file of the temp home (`--key-store=file`).
+  const keyStore = process.platform === 'win32' ? [] : ['--key-store=file'];
   const child: ChildProcess = spawnHidden(
     process.execPath,
-    [SERVER_BUNDLE, '--backend=fake', '--port=0', `--home=${home}`],
+    [SERVER_BUNDLE, '--backend=fake', '--port=0', `--home=${home}`, ...keyStore],
     {
       cwd: REPO_ROOT,
       env: serverEnv(),

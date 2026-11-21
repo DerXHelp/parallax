@@ -26,8 +26,8 @@ test('dialog: default profile pre-selected, the folder browser takes the folder 
   page,
 }) => {
   const root = await server.makeProject('tree');
-  for (const folder of ['app\\src', 'app\\test', 'docs', '.hidden']) {
-    await mkdir(path.join(root, folder), { recursive: true });
+  for (const folder of ['app/src', 'app/test', 'docs', '.hidden']) {
+    await mkdir(path.join(root, ...folder.split('/')), { recursive: true });
   }
 
   await page.locator('[data-action="new-session"]').click();
@@ -65,7 +65,7 @@ test('dialog: default profile pre-selected, the folder browser takes the folder 
   await dialog.locator('button[type="submit"]').click();
   await expect(dialog).toBeHidden();
   const key = await app.waitForSelection((k) => k !== null);
-  await expect(app.row(key).locator('[data-slot="row-path"]')).toHaveText('app\\src');
+  await expect(app.row(key).locator('[data-slot="row-path"]')).toHaveText(path.join('app', 'src'));
 
   // "New session in this project…" (context menu of the row) pre-fills the folder.
   await app.rowAction(key, 'newSessionHere');

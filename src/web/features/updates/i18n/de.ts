@@ -133,7 +133,7 @@ export const de: typeof en = {
     httpError: 'Der Server hat mit einem Fehler geantwortet.',
     signature: 'Betroffene Datei: {file}',
     package: {
-      zip: 'Die Datei ist kein lesbares Zip-Archiv.',
+      zip: 'Die Datei ist kein lesbares Paket-Archiv.',
       layout: 'Das Archiv ist nicht wie ein Parallax-Paket aufgebaut.',
       files: 'Dateien im Paket fehlen oder wurden verändert.',
       version: 'Die Version im Paket passt nicht.',
