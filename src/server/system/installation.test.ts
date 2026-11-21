@@ -13,6 +13,10 @@ import {
 } from './autostart';
 import { APPDATA_MISSING, ensureStartMenuEntry, removeInstallationEntries } from './installation';
 import { PROTOCOL_COMMAND_KEY, PROTOCOL_KEY } from './protocol';
+import { FOREIGN_ENTRY, HOME_MISSING, URL_HANDLER_FILE, desktopExecValue, memoryDesktopFs } from './xdg';
+
+/** The Windows suites use a real temp APPDATA with Windows paths (shortcut existence checks). */
+const onWindows = process.platform === 'win32';
 
 const ROOT = 'C:\\Users\\u\\AppData\\Local\\Programs\\Parallax';
 const NODE = 'C:\\Program Files\\nodejs\\node.exe';
@@ -86,7 +90,7 @@ async function world(protocol: string | null = null) {
   return { m, env, autostart, startMenu, place };
 }
 
-describe('removeInstallationEntries (WP-86, for the uninstaller)', () => {
+describe.runIf(onWindows)('removeInstallationEntries (WP-86, for the uninstaller)', () => {
   it('removes autostart, protocol handler and start menu of exactly this installation', async () => {
     const w = await world(`"${NODE}" ${INSTALLED} --open "%1"`);
     await w.place(w.autostart, `${INSTALLED} --autostart`);
@@ -142,38 +146,152 @@ describe('removeInstallationEntries (WP-86, for the uninstaller)', () => {
   });
 });
 
-describe('ensureStartMenuEntry (WP-86, installer and every start of the installation)', () => {
-  it('node.exe <root>\\start.mjs with parallax.ico, never --home; refreshes an own one', async () => {
-    const w = await world();
-    const node = await realpath(process.execPath);
-    expect(await ensureStartMenuEntry({ installRoot: ROOT, run: w.m.run, env: w.env })).toEqual({ ok: true });
-    expect(w.m.calls[0]?.env).toMatchObject({
-      [AUTOSTART_ENV.action]: 'create',
-      [AUTOSTART_ENV.path]: w.startMenu,
-      [AUTOSTART_ENV.target]: node,
-      [AUTOSTART_ENV.args]: INSTALLED,
-      [AUTOSTART_ENV.cwd]: ROOT,
-      [AUTOSTART_ENV.icon]: `${ROOT}\\parallax.ico`,
-      [AUTOSTART_ENV.marker]: `${LAUNCHER_MARKER}|${ROOT}\\start.mjs`,
+describe.runIf(onWindows)(
+  'ensureStartMenuEntry (WP-86, installer and every start of the installation)',
+  () => {
+    it('node.exe <root>\\start.mjs with parallax.ico, never --home; refreshes an own one', async () => {
+      const w = await world();
+      const node = await realpath(process.execPath);
+      expect(await ensureStartMenuEntry({ installRoot: ROOT, run: w.m.run, env: w.env })).toEqual({
+        ok: true,
+      });
+      expect(w.m.calls[0]?.env).toMatchObject({
+        [AUTOSTART_ENV.action]: 'create',
+        [AUTOSTART_ENV.path]: w.startMenu,
+        [AUTOSTART_ENV.target]: node,
+        [AUTOSTART_ENV.args]: INSTALLED,
+        [AUTOSTART_ENV.cwd]: ROOT,
+        [AUTOSTART_ENV.icon]: `${ROOT}\\parallax.ico`,
+        [AUTOSTART_ENV.marker]: `${LAUNCHER_MARKER}|${ROOT}\\start.mjs`,
+      });
+      expect(w.m.links.get(w.startMenu)).toBe(INSTALLED);
+      // An old node path is repaired.
+      w.m.links.set(w.startMenu, `${INSTALLED} --stale`);
+      expect(await ensureStartMenuEntry({ installRoot: ROOT, run: w.m.run, env: w.env })).toEqual({
+        ok: true,
+      });
+      expect(w.m.links.get(w.startMenu)).toBe(INSTALLED);
     });
-    expect(w.m.links.get(w.startMenu)).toBe(INSTALLED);
-    // An old node path is repaired.
-    w.m.links.set(w.startMenu, `${INSTALLED} --stale`);
-    expect(await ensureStartMenuEntry({ installRoot: ROOT, run: w.m.run, env: w.env })).toEqual({ ok: true });
-    expect(w.m.links.get(w.startMenu)).toBe(INSTALLED);
+
+    it('a foreign start menu shortcut stays (reason foreign); no APPDATA is a reason too', async () => {
+      const w = await world();
+      w.m.links.set(w.startMenu, 'D:\\dev\\repo\\parallax.cmd');
+      expect(await ensureStartMenuEntry({ installRoot: ROOT, run: w.m.run, env: w.env })).toEqual({
+        ok: false,
+        reason: FOREIGN_SHORTCUT,
+      });
+      expect(w.m.links.get(w.startMenu)).toBe('D:\\dev\\repo\\parallax.cmd');
+      expect(await ensureStartMenuEntry({ installRoot: ROOT, run: w.m.run, env: {} })).toEqual({
+        ok: false,
+        reason: APPDATA_MISSING,
+      });
+    });
+  },
+);
+
+describe('installation entries on Linux (WP-106)', () => {
+  const HOME = '/home/demo';
+  const LINUX_ROOT = '/home/demo/.local/share/parallax-app';
+  const PROGRAM = `${HOME}/.local/share/applications/parallax.desktop`;
+  const AUTOSTART = `${HOME}/.config/autostart/parallax.desktop`;
+  const HANDLER = `${HOME}/.local/share/applications/${URL_HANDLER_FILE}`;
+  const COMMAND = { node: '/usr/bin/node', args: [`${LINUX_ROOT}/start.mjs`], cwd: LINUX_ROOT };
+  const entry = (exec: string) => `[Desktop Entry]\nType=Application\nName=Parallax\nExec=${exec}\n`;
+  const noRun: RunFileFn = () => Promise.reject(new Error('no program expected'));
+
+  it('ensureStartMenuEntry writes the program entry with <root>/parallax.svg; a foreign one stays', async () => {
+    const fs = memoryDesktopFs();
+    const env = { HOME };
+    expect(
+      await ensureStartMenuEntry({
+        installRoot: LINUX_ROOT,
+        run: noRun,
+        env,
+        platform: 'linux',
+        command: COMMAND,
+        desktopFs: fs,
+      }),
+    ).toEqual({ ok: true });
+    const text = fs.files.get(PROGRAM) ?? '';
+    expect(desktopExecValue(text)).toBe(`/usr/bin/node ${LINUX_ROOT}/start.mjs`);
+    expect(text).toContain(`Icon=${LINUX_ROOT}/parallax.svg`);
+
+    const foreign = memoryDesktopFs({ [PROGRAM]: entry('/usr/bin/other-app') });
+    expect(
+      await ensureStartMenuEntry({
+        installRoot: LINUX_ROOT,
+        run: noRun,
+        env,
+        platform: 'linux',
+        command: COMMAND,
+        desktopFs: foreign,
+      }),
+    ).toEqual({ ok: false, reason: FOREIGN_ENTRY });
+    expect(foreign.files.get(PROGRAM)).toContain('other-app');
+    expect(
+      await ensureStartMenuEntry({
+        installRoot: LINUX_ROOT,
+        run: noRun,
+        env: {},
+        platform: 'linux',
+        desktopFs: fs,
+      }),
+    ).toEqual({ ok: false, reason: HOME_MISSING });
+    expect(
+      await ensureStartMenuEntry({
+        installRoot: LINUX_ROOT,
+        run: noRun,
+        env,
+        platform: 'darwin',
+        desktopFs: fs,
+      }),
+    ).toEqual({ ok: false, reason: 'unsupported platform' });
   });
 
-  it('a foreign start menu shortcut stays (reason foreign); no APPDATA is a reason too', async () => {
-    const w = await world();
-    w.m.links.set(w.startMenu, 'D:\\dev\\repo\\parallax.cmd');
-    expect(await ensureStartMenuEntry({ installRoot: ROOT, run: w.m.run, env: w.env })).toEqual({
-      ok: false,
-      reason: FOREIGN_SHORTCUT,
+  it("removeInstallationEntries removes exactly this installation's entries, never a clone's", async () => {
+    const fs = memoryDesktopFs({
+      [AUTOSTART]: entry(`/usr/bin/node ${LINUX_ROOT}/start.mjs --autostart`),
+      [HANDLER]: entry(`/usr/bin/node ${LINUX_ROOT}/start.mjs --open %u`),
+      [PROGRAM]: entry(`/usr/bin/node ${LINUX_ROOT}/start.mjs`),
     });
-    expect(w.m.links.get(w.startMenu)).toBe('D:\\dev\\repo\\parallax.cmd');
-    expect(await ensureStartMenuEntry({ installRoot: ROOT, run: w.m.run, env: {} })).toEqual({
-      ok: false,
-      reason: APPDATA_MISSING,
+    const removal = await removeInstallationEntries({
+      installRoot: LINUX_ROOT,
+      run: noRun,
+      env: { HOME },
+      platform: 'linux',
+      desktopFs: fs,
+    });
+    expect(removal).toEqual({ autostart: { ok: true }, protocol: { ok: true }, startMenu: { ok: true } });
+    expect(fs.files.size).toBe(0);
+
+    const clone = entry('/usr/bin/node /home/demo/dev/parallax/src/server/launcher/main.ts --autostart');
+    const other = memoryDesktopFs({
+      [AUTOSTART]: clone,
+      [PROGRAM]: entry('/usr/bin/node /opt/other/start.mjs'),
+    });
+    expect(
+      await removeInstallationEntries({
+        installRoot: LINUX_ROOT,
+        run: noRun,
+        env: { HOME },
+        platform: 'linux',
+        desktopFs: other,
+      }),
+    ).toEqual({ autostart: { ok: true }, protocol: { ok: true }, startMenu: { ok: true } });
+    expect(other.files.get(AUTOSTART)).toBe(clone);
+    expect(other.files.size).toBe(2);
+    expect(
+      await removeInstallationEntries({
+        installRoot: LINUX_ROOT,
+        run: noRun,
+        env: {},
+        platform: 'linux',
+        desktopFs: other,
+      }),
+    ).toEqual({
+      autostart: { ok: false, reason: HOME_MISSING },
+      protocol: { ok: true },
+      startMenu: { ok: false, reason: HOME_MISSING },
     });
   });
 });

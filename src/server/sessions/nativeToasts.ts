@@ -13,6 +13,8 @@
  * (`launchUri` = `SystemIntegration.toastLaunchUri(entryId)`, null → the click only dismisses), and
  * the toast is silent when the event's sound is off – both from the settings at the time of the
  * toast (`toastShowOptions`) – or when a window gets the notification too and sounds (ADR-122).
+ * Linux (WP-106): the same channel over the desktop's notification server (lib/toast.ts); a toast
+ * with a click target names its action (`open`: "Open"/"Öffnen"). The log lines name no platform.
  */
 import type { Logger } from 'pino';
 import type { EntryId, Language } from '@shared/common';
@@ -60,7 +62,7 @@ export interface NativeToasts {
 }
 
 export const TOAST_TEXTS: Readonly<
-  Record<Language, { kinds: Readonly<Record<NotificationKind, string>>; body: string }>
+  Record<Language, { kinds: Readonly<Record<NotificationKind, string>>; body: string; open: string }>
 > = {
   en: {
     kinds: {
@@ -72,6 +74,8 @@ export const TOAST_TEXTS: Readonly<
       rate_limit: '{title} – rate limit reached',
     },
     body: 'Open Parallax to see the session.',
+    /** WP-106: the click action of a Linux toast with a click target. */
+    open: 'Open',
   },
   de: {
     kinds: {
@@ -83,6 +87,7 @@ export const TOAST_TEXTS: Readonly<
       rate_limit: '{title} – Rate-Limit erreicht',
     },
     body: 'Öffne Parallax, um die Session zu sehen.',
+    open: 'Öffnen',
   },
 };
 
@@ -98,7 +103,7 @@ export const TOAST_BACKOFF_MS = 60_000;
 export const TOAST_BACKOFF_MAX_MS = 15 * 60_000;
 
 export interface NativeToastOptions {
-  /** config.toasts === 'native' (Windows, not under tests). */
+  /** config.toasts === 'native' (Windows; Linux with a desktop – WP-106; never under tests). */
   enabled: boolean;
   language: () => Language;
   log: Pick<Logger, 'info' | 'warn' | 'debug'>;
@@ -153,7 +158,7 @@ export function createNativeToasts(options: NativeToastOptions): NativeToasts {
       failed = true;
       options.log.warn(
         { label, reason: result.reason },
-        'native Windows toast failed – notifications stay in-app for this server run',
+        'native toast failed – notifications stay in-app for this server run',
       );
       options.onUnavailable?.();
       return;
@@ -166,7 +171,7 @@ export function createNativeToasts(options: NativeToastOptions): NativeToasts {
     pausedUntil = pauseMs === 0 ? 0 : now() + pauseMs;
     options.log.warn(
       { label, reason: result.reason, failures, pauseMs },
-      'native Windows toast failed – the channel stays on',
+      'native toast failed – the channel stays on',
     );
   };
 
@@ -203,11 +208,13 @@ export function createNativeToasts(options: NativeToastOptions): NativeToasts {
         'native toast',
       );
       shown.add(entryId);
+      const texts = TOAST_TEXTS[options.language()];
       const request: ToastRequest = {
         title: text,
-        body: TOAST_TEXTS[options.language()].body,
+        body: texts.body,
         tag: entryId,
         ...(extra === undefined ? {} : { launchUri: extra.launchUri, silent: extra.silent }),
+        ...(extra === undefined || extra.launchUri === null ? {} : { actionLabel: texts.open }),
       };
       enqueue('show', () => show(request));
     },

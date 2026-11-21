@@ -7,12 +7,26 @@
  * registry values are never trusted beyond that. Reads only (reg.exe query, file stat). Each
  * candidate is checked as soon as it is known (no query after the first hit); a launcher keeps
  * the hit per preset for a minute (`createEditorFinder`, R5-04).
+ *
+ * Linux (WP-106, WP-100 §5.6): the presets of `editorPresetsFor('posix')` are found on `PATH`
+ * (`LINUX_EDITOR_NAMES`: `code`, `codium`, `zed`/`zeditor`, `subl`, `kate`, `gnome-text-editor`,
+ * `gedit`) – absolute executable files after the POSIX rules, never a bare name. A preset the
+ * platform does not offer (`notepadpp` on Linux) counts as `system` (`effectiveEditorPreset`, the
+ * default program). `editor.detect` (contract: Notepad++, VS Code, custom) answers `notepadpp: null`.
  */
 import path from 'node:path';
 import { makeError } from '@shared/errors';
-import { EDITOR_PRESET_ARGS, editorExecutableIssue, type EditorSettings } from '@shared/model';
-import { windowsBaseName } from '@shared/paths';
+import {
+  EDITOR_PRESET_ARGS,
+  editorExecutableIssue,
+  editorPresetsFor,
+  type EditorPreset,
+  type EditorProgramPreset,
+  type EditorSettings,
+} from '@shared/model';
+import { POSIX_PATHS, WIN32_PATHS, pathFlavorOf, windowsBaseName, type PathRules } from '@shared/paths';
 import type { CommandResult } from '@shared/protocol';
+import { searchPosixPath } from '../lib/executables';
 import {
   expandRegValue,
   parseRegDefaultValue,
@@ -24,7 +38,25 @@ import { getEnvVar, type FsProbe } from '../lib/windows';
 import { CommandError } from '../sync/ports';
 
 export type EditorDetection = CommandResult<'editor.detect'>;
+/** The presets of the Windows lookup (registry, install folders). */
 export type DetectablePreset = 'notepadpp' | 'vscode';
+
+/** WP-106: program names of each preset on a Linux `PATH`, in lookup order (none: not offered). */
+export const LINUX_EDITOR_NAMES: Readonly<Record<EditorProgramPreset, readonly string[]>> = {
+  notepadpp: [],
+  vscode: ['code'],
+  vscodium: ['codium'],
+  zed: ['zed', 'zeditor'],
+  sublime: ['subl'],
+  kate: ['kate'],
+  gnome_text_editor: ['gnome-text-editor'],
+  gedit: ['gedit'],
+};
+
+/** The preset that applies on `platform`: one the platform does not offer counts as `system`. */
+export function effectiveEditorPreset(preset: EditorPreset, platform: NodeJS.Platform): EditorPreset {
+  return editorPresetsFor(pathFlavorOf(platform)).includes(preset) ? preset : 'system';
+}
 
 /** File name of each preset's executable. */
 export const EDITOR_EXE_NAMES: Readonly<Record<DetectablePreset, string>> = {
@@ -64,17 +96,41 @@ export interface EditorLocatorDeps {
   regKeyQuery: RegKeyQuery;
   fs: FsProbe;
   env: Readonly<Record<string, string | undefined>>;
+  /** WP-106: which lookup (default `process.platform`; Linux: `PATH`). */
+  platform?: NodeJS.Platform;
 }
 
-/** An acceptable, existing executable (any name; the preset lookup also checks the name). */
-async function usableExecutable(candidate: string, fs: FsProbe): Promise<boolean> {
-  if (editorExecutableIssue(candidate) !== null) return false;
-  return fs.isFile(candidate);
+function isWindows(deps: EditorLocatorDeps): boolean {
+  return (deps.platform ?? process.platform) === 'win32';
 }
 
-async function presetCandidate(candidate: string, preset: DetectablePreset, fs: FsProbe): Promise<boolean> {
+function rulesOf(deps: EditorLocatorDeps): PathRules {
+  return isWindows(deps) ? WIN32_PATHS : POSIX_PATHS;
+}
+
+/**
+ * An acceptable, existing executable (any name; the preset lookup also checks the name). POSIX: an
+ * executable file after the POSIX rules.
+ */
+async function usableExecutable(candidate: string, deps: EditorLocatorDeps): Promise<boolean> {
+  const rules = rulesOf(deps);
+  if (editorExecutableIssue(candidate, rules) !== null) return false;
+  if (rules === POSIX_PATHS && deps.fs.isExecutable !== undefined) return deps.fs.isExecutable(candidate);
+  return deps.fs.isFile(candidate);
+}
+
+async function presetCandidate(
+  candidate: string,
+  preset: EditorProgramPreset,
+  deps: EditorLocatorDeps,
+): Promise<boolean> {
+  if (!isWindows(deps)) {
+    if (!LINUX_EDITOR_NAMES[preset].includes(path.posix.basename(candidate))) return false;
+    return usableExecutable(candidate, deps);
+  }
+  if (preset !== 'notepadpp' && preset !== 'vscode') return false;
   if (windowsBaseName(candidate).toLowerCase() !== EDITOR_EXE_NAMES[preset].toLowerCase()) return false;
-  return usableExecutable(candidate, fs);
+  return usableExecutable(candidate, deps);
 }
 
 /**
@@ -105,20 +161,41 @@ async function* editorCandidates(preset: DetectablePreset, deps: EditorLocatorDe
     }
   }
   for (const [variable, folder] of STANDARD_PATHS[preset]) {
-    const root = getEnvVar(deps.env, variable);
+    const root = getEnvVar(deps.env, variable, 'win32');
     if (root !== undefined && root !== '') yield path.win32.join(root, folder, exe);
   }
 }
 
-/** The installed executable of a preset (registry, then the usual folders), or null. */
-export async function findEditor(preset: DetectablePreset, deps: EditorLocatorDeps): Promise<string | null> {
+/** WP-106: the preset's programs on `PATH` (executable, POSIX rules), in name and `PATH` order. */
+async function* linuxEditorCandidates(
+  preset: EditorProgramPreset,
+  deps: EditorLocatorDeps,
+): AsyncGenerator<string> {
+  for (const name of LINUX_EDITOR_NAMES[preset]) yield* await searchPosixPath(name, deps.env, deps.fs);
+}
+
+/**
+ * The installed executable of a preset (Windows: registry, then the usual folders; Linux: `PATH`),
+ * or null – also for a preset the platform does not offer.
+ */
+export async function findEditor(
+  preset: EditorProgramPreset,
+  deps: EditorLocatorDeps,
+): Promise<string | null> {
+  if (!isWindows(deps)) {
+    for await (const candidate of linuxEditorCandidates(preset, deps)) {
+      if (await presetCandidate(candidate, preset, deps)) return candidate;
+    }
+    return null;
+  }
+  if (preset !== 'notepadpp' && preset !== 'vscode') return null;
   for await (const candidate of editorCandidates(preset, deps)) {
-    if (await presetCandidate(candidate, preset, deps.fs)) return candidate;
+    if (await presetCandidate(candidate, preset, deps)) return candidate;
   }
   return null;
 }
 
-export type FindEditor = (preset: DetectablePreset, deps: EditorLocatorDeps) => Promise<string | null>;
+export type FindEditor = (preset: EditorProgramPreset, deps: EditorLocatorDeps) => Promise<string | null>;
 
 /** How long a found editor is reused without a new lookup (R5-04). */
 export const EDITOR_CACHE_MS = 60_000;
@@ -137,7 +214,7 @@ export interface EditorFinder {
 export function createEditorFinder(options: { ttlMs?: number; now?: () => number } = {}): EditorFinder {
   const ttlMs = options.ttlMs ?? EDITOR_CACHE_MS;
   const now = options.now ?? Date.now;
-  const hits = new Map<DetectablePreset, { executable: string; at: number }>();
+  const hits = new Map<EditorProgramPreset, { executable: string; at: number }>();
   const refresh: FindEditor = async (preset, deps) => {
     const found = await findEditor(preset, deps);
     if (found === null) hits.delete(preset);
@@ -151,7 +228,7 @@ export function createEditorFinder(options: { ttlMs?: number; now?: () => number
       if (
         hit !== undefined &&
         now() - hit.at < ttlMs &&
-        (await presetCandidate(hit.executable, preset, deps.fs))
+        (await presetCandidate(hit.executable, preset, deps))
       )
         return hit.executable;
       return refresh(preset, deps);
@@ -160,9 +237,11 @@ export function createEditorFinder(options: { ttlMs?: number; now?: () => number
 }
 
 /**
- * Executable for "Open in editor" (preset `notepadpp`/`vscode`/`custom`; `system` never gets here):
+ * Executable for "Open in editor" (a program preset or `custom`; `system` never gets here):
  * an existing override wins, otherwise the detected install (`find`, default an uncached lookup);
- * `custom` needs its own `.exe`. Missing → EDITOR_NOT_FOUND {preset}.
+ * `custom` needs its own `.exe` (Linux: an executable file). A preset the platform does not offer →
+ * EDITOR_NOT_FOUND (the launcher opens it as `system` before, `effectiveEditorPreset`). Missing →
+ * EDITOR_NOT_FOUND {preset}.
  */
 export async function resolveEditorExecutable(
   editor: EditorSettings,
@@ -172,11 +251,11 @@ export async function resolveEditorExecutable(
   const notFound = (): CommandError =>
     new CommandError(makeError('EDITOR_NOT_FOUND', { preset: editor.preset }));
   if (editor.preset === 'system') throw notFound();
-  if (editor.executable !== null && (await usableExecutable(editor.executable, deps.fs)))
+  if (editor.executable !== null && (await usableExecutable(editor.executable, deps)))
     return editor.executable;
   if (editor.preset === 'custom') throw notFound();
-  // 102e: the Linux presets are found on `PATH` (WP-106); this lookup knows the Windows ones.
-  if (editor.preset !== 'notepadpp' && editor.preset !== 'vscode') throw notFound();
+  if (effectiveEditorPreset(editor.preset, deps.platform ?? process.platform) !== editor.preset)
+    throw notFound();
   const found = await find(editor.preset, deps);
   if (found === null) throw notFound();
   return found;
@@ -208,7 +287,7 @@ export function editorArguments(
 
 /**
  * `editor.detect`: both presets searched (`find`, default an uncached lookup); a configured
- * executable (custom or override) checked.
+ * executable (custom or override) checked. Linux: no Notepad++ (`null`), VS Code on `PATH`.
  */
 export async function detectEditors(
   editor: EditorSettings,
@@ -219,6 +298,6 @@ export async function detectEditors(
   const custom =
     editor.executable === null
       ? null
-      : { executable: editor.executable, exists: await usableExecutable(editor.executable, deps.fs) };
+      : { executable: editor.executable, exists: await usableExecutable(editor.executable, deps) };
   return { notepadpp, vscode, custom };
 }

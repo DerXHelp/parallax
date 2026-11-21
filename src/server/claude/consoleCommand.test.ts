@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { SAMPLE_IDS } from '@shared/samples';
 import {
+  consoleCommandFor,
   consoleCommandText,
   nativeCommandArg,
+  posixConsoleCommandText,
+  posixSecretPrompt,
+  posixShellWord,
   powerShellEnvVariable,
   powerShellLiteral,
   secretPrompt,
@@ -163,5 +167,126 @@ describe('consoleCommandText', () => {
     expect(text).not.toMatch(/[\r\n]/);
     expect(text).toContain('$env:NOTE="a`r`nb"');
     expect(text).toContain(`"\`"line 1\`nline 2\`""`);
+  });
+});
+
+// ---- POSIX hosts (WP-106) ----
+
+describe('posixShellWord', () => {
+  it.each<[string, string]>([
+    ['plain', 'plain'],
+    ['--resume', '--resume'],
+    ['/home/demo/.local/bin/claude', '/home/demo/.local/bin/claude'],
+    ['--settings=x', '--settings=x'],
+    ['with space', `'with space'`],
+    ["it's", `'it'\\''s'`],
+    ['$HOME and $(id) `id`', `'$HOME and $(id) \`id\`'`],
+    ['~/x', `'~/x'`],
+    ['=cmd', `'=cmd'`],
+    ['a*b?[c]', `'a*b?[c]'`],
+    ['{"autoCompactWindow":200000}', `'{"autoCompactWindow":200000}'`],
+    ['Grüße', `'Grüße'`],
+    ['', `''`],
+    // Control characters: $'…' so the line stays one line.
+    ['a\nb', `$'a\\nb'`],
+    ["tab\there 'q' \\", `$'tab\\there \\'q\\' \\\\'`],
+    ['bell\u0007', `$'bell\\x07'`],
+  ])('%j → %s', (text, word) => {
+    expect(posixShellWord(text)).toBe(word);
+  });
+});
+
+describe('posixConsoleCommandText (WP-106)', () => {
+  const CLAUDE = '/home/demo/.local/bin/claude';
+  const spec = (p: Partial<ConsoleLaunchSpec> = {}): ConsoleLaunchSpec => ({
+    executablePath: CLAUDE,
+    args: ['--resume', SAMPLE_IDS.sessionId],
+    env: {
+      PATH: '/usr/bin',
+      SECRET_ONLY_IN_ENV: 'do-not-copy',
+      PARALLAX: '1',
+      PARALLAX_ENTRY_ID: SAMPLE_IDS.entry,
+    },
+    explicitEnv: {},
+    cwd: '/home/demo/work',
+    ...p,
+  });
+
+  it('cd, the Parallax markers, the explicit env, then the program with every argument quoted', () => {
+    const text = posixConsoleCommandText(
+      spec({
+        args: [
+          '--add-dir',
+          '/home/demo/shared dir',
+          '--resume',
+          SAMPLE_IDS.sessionId,
+          '--settings',
+          '{"a":1}',
+        ],
+        explicitEnv: {
+          ANTHROPIC_BASE_URL: 'https://gateway.example.invalid',
+          CLAUDE_CONFIG_DIR: "/home/demo/.claude 'work'",
+        },
+        cwd: "/home/demo/it's $here",
+      }),
+    );
+    expect(text).toBe(
+      `cd -- '/home/demo/it'\\''s $here' && PARALLAX=1 PARALLAX_ENTRY_ID=${SAMPLE_IDS.entry} ` +
+        `ANTHROPIC_BASE_URL=https://gateway.example.invalid CLAUDE_CONFIG_DIR='/home/demo/.claude '\\''work'\\''' ` +
+        `${CLAUDE} --add-dir '/home/demo/shared dir' --resume ${SAMPLE_IDS.sessionId} --settings '{"a":1}'`,
+    );
+    // Machine env stays out.
+    expect(text).not.toContain('do-not-copy');
+    expect(text).not.toContain('PATH=');
+  });
+
+  it('ADR-123: secret names are read hidden from the terminal, never copied', () => {
+    const text = posixConsoleCommandText(
+      spec({
+        explicitEnv: {
+          GATEWAY_TOKEN: 'x-secret-gateway-1',
+          ANTHROPIC_BASE_URL: 'https://gw.example.invalid',
+        },
+      }),
+    );
+    expect(text).not.toContain('x-secret-gateway-1');
+    expect(text).toContain(`GATEWAY_TOKEN=${posixSecretPrompt('GATEWAY_TOKEN')} `);
+    expect(posixSecretPrompt('GATEWAY_TOKEN')).toBe(
+      `"$(stty -echo; printf '%s: ' GATEWAY_TOKEN >/dev/tty; IFS= read -r v; stty echo; printf '\\n' >/dev/tty; printf '%s' "$v")"`,
+    );
+    // The prompt label is one quoted word (no injection through a name).
+    expect(posixSecretPrompt("A_TOKEN'; id; '")).toContain(
+      `printf '%s: ' 'A_TOKEN'\\''; id; '\\''' >/dev/tty`,
+    );
+    expect(text).toContain('ANTHROPIC_BASE_URL=https://gw.example.invalid');
+    expect(text).not.toMatch(/[\r\n]/);
+  });
+
+  it('names that are no shell identifier go through env --; markers are not doubled', () => {
+    const text = posixConsoleCommandText(
+      spec({ explicitEnv: { 'MY-VAR': 'a b', PARALLAX: 'x', OK_NAME: '1', 'MY-TOKEN': 'x-secret-3' } }),
+    );
+    expect(text).toBe(
+      `cd -- /home/demo/work && PARALLAX=1 PARALLAX_ENTRY_ID=${SAMPLE_IDS.entry} OK_NAME=1 ` +
+        `env -- MY-VAR='a b' MY-TOKEN=${posixSecretPrompt('MY-TOKEN')} ${CLAUDE} --resume ${SAMPLE_IDS.sessionId}`,
+    );
+    expect(text).not.toContain('x-secret-3');
+  });
+
+  it('stays one line; a spec without markers (no entry) has none', () => {
+    const text = posixConsoleCommandText(
+      spec({ args: ['--append-system-prompt', 'line 1\nline 2'], explicitEnv: { NOTE: 'a\r\nb' }, env: {} }),
+    );
+    expect(text).not.toMatch(/[\r\n]/);
+    expect(text).toBe(
+      `cd -- /home/demo/work && NOTE=$'a\\r\\nb' ${CLAUDE} --append-system-prompt $'line 1\\nline 2'`,
+    );
+  });
+
+  it('consoleCommandFor: PowerShell on Windows, the POSIX line elsewhere', () => {
+    const windows: ConsoleLaunchSpec = { ...spec(), executablePath: EXE, cwd: 'D:\\work' };
+    expect(consoleCommandFor(windows, 'win32')).toBe(consoleCommandText(windows));
+    expect(consoleCommandFor(spec(), 'linux')).toBe(posixConsoleCommandText(spec()));
+    expect(consoleCommandFor(spec(), 'darwin')).toBe(posixConsoleCommandText(spec()));
   });
 });

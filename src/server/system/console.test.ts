@@ -263,7 +263,8 @@ describe('createConsoleLauncher().state (ADR-104, ADR-051)', () => {
     const { run, calls } = fakeRun({ stdout: 'never asked' });
     const launcher = createConsoleLauncher({ run, platform: 'win32', isAlive: () => true });
     const self = new Date(Date.now() - process.uptime() * 1000);
-    const native = process.platform === 'win32' && process.arch === 'x64';
+    // Natively: Windows x64 (node:ffi) and Linux (/proc, lib/procfs.ts).
+    const native = (process.platform === 'win32' && process.arch === 'x64') || process.platform === 'linux';
     expect(await launcher.state({ pid: process.pid, startedAt: self })).toBe(native ? 'running' : 'unknown');
     expect(calls).toEqual([]);
   });

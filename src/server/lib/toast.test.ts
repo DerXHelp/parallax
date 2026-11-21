@@ -1,13 +1,22 @@
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import type { RunFileFn, RunFileOptions } from './process';
+import type { RunFileFn, RunFileOptions, RunFileResult } from './process';
 import {
   TOAST_APP_ID,
   TOAST_GROUP,
   TOAST_SCRIPT,
+  createLinuxNotifier,
   encodePowerShell,
+  gvariantString,
+  hasNotificationSession,
+  notifySendArgs,
+  parseNotificationId,
   removeToast,
   showToast,
   toastTemplateXml,
+  type ToastSpawnFn,
+  type ToastWaiter,
 } from './toast';
 
 interface Call {
@@ -201,11 +210,285 @@ describe('native Windows toast helper (WP22-03/-15, A.9)', () => {
 
   it('other platforms: failed without a call', async () => {
     const { run, calls } = fakeRun();
-    expect(await showToast({ title: 't', body: 'b', tag: 'x' }, { run, platform: 'linux' })).toEqual({
+    expect(await showToast({ title: 't', body: 'b', tag: 'x' }, { run, platform: 'darwin' })).toEqual({
       kind: 'failed',
-      reason: 'not Windows',
+      reason: 'unsupported platform',
       permanent: true,
     });
     expect(calls).toEqual([]);
+  });
+});
+
+// ---- Linux (WP-106) ----
+
+const DESKTOP = {
+  PATH: '/usr/bin',
+  DISPLAY: ':0',
+  XDG_RUNTIME_DIR: '/run/user/1000',
+  CLAUDECODE: '1',
+  PARALLAX_ENTRY_ID: 'en_x',
+};
+const tool = (name: string) => `/usr/bin/${name}`;
+const ENTRY_URI = 'parallax://session/en_00000000000000000000000000000001';
+
+/** Answers per program: notify-send and gdbus results (or a start error). */
+function linuxRun(
+  answers: { notify?: Partial<RunFileResult> | Error; gdbus?: Partial<RunFileResult> | Error } = {},
+) {
+  const calls: { file: string; args: readonly string[]; env: Record<string, string> | undefined }[] = [];
+  const run: RunFileFn = (file, args, options) => {
+    calls.push({ file, args, env: options.env });
+    const answer = file.endsWith('/notify-send') ? answers.notify : answers.gdbus;
+    if (answer instanceof Error) return Promise.reject(answer);
+    const stdout = file.endsWith('/notify-send') ? '17\n' : '(uint32 23,)\n';
+    return Promise.resolve({ exitCode: 0, signal: null, stdout, stderr: '', timedOut: false, ...answer });
+  };
+  return { run, calls };
+}
+
+/** Waiting notify-send processes: `print(line)` writes to stdout, `exit(code)` ends one. */
+function linuxSpawn(options: { error?: Error } = {}) {
+  const started: { file: string; args: readonly string[]; stdio: unknown }[] = [];
+  const children: {
+    out: PassThrough;
+    killed: string[];
+    print: (line: string) => void;
+    exit: (code: number) => void;
+  }[] = [];
+  const spawn: ToastSpawnFn = (file, args, spawnOptions) => {
+    started.push({ file, args, stdio: spawnOptions.stdio });
+    const out = new PassThrough();
+    const killed: string[] = [];
+    const emitter = new EventEmitter();
+    const child: ToastWaiter = Object.assign(emitter, {
+      stdout: out,
+      kill: (signal?: NodeJS.Signals) => {
+        killed.push(signal ?? 'SIGTERM');
+        return true;
+      },
+      unref: () => undefined,
+    });
+    children.push({
+      out,
+      killed,
+      print: (line) => out.write(`${line}\n`),
+      exit: (code) => emitter.emit('exit', code),
+    });
+    queueMicrotask(() => {
+      if (options.error === undefined) emitter.emit('spawn');
+      else emitter.emit('error', options.error);
+    });
+    return child;
+  };
+  return { spawn, started, children };
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+describe('Linux toasts over the notification server (WP-106, WP-100 §5.7)', () => {
+  it('helpers: session check, GVariant strings, notification ids, notify-send arguments', () => {
+    expect(hasNotificationSession(DESKTOP)).toBe(true);
+    expect(
+      hasNotificationSession({
+        WAYLAND_DISPLAY: 'wayland-0',
+        DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus',
+      }),
+    ).toBe(true);
+    expect(hasNotificationSession({ XDG_RUNTIME_DIR: '/run/user/1000' })).toBe(false);
+    expect(hasNotificationSession({ DISPLAY: ':0' })).toBe(false);
+    expect(gvariantString("it's a\\b\nc")).toBe(String.raw`'it\'s a\\b\nc'`);
+    expect(parseNotificationId('17\n')).toBe(17);
+    expect(parseNotificationId('(uint32 23,)\n')).toBe(23);
+    expect(parseNotificationId('default')).toBeNull();
+    expect(parseNotificationId('0')).toBeNull();
+    expect(notifySendArgs({ title: '-t', body: 'b', silent: true, replaceId: 9 }, 'Open')).toEqual([
+      '--app-name=Parallax',
+      '--print-id',
+      '--hint=string:desktop-entry:parallax',
+      '--hint=boolean:suppress-sound:true',
+      '--replace-id=9',
+      '--action=default=Open',
+      '--wait',
+      '--',
+      '-t',
+      'b',
+    ]);
+  });
+
+  it('without a click: one notify-send; the same tag replaces, remove closes it over gdbus', async () => {
+    const { run, calls } = linuxRun();
+    const notifier = createLinuxNotifier({ env: DESKTOP, run, tool, spawn: linuxSpawn().spawn });
+    expect(
+      await showToast({ title: 'A – done', body: 'Body', tag: 'en_1' }, { platform: 'linux', notifier }),
+    ).toEqual({
+      kind: 'shown',
+    });
+    expect(calls[0]?.file).toBe('/usr/bin/notify-send');
+    expect(calls[0]?.args.slice(-3)).toEqual(['--', 'A – done', 'Body']);
+    // The environment of a desktop program: no Claude session variables, no PARALLAX*.
+    expect(calls[0]?.env).toEqual({ PATH: '/usr/bin', DISPLAY: ':0', XDG_RUNTIME_DIR: '/run/user/1000' });
+    await notifier.show({ title: 'A – error', body: 'Body', tag: 'en_1', silent: true });
+    expect(calls[1]?.args).toContain('--replace-id=17');
+    expect(calls[1]?.args).toContain('--hint=boolean:suppress-sound:true');
+    expect(await removeToast('en_1', { platform: 'linux', notifier })).toEqual({ kind: 'removed' });
+    expect(calls[2]?.file).toBe('/usr/bin/gdbus');
+    expect(calls[2]?.args.slice(-2)).toEqual(['org.freedesktop.Notifications.CloseNotification', '17']);
+    // Nothing shown under that tag any more: no call.
+    expect(await notifier.remove('en_1')).toEqual({ kind: 'removed' });
+    expect(calls).toHaveLength(3);
+  });
+
+  it('with a click target: a waiting notify-send; a click opens the URI with xdg-open', async () => {
+    const { run, calls } = linuxRun();
+    const { spawn, started, children } = linuxSpawn();
+    const notifier = createLinuxNotifier({ env: DESKTOP, run, tool, spawn });
+    const shown = notifier.show({
+      title: 'T',
+      body: 'B',
+      tag: 'en_1',
+      launchUri: ENTRY_URI,
+      actionLabel: 'Öffnen',
+    });
+    await settle();
+    children[0]?.print('41');
+    expect(await shown).toEqual({ kind: 'shown' });
+    expect(started[0]?.file).toBe('/usr/bin/notify-send');
+    expect(started[0]?.args).toContain('--action=default=Öffnen');
+    expect(started[0]?.args).toContain('--wait');
+    children[0]?.print('default');
+    await settle();
+    expect(started[1]).toEqual({ file: '/usr/bin/xdg-open', args: [ENTRY_URI], stdio: 'ignore' });
+    children[0]?.exit(0);
+    // A newer toast of the same tag replaces the old one and ends its waiter.
+    const next = notifier.show({ title: 'T2', body: 'B', tag: 'en_1', launchUri: ENTRY_URI });
+    await settle();
+    children[2]?.print('41');
+    expect(await next).toEqual({ kind: 'shown' });
+    expect(started[2]?.args).toContain('--replace-id=41');
+    expect(started[2]?.args).toContain('--action=default=Open');
+    expect(await notifier.remove('en_1')).toEqual({ kind: 'removed' });
+    expect(children[2]?.killed).toEqual(['SIGTERM']);
+    expect(calls.map((c) => c.args.at(-1))).toEqual(['41']);
+    // A URI that is no session link gets no click (one plain notify-send).
+    await notifier.show({ title: 'T', body: 'B', tag: 'en_2', launchUri: 'https://example.invalid' });
+    expect(calls.at(-1)?.file).toBe('/usr/bin/notify-send');
+    expect(started).toHaveLength(3);
+  });
+
+  it('fallbacks: an old notify-send (no --wait/--print-id) and a missing one → gdbus Notify', async () => {
+    const old = linuxRun({ notify: { exitCode: 1, stdout: '', stderr: 'Unknown option --print-id' } });
+    const { spawn, children } = linuxSpawn();
+    const notifier = createLinuxNotifier({ env: DESKTOP, run: old.run, tool, spawn });
+    const shown = notifier.show({
+      title: "It's",
+      body: 'B',
+      tag: 'en_1',
+      launchUri: ENTRY_URI,
+      silent: true,
+    });
+    await settle();
+    children[0]?.exit(1);
+    expect(await shown).toEqual({ kind: 'shown' });
+    expect(old.calls.map((c) => c.file)).toEqual(['/usr/bin/notify-send', '/usr/bin/gdbus']);
+    expect(old.calls[1]?.args.slice(7)).toEqual([
+      'org.freedesktop.Notifications.Notify',
+      "'Parallax'",
+      '0',
+      "''",
+      String.raw`'It\'s'`,
+      "'B'",
+      '[]',
+      "{'desktop-entry': <'parallax'>, 'suppress-sound': <true>}",
+      '-1',
+    ]);
+    // The id of the bus reply is remembered for the next replace.
+    await notifier.show({ title: 'Again', body: 'B', tag: 'en_1' });
+    expect(old.calls.at(-1)?.args).toContain('23');
+
+    const missing = linuxRun({ notify: Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }) });
+    const bus = createLinuxNotifier({ env: DESKTOP, run: missing.run, tool, spawn: linuxSpawn().spawn });
+    expect(await bus.show({ title: 'T', body: 'B', tag: 'en_1' })).toEqual({ kind: 'shown' });
+    expect(missing.calls.map((c) => c.file)).toEqual(['/usr/bin/notify-send', '/usr/bin/gdbus']);
+  });
+
+  it('permanent: no graphical session, no programs, no notification server; others may pass', async () => {
+    const { run, calls } = linuxRun();
+    const headless = createLinuxNotifier({ env: { PATH: '/usr/bin' }, run, tool });
+    expect(await headless.show({ title: 'T', body: 'B', tag: 'x' })).toEqual({
+      kind: 'failed',
+      reason: 'no graphical session',
+      permanent: true,
+    });
+    expect(calls).toEqual([]);
+    const enoent = Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' });
+    const none = linuxRun({ notify: enoent, gdbus: enoent });
+    expect(
+      await createLinuxNotifier({ env: DESKTOP, run: none.run, tool }).show({
+        title: 'T',
+        body: 'B',
+        tag: 'x',
+      }),
+    ).toEqual({
+      kind: 'failed',
+      reason: 'gdbus could not be started: spawn ENOENT',
+      permanent: true,
+    });
+    const noServer = linuxRun({
+      notify: { exitCode: 1, stdout: '' },
+      gdbus: {
+        exitCode: 1,
+        stdout: '',
+        stderr: 'GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: no owner',
+      },
+    });
+    expect(
+      await createLinuxNotifier({ env: DESKTOP, run: noServer.run, tool }).show({
+        title: 'T',
+        body: 'B',
+        tag: 'x',
+      }),
+    ).toMatchObject({
+      kind: 'failed',
+      permanent: true,
+    });
+    const slow = linuxRun({ notify: { timedOut: true, exitCode: null, stdout: '' } });
+    expect(
+      await createLinuxNotifier({ env: DESKTOP, run: slow.run, tool }).show({
+        title: 'T',
+        body: 'B',
+        tag: 'x',
+      }),
+    ).toEqual({
+      kind: 'failed',
+      reason: 'notify-send timeout',
+      permanent: false,
+    });
+    const busy = linuxRun({
+      notify: { exitCode: 1, stdout: '' },
+      gdbus: { exitCode: 1, stdout: '', stderr: 'Timeout was reached' },
+    });
+    expect(
+      await createLinuxNotifier({ env: DESKTOP, run: busy.run, tool }).show({
+        title: 'T',
+        body: 'B',
+        tag: 'x',
+      }),
+    ).toEqual({
+      kind: 'failed',
+      reason: 'gdbus exit 1: Timeout was reached',
+      permanent: false,
+    });
+  });
+
+  it('a waiter that prints no id in time is ended; the toast counts as a transient failure', async () => {
+    const { run } = linuxRun();
+    const { spawn, children } = linuxSpawn();
+    const notifier = createLinuxNotifier({ env: DESKTOP, run, tool, spawn, timeoutMs: 20 });
+    expect(await notifier.show({ title: 'T', body: 'B', tag: 'x', launchUri: ENTRY_URI })).toEqual({
+      kind: 'failed',
+      reason: 'notify-send timeout',
+      permanent: false,
+    });
+    expect(children[0]?.killed).toEqual(['SIGTERM']);
   });
 });

@@ -8,11 +8,13 @@ import { makeTempHome } from '../http/testServer';
 import type { SpawnHiddenOptions } from '../lib/process';
 import {
   CHROME_AUTOPLAY_POLICY,
+  CHROME_WM_CLASS,
   chromiumTime,
   chromeAppArgs,
   chromePreferencesFile,
   chromeProfileDir,
   grantChromeNotifications,
+  locateChrome,
   openChromeWindow,
   type SpawnFn,
   type SpawnedChild,
@@ -54,7 +56,7 @@ describe('Chrome app window (C.9, A.8, ADR-136)', () => {
   it('own profile, no first-run UI, no sign-in/sync (ADR-060/136), sounds without a click (ADR-120), app mode on the code URL', () => {
     const url = appUrlWithCode(serverOrigin(4711), sampleToken(1));
     expect(chromeProfileDir(HOME)).toBe(`${HOME}\\chrome`);
-    const args = chromeAppArgs({ home: HOME, url });
+    const args = chromeAppArgs({ home: HOME, url, platform: 'win32' });
     expect(args).toEqual([
       `--user-data-dir=${HOME}\\chrome`,
       '--no-first-run',
@@ -85,6 +87,56 @@ describe('Chrome app window (C.9, A.8, ADR-136)', () => {
 
   it('the default spawner refuses anything but an absolute .exe (R1-04)', async () => {
     await expect(openChromeWindow('chrome', [])).rejects.toThrow(TypeError);
+  });
+});
+
+describe('Chrome app window on Linux (WP-106)', () => {
+  const LINUX_HOME = '/home/demo/.local/share/parallax';
+  const url = 'http://127.0.0.1:4711/#code=x';
+
+  it('the same switches plus --class=parallax (StartupWMClass of the .desktop entries); the profile beside the data', () => {
+    const args = chromeAppArgs({
+      home: LINUX_HOME,
+      url,
+      platform: 'linux',
+      chrome: '/usr/bin/google-chrome',
+    });
+    expect(args).toEqual([
+      `--user-data-dir=${LINUX_HOME}/chrome`,
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-sync',
+      '--allow-browser-signin=false',
+      CHROME_AUTOPLAY_POLICY,
+      `--class=${CHROME_WM_CLASS}`,
+      `--app=${url}`,
+    ]);
+    expect(CHROME_WM_CLASS).toBe('parallax');
+    expect(chromePreferencesFile(LINUX_HOME)).toBe(`${LINUX_HOME}/chrome/Default/Preferences`);
+  });
+
+  it('Snap Chromium: the profile in the Snap folder (no hidden folder of $HOME), one per data directory', () => {
+    const env = { HOME: '/home/demo' };
+    const snap = chromeProfileDir(LINUX_HOME, { chrome: '/snap/bin/chromium', env });
+    expect(snap).toMatch(/^\/home\/demo\/snap\/chromium\/common\/parallax-[0-9a-f]{16}$/);
+    expect(chromeProfileDir('/home/demo/.parallax-other', { chrome: '/snap/bin/chromium', env })).not.toBe(
+      snap,
+    );
+    expect(chromeProfileDir(LINUX_HOME, { chrome: '/snap/bin/chromium', env })).toBe(snap);
+    expect(chromePreferencesFile(LINUX_HOME, { chrome: '/snap/bin/chromium', env })).toBe(
+      `${snap}/Default/Preferences`,
+    );
+    expect(
+      chromeAppArgs({ home: LINUX_HOME, url, platform: 'linux', chrome: '/snap/bin/chromium', env })[0],
+    ).toBe(`--user-data-dir=${snap}`);
+    // Without a safe HOME the usual profile stays.
+    expect(chromeProfileDir(LINUX_HOME, { chrome: '/snap/bin/chromium', env: { HOME: 'relative' } })).toBe(
+      `${LINUX_HOME}/chrome`,
+    );
+  });
+
+  it('locateChrome: no Chrome lookup on other platforms', async () => {
+    expect(await locateChrome({}, 'darwin')).toBeNull();
   });
 });
 

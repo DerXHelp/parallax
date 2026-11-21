@@ -5,6 +5,7 @@ import { makeError } from '@shared/errors';
 import type { EditorSettings } from '@shared/model';
 import type { Command } from '@shared/protocol';
 import { startScenario, type RunningScenario } from '@web/playground/PlaygroundScenario';
+import { useHostState } from '@web/state/hooks';
 import { resetClientStore } from '@web/state/store';
 import { TooltipProvider } from '@web/ui/tooltip';
 import { useSettingsEditor } from '../state/settings-editor';
@@ -230,5 +231,82 @@ describe('settings section "Files" (WP-58)', () => {
     });
     expect(screen.getAllByText('Looking for the program…')).toHaveLength(2);
     expect(await screen.findAllByText('Could not check which editors are installed.')).toHaveLength(2);
+  });
+});
+
+describe('settings section "Files" on a Linux desktop (WP-106)', () => {
+  const LINUX_DESKTOP = {
+    desktop: true,
+    externalConsole: true,
+    shellWindow: true,
+    editor: true,
+    fileManager: true,
+    autostart: true,
+    protocolHandler: true,
+  };
+
+  function LinuxSection() {
+    const editor = useSettingsEditor();
+    const hostState = useHostState();
+    return hostState === null ? null : <FilesSection editor={editor} hostState={hostState} />;
+  }
+
+  async function startLinux(editor?: EditorSettings) {
+    running = startScenario('linux', { select: null });
+    const scenario = running;
+    scenario.host.setHostState({
+      ...scenario.host.hostState,
+      capabilities: LINUX_DESKTOP,
+      ...(editor === undefined ? {} : { settings: { ...scenario.host.hostState.settings, editor } }),
+    });
+    render(
+      <TooltipProvider>
+        <LinuxSection />
+      </TooltipProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.queryAllByRole('radio').length).toBeGreaterThan(0);
+    });
+    return scenario;
+  }
+
+  it('the Linux presets; the stored default (Notepad++) shows as the default program', async () => {
+    const scenario = await startLinux();
+    expect(screen.getAllByRole('radio').map((item) => item.getAttribute('value'))).toEqual([
+      'vscode',
+      'vscodium',
+      'zed',
+      'sublime',
+      'kate',
+      'gnome_text_editor',
+      'gedit',
+      'custom',
+      'system',
+    ]);
+    const system = radio(/^Default program of the desktop/);
+    expect(system.getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByText(/The default program of the desktop is the default/)).toBeTruthy();
+    expect(screen.queryByText('Notepad++')).toBeNull();
+    expect(document.querySelector('[data-slot="editor-system-hint"]')).not.toBeNull();
+    // Nothing to save: the computer already applies the default program.
+    expect(updates(scenario)).toEqual([]);
+  });
+
+  it('choosing gedit saves at once; a shell as own program is refused with the Linux text', async () => {
+    const scenario = await startLinux();
+    const user = userEvent.setup();
+    await user.click(radio(/^gedit/));
+    await waitFor(() => {
+      expect(updates(scenario)).toEqual([
+        { name: 'settings.update', patch: { editor: { preset: 'gedit', executable: null, args: [] } } },
+      ]);
+    });
+    await user.click(radio(/^Own program/));
+    const path = screen.getByRole('textbox', { name: 'Program' });
+    await user.click(path);
+    await user.paste('/usr/bin/bash');
+    expect(
+      await screen.findByText(/shells, interpreters, terminal emulators and openers like xdg-open/),
+    ).toBeTruthy();
   });
 });

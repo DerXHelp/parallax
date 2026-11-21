@@ -481,6 +481,11 @@ export const en = {
       pathPlaceholder: '/usr/bin/editor',
       pathIssue: 'Enter a full path (like /usr/bin/…) – no relative path.',
       noEditor: 'This computer has no desktop: files open in the viewer of Parallax.',
+      /** WP-106 */
+      editorHint:
+        'Parallax opens a file in this program at the referenced line. The default program of the desktop is the default; the change applies to the next file you open.',
+      blockedIssue:
+        'This program cannot be the editor (shells, interpreters, terminal emulators and openers like xdg-open are blocked).',
     },
   },
   /** Section "Console" (WP-97, ADR-238): "Open shell in folder". */

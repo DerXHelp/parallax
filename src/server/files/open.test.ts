@@ -4,7 +4,8 @@ import { pino } from 'pino';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { defaultEditorSettings, type EditorSettings } from '@shared/model';
-import type { GuiChild, GuiSpawnFn } from '../lib/process';
+import { POSIX_PATHS } from '@shared/paths';
+import type { GuiChild, GuiSpawnFn, RunFileFn } from '../lib/process';
 import { createMemoryFs, type FsProbe } from '../lib/windows';
 import { CommandError } from '../sync/ports';
 import { createRecordingOpener, createSystemLauncher, type OpenRequest } from './open';
@@ -169,6 +170,116 @@ describe('createSystemLauncher (ADR-144; spawn faked – nothing starts)', () =>
     expect(await system.detect(defaultEditorSettings())).toEqual({
       notepadpp: NPP,
       vscode: null,
+      custom: null,
+    });
+  });
+});
+
+describe('createSystemLauncher on Linux (WP-106; spawn and gdbus faked – nothing starts)', () => {
+  const LINUX_ENV = { PATH: '/usr/bin', DISPLAY: ':0', HOME: '/home/demo' };
+  function linuxLauncher(files: readonly string[] = ['/usr/bin/code'], gdbusExit = 0) {
+    const spawn = recordingSpawn();
+    const ran: { file: string; args: readonly string[] }[] = [];
+    const run: RunFileFn = (file, args) => {
+      ran.push({ file, args });
+      return Promise.resolve({
+        exitCode: gdbusExit,
+        signal: null,
+        stdout: '()\n',
+        stderr: '',
+        timedOut: false,
+      });
+    };
+    const noRegistry = () => Promise.reject(new Error('no registry on Linux'));
+    const system = createSystemLauncher({
+      regQuery: noRegistry,
+      regKeyQuery: noRegistry,
+      probe: createMemoryFs(Object.fromEntries(files.map((file) => [file, ''])), { rules: POSIX_PATHS }),
+      env: LINUX_ENV,
+      spawn,
+      run,
+      platform: 'linux',
+    });
+    return { system, spawn, ran };
+  }
+  const linuxRequest = (p: Partial<OpenRequest> = {}): OpenRequest =>
+    request({
+      path: '/home/demo/link/src/a.ts',
+      realPath: '/home/demo/work/src/a.ts',
+      editor: { preset: 'vscode', executable: null, args: [] },
+      ...p,
+    });
+  const base = (file: string) => file.split('/').pop();
+
+  it('editor: the preset from PATH with its arguments, detached, no shell', async () => {
+    const { system, spawn } = linuxLauncher();
+    await system.open(linuxRequest({ line: 12, col: 3 }));
+    expect(spawn.calls).toHaveLength(1);
+    expect(spawn.calls[0]?.file).toBe('/usr/bin/code');
+    expect(spawn.calls[0]?.args).toEqual(['--goto', '/home/demo/work/src/a.ts:12:3']);
+    expect(spawn.calls[0]?.options).toMatchObject({
+      cwd: '/usr/bin',
+      shell: false,
+      detached: true,
+      stdio: 'ignore',
+    });
+    const missing = linuxLauncher([]);
+    await expect(missing.system.open(linuxRequest())).rejects.toMatchObject({
+      error: { code: 'EDITOR_NOT_FOUND', params: { preset: 'vscode' } },
+    });
+    expect(missing.spawn.calls).toEqual([]);
+  });
+
+  it('show in folder: FileManager1 over gdbus; without a file manager xdg-open on the folder', async () => {
+    const { system, spawn, ran } = linuxLauncher();
+    await system.open(linuxRequest({ target: 'explorer' }));
+    expect(ran.map((call) => call.args.slice(-3))).toEqual([
+      ['org.freedesktop.FileManager1.ShowItems', "['file:///home/demo/work/src/a.ts']", "''"],
+    ]);
+    expect(spawn.calls).toEqual([]);
+    const fallback = linuxLauncher(['/usr/bin/code'], 1);
+    await fallback.system.open(
+      linuxRequest({ target: 'explorer', realPath: '/home/demo/work', directory: true }),
+    );
+    expect(fallback.spawn.calls.map((call) => [base(call.file), call.args])).toEqual([
+      ['xdg-open', ['/home/demo/work']],
+    ]);
+  });
+
+  it('default program and the Notepad++ preset (not offered): xdg-open, only for allowed extensions', async () => {
+    const { system, spawn } = linuxLauncher();
+    await system.open(
+      linuxRequest({
+        target: 'default',
+        path: '/home/demo/work/doc.pdf',
+        realPath: '/home/demo/work/doc.pdf',
+      }),
+    );
+    const notepad = { preset: 'notepadpp', executable: null, args: [] } satisfies EditorSettings;
+    await system.open(
+      linuxRequest({ editor: notepad, path: '/home/demo/work/a.txt', realPath: '/home/demo/work/a.txt' }),
+    );
+    expect(spawn.calls.map((call) => [base(call.file), call.args])).toEqual([
+      ['xdg-open', ['/home/demo/work/doc.pdf']],
+      ['xdg-open', ['/home/demo/work/a.txt']],
+    ]);
+    // A script (also behind an allowed name) never goes to the default program.
+    for (const p of [
+      { path: '/home/demo/work/run.sh', realPath: '/home/demo/work/run.sh' },
+      { path: '/home/demo/work/a.txt', realPath: '/home/demo/work/run.desktop' },
+    ]) {
+      await expect(system.open(linuxRequest({ editor: notepad, ...p }))).rejects.toMatchObject({
+        error: { code: 'FILE_TYPE_BLOCKED' },
+      });
+    }
+    expect(spawn.calls).toHaveLength(2);
+  });
+
+  it('detect: no Notepad++ on Linux, VS Code from PATH', async () => {
+    const { system } = linuxLauncher();
+    expect(await system.detect({ preset: 'vscode', executable: null, args: [] })).toEqual({
+      notepadpp: null,
+      vscode: '/usr/bin/code',
       custom: null,
     });
   });
