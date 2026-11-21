@@ -15,20 +15,62 @@
  * consistency "None"), so the profile cannot be signed in at all – not even after a Google login
  * on a page opened from a link. Only command-line switches – no policies, no registry, no admin
  * rights. A company policy can override them (`pnpm preflight`, "chrome policies").
+ *
+ * Linux (WP-106, WP-100 §5.3): Chrome or Chromium from `findChromeLinux` (lib/chrome.ts), the same
+ * switches plus `--class=parallax` – the WM class the `.desktop` entries name in `StartupWMClass`
+ * (system/xdg.ts), so the window belongs to the Parallax entry in the dock. Chromium as a Snap must
+ * not write hidden folders in `$HOME` (`~/.local/share/parallax` is one): its profile lives in the
+ * Snap's own folder `~/snap/chromium/common/parallax-<hash of the data directory>` instead – one
+ * profile per data directory, like `<home>/chrome`. Callers pass the located program (`chrome`) to
+ * every profile function, so the window and the notification grant use the same folder.
  */
 import type { ChildProcess } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { z } from 'zod';
-import { findChrome } from '../lib/chrome';
+import { POSIX_PATHS, pathFlavorOfShape, pathRules } from '@shared/paths';
+import { findChrome, findChromeLinux, isSnapChrome } from '../lib/chrome';
 import { nodeFsOps, writeFileAtomic, type FsOps } from '../lib/fs';
-import { fsErrorCode } from '../lib/paths';
+import { fsErrorCode, pathModuleOf } from '../lib/paths';
 import { spawnHidden, type SpawnHiddenOptions } from '../lib/process';
 import { regQuery } from '../lib/registry';
 import { nodeFsProbe } from '../lib/windows';
 
-/** `<PARALLAX_HOME>\chrome` (the Edge profile `<home>\edge` of earlier versions stays untouched). */
-export function chromeProfileDir(home: string): string {
-  return path.join(home, 'chrome');
+/** WM class of the Parallax window on Linux (`--class`, `StartupWMClass` of the `.desktop` entries). */
+export const CHROME_WM_CLASS = 'parallax';
+
+/** Where Chrome runs: the located program (Snap Chromium needs another profile folder) and `HOME`. */
+export interface ChromeProfileOptions {
+  /** The located Chrome (`locateChrome`); absent/null = the usual profile `<home>/chrome`. */
+  chrome?: string | null;
+  /** `HOME` for the Snap's folder (default `process.env`). */
+  env?: Readonly<Record<string, string | undefined>>;
+}
+
+/** `$HOME/snap/chromium/common/parallax-<16 hex>`, or null without a safe absolute `HOME`. */
+function snapProfileDir(home: string, env: Readonly<Record<string, string | undefined>>): string | null {
+  const userHome = env.HOME;
+  if (userHome === undefined || POSIX_PATHS.issue(userHome) !== null) return null;
+  const hash = createHash('sha256').update(POSIX_PATHS.key(home), 'utf8').digest('hex').slice(0, 16);
+  return path.posix.join(userHome, 'snap', 'chromium', 'common', `parallax-${hash}`);
+}
+
+/** The path module that joins like `file` is written (`C:\…` → win32, `/…` → posix). */
+function joinerOf(file: string): typeof path.posix {
+  return pathModuleOf(pathRules(pathFlavorOfShape(file)));
+}
+
+/**
+ * `<PARALLAX_HOME>\chrome` (the Edge profile `<home>\edge` of earlier versions stays untouched),
+ * joined the way the data directory is written; Snap Chromium: the Snap's own folder (file comment).
+ */
+export function chromeProfileDir(home: string, options: ChromeProfileOptions = {}): string {
+  const chrome = options.chrome ?? null;
+  if (chrome !== null && isSnapChrome(chrome)) {
+    const snap = snapProfileDir(home, options.env ?? process.env);
+    if (snap !== null) return snap;
+  }
+  return joinerOf(home).join(home, 'chrome');
 }
 
 /**
@@ -38,10 +80,16 @@ export function chromeProfileDir(home: string): string {
  */
 export const CHROME_AUTOPLAY_POLICY = '--autoplay-policy=no-user-gesture-required';
 
-/** Arguments for one app window on `url` (`http://127.0.0.1:<port>/#code=<code>`). */
-export function chromeAppArgs(options: { home: string; url: string }): string[] {
+/**
+ * Arguments for one app window on `url` (`http://127.0.0.1:<port>/#code=<code>`); Linux adds
+ * `--class=parallax` (file comment).
+ */
+export function chromeAppArgs(
+  options: { home: string; url: string; platform?: NodeJS.Platform } & ChromeProfileOptions,
+): string[] {
+  const platform = options.platform ?? process.platform;
   return [
-    `--user-data-dir=${chromeProfileDir(options.home)}`,
+    `--user-data-dir=${chromeProfileDir(options.home, options)}`,
     // No first-run UI (welcome tab, sign-in promo), no "Chrome is not your default browser" bar.
     '--no-first-run',
     '--no-default-browser-check',
@@ -49,13 +97,15 @@ export function chromeAppArgs(options: { home: string; url: string }): string[] 
     '--disable-sync',
     '--allow-browser-signin=false',
     CHROME_AUTOPLAY_POLICY,
+    ...(platform === 'linux' ? [`--class=${CHROME_WM_CLASS}`] : []),
     `--app=${options.url}`,
   ];
 }
 
 /** `<profile>\Default\Preferences` of the app profile. */
-export function chromePreferencesFile(home: string): string {
-  return path.join(chromeProfileDir(home), 'Default', 'Preferences');
+export function chromePreferencesFile(home: string, options: ChromeProfileOptions = {}): string {
+  const profile = chromeProfileDir(home, options);
+  return joinerOf(profile).join(profile, 'Default', 'Preferences');
 }
 
 /** Chromium time (µs since 1601-01-01) as Chrome writes it into `last_modified`. */
@@ -82,9 +132,9 @@ export type NotificationGrant =
 export async function grantChromeNotifications(
   home: string,
   origin: string,
-  options: { now?: () => Date; fs?: FsOps } = {},
+  options: { now?: () => Date; fs?: FsOps } & ChromeProfileOptions = {},
 ): Promise<NotificationGrant> {
-  const file = chromePreferencesFile(home);
+  const file = chromePreferencesFile(home, options);
   const fs = options.fs ?? nodeFsOps;
   let prefs: Record<string, unknown> = {};
   try {
@@ -137,11 +187,19 @@ export async function grantChromeNotifications(
   }
 }
 
-/** Absolute chrome.exe or null (real registry and file system). */
+/**
+ * Absolute Chrome or null (real registry and file system): Windows `chrome.exe` (`findChrome`),
+ * Linux Chrome or Chromium (`findChromeLinux`; `configured` = an absolute program to try first),
+ * other platforms none.
+ */
 export function locateChrome(
   env: Readonly<Record<string, string | undefined>> = process.env,
+  platform: NodeJS.Platform = process.platform,
+  configured: string | null = null,
 ): Promise<string | null> {
-  return findChrome({ regQuery: regQuery(), fs: nodeFsProbe, env });
+  if (platform === 'win32') return findChrome({ regQuery: regQuery(), fs: nodeFsProbe, env });
+  if (platform === 'linux') return findChromeLinux({ fs: nodeFsProbe, env, configured });
+  return Promise.resolve(null);
 }
 
 /** The part of a ChildProcess the launcher uses (spawnHidden returns a full ChildProcess). */

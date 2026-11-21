@@ -37,7 +37,7 @@ import { SETTINGS_FILE } from './store/settings';
  * Platforms (WP-103): the real data directory comes from lib/dataDir.ts (Windows
  * `%LOCALAPPDATA%\Parallax`, Linux `$XDG_DATA_HOME/parallax` or `~/.local/share/parallax`); paths are
  * resolved and checked with the rules of the platform (`LoadConfigInput.platform`, default this
- * process). Native toasts exist only on Windows so far.
+ * process). Native toasts: Windows toasts, on Linux the desktop's notifications (WP-106).
  */
 
 /** Default data directory in dev mode, relative to the working directory (never the real data directory). */
@@ -63,11 +63,14 @@ export const validationModeSchema = z.enum(['off', 'log', 'throw']);
 export type ValidationMode = z.infer<typeof validationModeSchema>;
 
 /**
- * Native Windows toasts (WP22-03/-15, Plan A.9; sessions/nativeToasts.ts): `native` on Windows,
+ * Native toasts (WP22-03/-15, Plan A.9; sessions/nativeToasts.ts): `native` on Windows and Linux
+ * (WP-106: `notify-send`/D-Bus; without a graphical session the notifier switches itself off),
  * `off` under Vitest and in the E2E servers (`NODE_ENV=test`) – a test run must not pop up toasts
- * or write the HKCU app id. Flag `--toasts=native|off`, env `PARALLAX_TOASTS`.
+ * or write the HKCU app id. Other platforms: off. Flag `--toasts=native|off`, env `PARALLAX_TOASTS`.
  */
 export const toastModeSchema = z.enum(['native', 'off']);
+/** Platforms with native toasts (lib/toast.ts). */
+const NATIVE_TOAST_PLATFORMS: ReadonlySet<NodeJS.Platform> = new Set<NodeJS.Platform>(['win32', 'linux']);
 export type ToastMode = z.infer<typeof toastModeSchema>;
 
 /**
@@ -407,12 +410,13 @@ export function loadConfig(input: LoadConfigInput = {}): ServerConfig {
   let toasts: ToastMode =
     toastsRaw !== undefined
       ? parseOrThrow(toastModeSchema, toastsRaw, 'toasts')
-      : platform === 'win32' && env.VITEST === undefined && env.NODE_ENV !== 'test'
+      : NATIVE_TOAST_PLATFORMS.has(platform) && env.VITEST === undefined && env.NODE_ENV !== 'test'
         ? 'native'
         : 'off';
-  // Native toasts are Windows toasts (lib/toast.ts); elsewhere the browser notifications stay.
-  if (toasts === 'native' && platform !== 'win32') {
-    notes.push('native toasts exist only on Windows - toasts are off');
+  // Native toasts are Windows toasts and Linux desktop notifications (lib/toast.ts); elsewhere the
+  // browser notifications stay.
+  if (toasts === 'native' && !NATIVE_TOAST_PLATFORMS.has(platform)) {
+    notes.push('native toasts exist only on Windows and Linux - toasts are off');
     toasts = 'off';
   }
 

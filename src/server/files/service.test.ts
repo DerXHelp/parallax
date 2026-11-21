@@ -354,6 +354,14 @@ describe('createFileService – file.open (ADR-144; recording opener, nothing st
     });
   });
 
+  it('a preset this host does not offer opens like system (Notepad++ on Linux, WP-106)', async () => {
+    const s = await setup();
+    const notepadpp: EditorSettings = { preset: 'notepadpp', executable: null, args: [] };
+    s.settings.current = settingsSchema.parse({ editor: notepadpp });
+    await s.run(open(path.join(s.cwd, 'README.md'), 'editor'));
+    expect(s.opener.calls[0]?.target).toBe(process.platform === 'win32' ? 'editor' : 'default');
+  });
+
   it('missing files: FILE_NOT_FOUND, nothing started', async () => {
     const s = await setup();
     expect(await failure(s.run(open(path.join(s.cwd, 'gone.txt'), 'editor')))).toEqual({

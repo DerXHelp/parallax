@@ -90,17 +90,10 @@ export const CONSOLE_SCRIPT = [
   '}',
 ].join('\n');
 
-export interface ConsoleLauncherOptions {
+export interface ConsoleLauncherOptions extends ConsoleStateOptions {
   /** Default `runFile` – never in a test run (system/run.ts). */
   run?: RunFileFn;
-  platform?: NodeJS.Platform;
   timeoutMs?: number;
-  /** Default `isProcessAlive`. */
-  isAlive?: (pid: number) => boolean;
-  /** Exact creation time of `pid`; null = unknown (default `processStartTime`, natively). */
-  startTime?: (pid: number) => Promise<Date | null>;
-  /** Clock of the re-check interval (default `Date.now`). */
-  now?: () => number;
 }
 
 /** `pid=<n>;start=<ISO or empty>` → the process, or null for anything else. */
@@ -114,12 +107,27 @@ export function parseConsoleOutput(stdout: string): ConsoleProcess | null {
   return { pid, startedAt: Number.isNaN(time) ? null : new Date(time) };
 }
 
-function failed(reason: string): ConsoleOpenResult {
+export function consoleFailed(reason: string): ConsoleOpenResult {
   return { kind: 'failed', reason: reason.slice(0, 500) };
 }
 
-export function createConsoleLauncher(opts: ConsoleLauncherOptions = {}): ConsoleLauncher {
-  const run = systemRunner(opts.run);
+/** The liveness part of the launcher options (shared by the Windows and the Linux console). */
+export interface ConsoleStateOptions {
+  platform?: NodeJS.Platform;
+  /** Default `isProcessAlive`. */
+  isAlive?: (pid: number) => boolean;
+  /** Exact creation time of `pid`; null = unknown (default `processStartTime`, natively). */
+  startTime?: (pid: number) => Promise<Date | null>;
+  /** Clock of the re-check interval (default `Date.now`). */
+  now?: () => number;
+}
+
+/**
+ * `ConsoleLauncher.state` (file comment): alive, and – with a known start time – the same process
+ * (± 5 s); the creation time once per process, then every `CONSOLE_RECHECK_MS` (R4-05). Linux
+ * (WP-106): the same check over `/proc` (lib/procfs.ts behind `processStartTime`).
+ */
+export function createConsoleStateCheck(opts: ConsoleStateOptions = {}): ConsoleLauncher['state'] {
   const platform = opts.platform ?? process.platform;
   const isAlive = opts.isAlive ?? isProcessAlive;
   const startTime = opts.startTime ?? ((pid: number) => processStartTime(pid, { platform }));
@@ -139,16 +147,47 @@ export function createConsoleLauncher(opts: ConsoleLauncherOptions = {}): Consol
     return query;
   };
 
+  return async (proc) => {
+    if (proc.pid === null) return 'unknown';
+    const key = `${String(proc.pid)}:${String(proc.startedAt?.getTime() ?? '')}`;
+    try {
+      if (!isAlive(proc.pid)) {
+        verified.delete(key);
+        return 'ended';
+      }
+      if (proc.startedAt === null) return 'running';
+      // R4-05: the creation time once per process, then again every CONSOLE_RECHECK_MS only.
+      const confirmed = verified.get(key);
+      if (confirmed !== undefined && now() - confirmed < CONSOLE_RECHECK_MS) return 'running';
+      const actual = await queryStart(key, proc.pid);
+      if (actual === null) return 'unknown';
+      if (Math.abs(actual.getTime() - proc.startedAt.getTime()) > CONSOLE_START_TOLERANCE_MS) {
+        verified.delete(key);
+        return 'ended';
+      }
+      verified.set(key, now());
+      return 'running';
+    } catch {
+      return 'unknown';
+    }
+  };
+}
+
+export function createConsoleLauncher(opts: ConsoleLauncherOptions = {}): ConsoleLauncher {
+  const run = systemRunner(opts.run);
+  const platform = opts.platform ?? process.platform;
+  const state = createConsoleStateCheck(opts);
+
   return {
     open: async (spec: ConsoleLaunchSpec): Promise<ConsoleOpenResult> => {
-      if (platform !== 'win32') return failed('not Windows');
+      if (platform !== 'win32') return consoleFailed('not Windows');
       try {
         assertSpawnableFile(spec.executablePath, 'win32');
       } catch (error) {
-        return failed(toError(error).message);
+        return consoleFailed(toError(error).message);
       }
       const cwdIssue = windowsPathIssue(spec.cwd);
-      if (cwdIssue !== null) return failed(`working directory rejected (${cwdIssue})`);
+      if (cwdIssue !== null) return consoleFailed(`working directory rejected (${cwdIssue})`);
       // spec.env without any (differently cased) carrier, then the carriers of this spec.
       const carriers = new Set<string>(Object.values(CONSOLE_ENV));
       const env: Record<string, string> = {};
@@ -159,7 +198,7 @@ export function createConsoleLauncher(opts: ConsoleLauncherOptions = {}): Consol
       env[CONSOLE_ENV.args] = windowsCommandLine(spec.args);
       env[CONSOLE_ENV.cwd] = spec.cwd;
       for (const { name, carrier } of PS_OWN_VARS) {
-        const value = getEnvVar(spec.env, name);
+        const value = getEnvVar(spec.env, name, 'win32');
         if (value !== undefined && value !== '') env[carrier] = value;
       }
       try {
@@ -169,39 +208,35 @@ export function createConsoleLauncher(opts: ConsoleLauncherOptions = {}): Consol
           ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodePowerShell(CONSOLE_SCRIPT)],
           { env, timeoutMs: opts.timeoutMs ?? CONSOLE_TIMEOUT_MS, maxOutputBytes: 16 * 1024 },
         );
-        if (result.timedOut) return failed('timeout');
+        if (result.timedOut) return consoleFailed('timeout');
         const output = result.stdout.trim();
         const opened = result.exitCode === 0 ? parseConsoleOutput(output) : null;
         if (opened !== null) return { kind: 'opened', process: opened };
-        return failed(`exit ${String(result.exitCode)}: ${output || result.stderr.trim()}`);
+        return consoleFailed(`exit ${String(result.exitCode)}: ${output || result.stderr.trim()}`);
       } catch (error) {
-        return failed(`powershell could not be started: ${toError(error).message}`);
+        return consoleFailed(`powershell could not be started: ${toError(error).message}`);
       }
     },
-
-    state: async (proc) => {
-      if (proc.pid === null) return 'unknown';
-      const key = `${String(proc.pid)}:${String(proc.startedAt?.getTime() ?? '')}`;
-      try {
-        if (!isAlive(proc.pid)) {
-          verified.delete(key);
-          return 'ended';
-        }
-        if (proc.startedAt === null) return 'running';
-        // R4-05: the creation time once per process, then again every CONSOLE_RECHECK_MS only.
-        const confirmed = verified.get(key);
-        if (confirmed !== undefined && now() - confirmed < CONSOLE_RECHECK_MS) return 'running';
-        const actual = await queryStart(key, proc.pid);
-        if (actual === null) return 'unknown';
-        if (Math.abs(actual.getTime() - proc.startedAt.getTime()) > CONSOLE_START_TOLERANCE_MS) {
-          verified.delete(key);
-          return 'ended';
-        }
-        verified.set(key, now());
-        return 'running';
-      } catch {
-        return 'unknown';
-      }
-    },
+    state,
   };
+}
+
+/**
+ * WP-106: a check a launcher can answer BEFORE the SDK query is closed (`session.openExternal`):
+ * the reason it cannot open a window right now (no terminal emulator), or null. Registered by the
+ * launchers that need one (the Linux console); the port stays as it is.
+ */
+export type ConsolePreflight = (spec: ConsoleLaunchSpec) => Promise<string | null>;
+
+const preflights = new WeakMap<ConsoleLauncher, ConsolePreflight>();
+
+/** Registers the preflight of `launcher` (see `ConsolePreflight`). */
+export function withConsolePreflight<T extends ConsoleLauncher>(launcher: T, preflight: ConsolePreflight): T {
+  preflights.set(launcher, preflight);
+  return launcher;
+}
+
+/** The preflight of `launcher`, or null (Windows, fake, test launchers: none). */
+export function consolePreflight(launcher: ConsoleLauncher): ConsolePreflight | null {
+  return preflights.get(launcher) ?? null;
 }

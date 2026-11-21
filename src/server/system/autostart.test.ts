@@ -32,6 +32,8 @@ import {
 
 const REPO = 'D:\\dev\\Parallax Repo';
 const NODE = 'C:\\Program Files\\nodejs\\node.exe';
+/** Shortcut paths from a real temp APPDATA need Windows paths (the folder is created). */
+const onWindows = process.platform === 'win32';
 
 function fakeRun(stdout = 'created', extra: Partial<RunFileResult> | Error = {}) {
   const calls: { file: string; args: readonly string[]; options: RunFileOptions }[] = [];
@@ -91,6 +93,27 @@ describe('launcherCommand (ADR-110)', () => {
     );
   });
 
+  it('WP-106: a POSIX repo root gives POSIX paths (Linux clone)', async () => {
+    const command = await launcherCommand('/home/demo/dev/parallax', ['--autostart'], {
+      realpath: () => Promise.resolve('/usr/bin/node'),
+    });
+    expect(command).toEqual({
+      node: '/usr/bin/node',
+      args: [
+        '/home/demo/dev/parallax/node_modules/tsx/dist/cli.mjs',
+        '--tsconfig',
+        '/home/demo/dev/parallax/src/server/tsconfig.json',
+        '/home/demo/dev/parallax/src/server/launcher/main.ts',
+        '--autostart',
+      ],
+      cwd: '/home/demo/dev/parallax',
+    });
+    const installed = await installedLauncherCommand('/opt/parallax', [], {
+      realpath: () => Promise.resolve('/usr/bin/node'),
+    });
+    expect(installed.args).toEqual(['--use-system-ca', '--use-env-proxy', '/opt/parallax/start.mjs']);
+  });
+
   it('uses the real node.exe by default', async () => {
     const command = await launcherCommand(REPO, []);
     expect(path.isAbsolute(command.node)).toBe(true);
@@ -121,40 +144,43 @@ describe('autostart shortcut (ADR-110)', () => {
     expect(autostartLinkPath({ APPDATA: '\\\\server\\roaming' })).toBeNull();
   });
 
-  it('creates it with WScript.Shell: constant script, data in the environment, minimized window', async () => {
-    const appData = await makeTempHome('appdata-');
-    const link = autostartLinkPath({ APPDATA: appData });
-    if (link === null) throw new Error('no link path');
-    const { run, calls } = fakeRun('created');
-    const env = { SystemRoot: 'C:\\Windows', PARALLAX_LNK_ARGS: 'inherited' };
-    expect(await createAutostartShortcut(link, COMMAND, { run, env })).toEqual({ ok: true });
-    // The Startup folder exists (created in the temp APPDATA).
-    expect((await stat(path.dirname(link))).isDirectory()).toBe(true);
-    const call = calls[0];
-    if (call === undefined) throw new Error('no call');
-    expect(call.file).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
-    // R4-04: no -ExecutionPolicy.
-    expect(call.args).toEqual([
-      '-NoProfile',
-      '-NonInteractive',
-      '-EncodedCommand',
-      encodePowerShell(AUTOSTART_SCRIPT),
-    ]);
-    expect(call.options.env).toEqual({
-      SystemRoot: 'C:\\Windows',
-      [AUTOSTART_ENV.action]: 'create',
-      [AUTOSTART_ENV.path]: link,
-      [AUTOSTART_ENV.target]: NODE,
-      [AUTOSTART_ENV.args]: windowsCommandLine(COMMAND.args),
-      [AUTOSTART_ENV.cwd]: REPO,
-      [AUTOSTART_ENV.description]: 'Parallax',
-      [AUTOSTART_ENV.marker]: LAUNCHER_MARKER,
-    });
-    expect(AUTOSTART_SCRIPT).toContain('New-Object -ComObject WScript.Shell');
-    expect(AUTOSTART_SCRIPT).toContain('$link.WindowStyle = 7');
-    expect(AUTOSTART_SCRIPT).not.toContain(REPO);
-    expect(AUTOSTART_SCRIPT).not.toMatch(/HKCU|HKLM|cmd\.exe|Invoke-Expression/i);
-  });
+  it.runIf(onWindows)(
+    'creates it with WScript.Shell: constant script, data in the environment, minimized window',
+    async () => {
+      const appData = await makeTempHome('appdata-');
+      const link = autostartLinkPath({ APPDATA: appData });
+      if (link === null) throw new Error('no link path');
+      const { run, calls } = fakeRun('created');
+      const env = { SystemRoot: 'C:\\Windows', PARALLAX_LNK_ARGS: 'inherited' };
+      expect(await createAutostartShortcut(link, COMMAND, { run, env })).toEqual({ ok: true });
+      // The Startup folder exists (created in the temp APPDATA).
+      expect((await stat(path.dirname(link))).isDirectory()).toBe(true);
+      const call = calls[0];
+      if (call === undefined) throw new Error('no call');
+      expect(call.file).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+      // R4-04: no -ExecutionPolicy.
+      expect(call.args).toEqual([
+        '-NoProfile',
+        '-NonInteractive',
+        '-EncodedCommand',
+        encodePowerShell(AUTOSTART_SCRIPT),
+      ]);
+      expect(call.options.env).toEqual({
+        SystemRoot: 'C:\\Windows',
+        [AUTOSTART_ENV.action]: 'create',
+        [AUTOSTART_ENV.path]: link,
+        [AUTOSTART_ENV.target]: NODE,
+        [AUTOSTART_ENV.args]: windowsCommandLine(COMMAND.args),
+        [AUTOSTART_ENV.cwd]: REPO,
+        [AUTOSTART_ENV.description]: 'Parallax',
+        [AUTOSTART_ENV.marker]: LAUNCHER_MARKER,
+      });
+      expect(AUTOSTART_SCRIPT).toContain('New-Object -ComObject WScript.Shell');
+      expect(AUTOSTART_SCRIPT).toContain('$link.WindowStyle = 7');
+      expect(AUTOSTART_SCRIPT).not.toContain(REPO);
+      expect(AUTOSTART_SCRIPT).not.toMatch(/HKCU|HKLM|cmd\.exe|Invoke-Expression/i);
+    },
+  );
 
   it('removes it; failures are results, never thrown', async () => {
     const removed = fakeRun('removed');
@@ -194,24 +220,27 @@ describe('autostart shortcut (ADR-110)', () => {
     });
   });
 
-  it('CR2-03: creating passes the marker and refuses a foreign shortcut (reason foreign, never replaced)', async () => {
-    const appData = await makeTempHome('appdata-');
-    const link = autostartLinkPath({ APPDATA: appData });
-    if (link === null) throw new Error('no link path');
-    const foreign = fakeRun(FOREIGN_SHORTCUT);
-    expect(await createAutostartShortcut(link, COMMAND, { run: foreign.run, env: {} })).toEqual({
-      ok: false,
-      reason: FOREIGN_SHORTCUT,
-    });
-    expect(foreign.calls[0]?.options.env).toMatchObject({
-      [AUTOSTART_ENV.action]: 'create',
-      [AUTOSTART_ENV.marker]: LAUNCHER_MARKER,
-    });
-    // An own shortcut (marker in its arguments) is refreshed as before.
-    expect(await createAutostartShortcut(link, COMMAND, { run: fakeRun('created').run, env: {} })).toEqual({
-      ok: true,
-    });
-  });
+  it.runIf(onWindows)(
+    'CR2-03: creating passes the marker and refuses a foreign shortcut (reason foreign, never replaced)',
+    async () => {
+      const appData = await makeTempHome('appdata-');
+      const link = autostartLinkPath({ APPDATA: appData });
+      if (link === null) throw new Error('no link path');
+      const foreign = fakeRun(FOREIGN_SHORTCUT);
+      expect(await createAutostartShortcut(link, COMMAND, { run: foreign.run, env: {} })).toEqual({
+        ok: false,
+        reason: FOREIGN_SHORTCUT,
+      });
+      expect(foreign.calls[0]?.options.env).toMatchObject({
+        [AUTOSTART_ENV.action]: 'create',
+        [AUTOSTART_ENV.marker]: LAUNCHER_MARKER,
+      });
+      // An own shortcut (marker in its arguments) is refreshed as before.
+      expect(await createAutostartShortcut(link, COMMAND, { run: fakeRun('created').run, env: {} })).toEqual({
+        ok: true,
+      });
+    },
+  );
 
   it('CR2-03: the script checks an existing shortcut before either action (create and remove, R4-11)', () => {
     const lines = AUTOSTART_SCRIPT.split('\n');
@@ -344,47 +373,50 @@ describe('shortcut script markers (WP-86)', () => {
     cwd: ROOT,
   };
 
-  it('passes the own markers |-separated and the deferred ones only when there are any', async () => {
-    const appData = await makeTempHome('appdata-');
-    const link = autostartLinkPath({ APPDATA: appData });
-    if (link === null) throw new Error('no link path');
-    const clone = fakeRun('created');
-    const inherited = { PARALLAX_LNK_DEFER: 'x', PARALLAX_LNK_ICON: 'y' };
-    await createAutostartShortcut(link, COMMAND_OF_REPO, {
-      run: clone.run,
-      env: inherited,
-      markers: entryMarkers(null),
-    });
-    expect(clone.calls[0]?.options.env).toMatchObject({
-      [AUTOSTART_ENV.marker]: LAUNCHER_MARKER,
-      [AUTOSTART_ENV.defer]: '\\start.mjs',
-    });
-    // The autostart shortcut never gets an icon, also not an inherited one.
-    expect(clone.calls[0]?.options.env).not.toHaveProperty(AUTOSTART_ENV.icon);
-    const installation = fakeRun('created');
-    await createAutostartShortcut(link, INSTALLED, {
-      run: installation.run,
-      env: inherited,
-      markers: entryMarkers(ROOT),
-    });
-    expect(installation.calls[0]?.options.env).toMatchObject({
-      [AUTOSTART_ENV.marker]: `${LAUNCHER_MARKER}|${ROOT}\\start.mjs`,
-      [AUTOSTART_ENV.args]: `--use-system-ca --use-env-proxy ${ROOT}\\start.mjs --autostart`,
-      [AUTOSTART_ENV.cwd]: ROOT,
-    });
-    expect(installation.calls[0]?.options.env).not.toHaveProperty(AUTOSTART_ENV.defer);
-    const remove = fakeRun('removed');
-    await removeAutostartShortcut(link, {
-      run: remove.run,
-      env: {},
-      markers: installationOnlyMarkers(ROOT),
-    });
-    expect(remove.calls[0]?.options.env).toEqual({
-      [AUTOSTART_ENV.action]: 'remove',
-      [AUTOSTART_ENV.path]: link,
-      [AUTOSTART_ENV.marker]: `${ROOT}\\start.mjs`,
-    });
-  });
+  it.runIf(onWindows)(
+    'passes the own markers |-separated and the deferred ones only when there are any',
+    async () => {
+      const appData = await makeTempHome('appdata-');
+      const link = autostartLinkPath({ APPDATA: appData });
+      if (link === null) throw new Error('no link path');
+      const clone = fakeRun('created');
+      const inherited = { PARALLAX_LNK_DEFER: 'x', PARALLAX_LNK_ICON: 'y' };
+      await createAutostartShortcut(link, COMMAND_OF_REPO, {
+        run: clone.run,
+        env: inherited,
+        markers: entryMarkers(null),
+      });
+      expect(clone.calls[0]?.options.env).toMatchObject({
+        [AUTOSTART_ENV.marker]: LAUNCHER_MARKER,
+        [AUTOSTART_ENV.defer]: '\\start.mjs',
+      });
+      // The autostart shortcut never gets an icon, also not an inherited one.
+      expect(clone.calls[0]?.options.env).not.toHaveProperty(AUTOSTART_ENV.icon);
+      const installation = fakeRun('created');
+      await createAutostartShortcut(link, INSTALLED, {
+        run: installation.run,
+        env: inherited,
+        markers: entryMarkers(ROOT),
+      });
+      expect(installation.calls[0]?.options.env).toMatchObject({
+        [AUTOSTART_ENV.marker]: `${LAUNCHER_MARKER}|${ROOT}\\start.mjs`,
+        [AUTOSTART_ENV.args]: `--use-system-ca --use-env-proxy ${ROOT}\\start.mjs --autostart`,
+        [AUTOSTART_ENV.cwd]: ROOT,
+      });
+      expect(installation.calls[0]?.options.env).not.toHaveProperty(AUTOSTART_ENV.defer);
+      const remove = fakeRun('removed');
+      await removeAutostartShortcut(link, {
+        run: remove.run,
+        env: {},
+        markers: installationOnlyMarkers(ROOT),
+      });
+      expect(remove.calls[0]?.options.env).toEqual({
+        [AUTOSTART_ENV.action]: 'remove',
+        [AUTOSTART_ENV.path]: link,
+        [AUTOSTART_ENV.marker]: `${ROOT}\\start.mjs`,
+      });
+    },
+  );
 
   it('output "deferred": left alone, a success for both actions (no failure, no warning)', async () => {
     const appData = await makeTempHome('appdata-');
@@ -450,44 +482,47 @@ describe('start menu shortcut (WP-86)', () => {
     expect(startMenuLinkPath({ APPDATA: '\\\\server\\roaming' })).toBeNull();
   });
 
-  it('creates it with the icon, the minimized window and the marker rules (folder created)', async () => {
-    const appData = await makeTempHome('appdata-');
-    const link = startMenuLinkPath({ APPDATA: appData });
-    if (link === null) throw new Error('no link path');
-    const { run, calls } = fakeRun('created');
-    const icon = installIconPath(ROOT);
-    const env = { SystemRoot: 'C:\\Windows', PARALLAX_LNK_ICON: 'inherited' };
-    expect(
-      await createStartMenuShortcut(link, INSTALLED, icon, { run, env, markers: entryMarkers(ROOT) }),
-    ).toEqual({ ok: true });
-    expect((await stat(path.dirname(link))).isDirectory()).toBe(true);
-    expect(calls[0]?.args).toEqual([
-      '-NoProfile',
-      '-NonInteractive',
-      '-EncodedCommand',
-      encodePowerShell(AUTOSTART_SCRIPT),
-    ]);
-    expect(calls[0]?.options.env).toEqual({
-      SystemRoot: 'C:\\Windows',
-      [AUTOSTART_ENV.action]: 'create',
-      [AUTOSTART_ENV.path]: link,
-      [AUTOSTART_ENV.target]: NODE,
-      [AUTOSTART_ENV.args]: `--use-system-ca --use-env-proxy ${ROOT}\\start.mjs`,
-      [AUTOSTART_ENV.cwd]: ROOT,
-      [AUTOSTART_ENV.description]: 'Parallax',
-      [AUTOSTART_ENV.icon]: `${ROOT}\\parallax.ico`,
-      [AUTOSTART_ENV.marker]: `${LAUNCHER_MARKER}|${ROOT}\\start.mjs`,
-    });
-    expect(AUTOSTART_SCRIPT).toContain('$link.WindowStyle = 7');
-    // A foreign start menu shortcut (e.g. one the user made) is never replaced.
-    expect(
-      await createStartMenuShortcut(link, INSTALLED, icon, {
-        run: fakeRun(FOREIGN_SHORTCUT).run,
-        env: {},
-        markers: entryMarkers(ROOT),
-      }),
-    ).toEqual({ ok: false, reason: FOREIGN_SHORTCUT });
-  });
+  it.runIf(onWindows)(
+    'creates it with the icon, the minimized window and the marker rules (folder created)',
+    async () => {
+      const appData = await makeTempHome('appdata-');
+      const link = startMenuLinkPath({ APPDATA: appData });
+      if (link === null) throw new Error('no link path');
+      const { run, calls } = fakeRun('created');
+      const icon = installIconPath(ROOT);
+      const env = { SystemRoot: 'C:\\Windows', PARALLAX_LNK_ICON: 'inherited' };
+      expect(
+        await createStartMenuShortcut(link, INSTALLED, icon, { run, env, markers: entryMarkers(ROOT) }),
+      ).toEqual({ ok: true });
+      expect((await stat(path.dirname(link))).isDirectory()).toBe(true);
+      expect(calls[0]?.args).toEqual([
+        '-NoProfile',
+        '-NonInteractive',
+        '-EncodedCommand',
+        encodePowerShell(AUTOSTART_SCRIPT),
+      ]);
+      expect(calls[0]?.options.env).toEqual({
+        SystemRoot: 'C:\\Windows',
+        [AUTOSTART_ENV.action]: 'create',
+        [AUTOSTART_ENV.path]: link,
+        [AUTOSTART_ENV.target]: NODE,
+        [AUTOSTART_ENV.args]: `--use-system-ca --use-env-proxy ${ROOT}\\start.mjs`,
+        [AUTOSTART_ENV.cwd]: ROOT,
+        [AUTOSTART_ENV.description]: 'Parallax',
+        [AUTOSTART_ENV.icon]: `${ROOT}\\parallax.ico`,
+        [AUTOSTART_ENV.marker]: `${LAUNCHER_MARKER}|${ROOT}\\start.mjs`,
+      });
+      expect(AUTOSTART_SCRIPT).toContain('$link.WindowStyle = 7');
+      // A foreign start menu shortcut (e.g. one the user made) is never replaced.
+      expect(
+        await createStartMenuShortcut(link, INSTALLED, icon, {
+          run: fakeRun(FOREIGN_SHORTCUT).run,
+          env: {},
+          markers: entryMarkers(ROOT),
+        }),
+      ).toEqual({ ok: false, reason: FOREIGN_SHORTCUT });
+    },
+  );
 
   it('removes it with the given markers; no icon, no target', async () => {
     const removed = fakeRun('removed');

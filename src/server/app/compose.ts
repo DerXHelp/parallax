@@ -47,7 +47,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Logger } from 'pino';
 import type { EntryId, ProfileId } from '@shared/common';
 import { REMOTE_PATHS, serverOrigin } from '@shared/http';
-import type { Settings } from '@shared/model';
+import type { HostCapabilities, Settings } from '@shared/model';
 import { WS_CLOSE, type SessionOp } from '@shared/protocol';
 import { createFakeBackend } from '../backend/fakeBackend';
 import { createFakeClaudeIntegration } from '../backend/fake/integration';
@@ -115,9 +115,10 @@ import { createSyncHub, type SyncHub } from '../sync/hub';
 import type { UpdateService } from '../update/ports';
 import { createUpdateService } from '../update/service';
 import type { AttachmentFileStore, SessionPublisher } from '../sync/ports';
-import { createConsoleLauncher } from '../system/console';
+import { consoleFailed } from '../system/console';
 import { createFakeConsoleLauncher, FAKE_CONSOLE_RUN_MS } from '../system/fakeConsole';
 import { createSystemIntegration } from '../system/index';
+import { createPlatformConsoleLauncher, linuxDesktopCapabilities } from '../system/platform';
 import type { ConsoleLauncher, SystemIntegration } from '../system/ports';
 import { createFakePtyFactory } from '../terminal/fakePty';
 import { createPlatformPty } from '../terminal/platformPty';
@@ -302,8 +303,32 @@ async function openStores(config: ServerConfig, instance: ServerInstance, log: L
 interface Engine {
   backend: AgentBackend;
   claude: ClaudeIntegration;
-  /** `session.openExternal` (ADR-104). */
-  consoleLauncher: ConsoleLauncher;
+  /**
+   * `session.openExternal` (ADR-104) and the shell window (WP-97): PowerShell on Windows, a terminal
+   * emulator on a Linux desktop (WP-106); null without a desktop (server mode) – the engine then
+   * answers EXTERNAL_CONSOLE_FAILED {reason: 'unavailable'} and the shell window SHELL_OPEN_FAILED.
+   */
+  consoleLauncher: ConsoleLauncher | null;
+}
+
+/** The shell window's launcher where the host has no console window (server mode, WP-106). */
+const NO_CONSOLE_WINDOW: ConsoleLauncher = {
+  open: () => Promise.resolve(consoleFailed('no desktop on this computer')),
+  state: () => Promise.resolve('unknown'),
+};
+
+/**
+ * `HostState.capabilities` (WP-103/106): Windows everything; Linux with the SDK backend what the
+ * desktop offers (`linuxDesktopCapabilities`); the FakeBackend (dev, E2E) and other platforms keep
+ * `hostCapabilities()`.
+ */
+export async function desktopCapabilities(
+  config: Pick<ServerConfig, 'backend'>,
+  terminalEmulator: () => string | null,
+  platform: NodeJS.Platform = process.platform,
+): Promise<HostCapabilities> {
+  if (platform !== 'linux' || config.backend === 'fake') return hostCapabilities(platform);
+  return linuxDesktopCapabilities({ terminalEmulator: terminalEmulator() });
 }
 
 /** The session id after `--resume` in a console spec (fake console), or null. */
@@ -459,6 +484,8 @@ async function createEngine(
   instance: ServerInstance,
   fakeSpeed: number,
   profiles: PersistentProfileStore,
+  /** Linux: `console.terminalEmulator` of the settings at the time of the click (WP-106). */
+  terminalEmulator: () => string | null,
 ): Promise<Engine> {
   if (config.backend === 'fake') {
     const fakeBackend = createFakeBackend({
@@ -483,7 +510,7 @@ async function createEngine(
   return {
     backend: createSdkBackend(),
     claude: createClaudeIntegration({ appVersion: instance.serverVersion, profiles }),
-    consoleLauncher: createConsoleLauncher(),
+    consoleLauncher: createPlatformConsoleLauncher({ terminalEmulator }),
   };
 }
 
@@ -640,7 +667,13 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   };
 
   try {
-    engine = await createEngine(config, instance, options.fakeSpeed ?? DEFAULT_FAKE_SPEED, stores.profiles);
+    engine = await createEngine(
+      config,
+      instance,
+      options.fakeSpeed ?? DEFAULT_FAKE_SPEED,
+      stores.profiles,
+      () => stores.settings.get().console.terminalEmulator,
+    );
     const { backend, claude, consoleLauncher } = engine;
     const manifest = await readSdkManifest();
     // Delete protection and `profile.get`: entries of the profile, archived ones included (ADR-102).
@@ -792,6 +825,12 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       ...loggerOption,
     });
     terminals = terminalService;
+    // WP-106: what the desktop of this host offers, probed once at the start (Linux: terminal
+    // emulator, xdg-open, gdbus, xdg-mime; never hangs).
+    const capabilities = await desktopCapabilities(
+      config,
+      () => stores.settings.get().console.terminalEmulator,
+    );
     const sessions = createSessionManager({
       toasts,
       // WP22-06: the FakeBackend has no real process tree (fake PIDs) – no heartbeat snapshots.
@@ -818,8 +857,8 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         sdkVersion: manifest?.sdkVersion ?? 'unknown',
         sdkClaudeCodeVersion: manifest?.claudeCodeVersion ?? 'unknown',
         platform: process.platform,
-        // WP-103: desktop actions of this host (Windows: all; Linux: per graphical session, WP-106).
-        capabilities: hostCapabilities(),
+        // WP-103/106: desktop actions of this host (Windows: all; Linux: what the desktop offers).
+        capabilities,
         dataDirLabel: config.dataDirLabel,
         dev: config.dev,
         port: () => listeningPort,
@@ -868,7 +907,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
           launcher:
             config.backend === 'fake'
               ? createRecordingShellLauncher({ logger: options.logger })
-              : consoleLauncher,
+              : (consoleLauncher ?? NO_CONSOLE_WINDOW),
         }),
       ],
       loginState: (profileId) => loginService.state(profileId),
@@ -878,7 +917,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
         updateService.settingsChanged(next);
       },
       extraWarnings: () => system.warnings(),
-      consoleLauncher,
+      ...(consoleLauncher === null ? {} : { consoleLauncher }),
       // 102e: "Continue in terminal" (`session.openInTerminal`) starts claude in the embedded terminal.
       terminal: terminalService,
       systemIntegration: system,

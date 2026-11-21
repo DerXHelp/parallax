@@ -16,7 +16,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EntryId } from '@shared/common';
 import { makeError } from '@shared/errors';
 import { API_PATHS, attachmentUploadResponseSchema, authCookieName, fileUrl } from '@shared/http';
-import { sessionFilesFileSchema, type HostWarning, type Settings } from '@shared/model';
+import {
+  sessionFilesFileSchema,
+  WINDOWS_HOST_CAPABILITIES,
+  type HostWarning,
+  type Settings,
+} from '@shared/model';
 import { commandResultSchemas, type Command } from '@shared/protocol';
 import {
   sampleConversation,
@@ -38,6 +43,7 @@ import { readServerLock, serverLockPath } from '../launcher/lockFile';
 import type { ServerShutdown, SignalTarget } from '../launcher/shutdown';
 import { acquireHomeLock, type HomeLock } from '../lib/homeLock';
 import { createLogger } from '../lib/logger';
+import { hostCapabilities } from '../lib/platform';
 import { attachmentsDir } from '../store/attachments';
 import { entryDir } from '../store/decisions';
 import type { CommandContext } from '../sync/ports';
@@ -45,6 +51,7 @@ import type { SystemIntegration } from '../system/ports';
 import type { UpdateService } from '../update/ports';
 import { createFakeUpdateService } from '../update/testing';
 import {
+  desktopCapabilities,
   FAKE_FILES_HOME_DIR,
   fileEntryLookup,
   observedPublisher,
@@ -913,5 +920,18 @@ describe('safeHomeDir (102e)', () => {
         throw new Error('no home');
       }),
     ).toBeNull();
+  });
+});
+
+describe('desktopCapabilities (WP-106)', () => {
+  it('Windows: everything; the FakeBackend and other platforms keep hostCapabilities()', async () => {
+    const never = () => {
+      throw new Error('the terminal setting is only read on Linux with the SDK backend');
+    };
+    expect(await desktopCapabilities({ backend: 'sdk' }, never, 'win32')).toEqual(WINDOWS_HOST_CAPABILITIES);
+    expect(await desktopCapabilities({ backend: 'fake' }, never, 'linux')).toEqual(hostCapabilities('linux'));
+    expect(await desktopCapabilities({ backend: 'sdk' }, never, 'darwin')).toEqual(
+      hostCapabilities('darwin'),
+    );
   });
 });

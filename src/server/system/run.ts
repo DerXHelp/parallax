@@ -6,7 +6,7 @@
  * – the console, the shortcut and the registry stay untouched even by a forgotten seam.
  */
 import { isTestRun } from '../config';
-import { runFile, type RunFileFn } from '../lib/process';
+import { runFile, spawnHidden, type RunFileFn, type SpawnHiddenOptions } from '../lib/process';
 
 /**
  * Result of one integration step; never thrown (failures become host warnings). `deferred`: the
@@ -27,6 +27,33 @@ export function systemRunner(run?: RunFileFn): RunFileFn {
   if (run !== undefined) return run;
   return (file, args, options) =>
     isTestProcess() ? Promise.reject(new Error(TEST_RUN_REFUSAL)) : runFile(file, args, options);
+}
+
+/** What the Linux console needs of a started terminal emulator (a ChildProcess; fakes in tests). */
+export interface SpawnedProcess {
+  readonly pid?: number | undefined;
+  once(event: 'spawn', listener: () => void): unknown;
+  once(event: 'error', listener: (error: Error) => void): unknown;
+  once(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown;
+  unref(): void;
+}
+
+export type SystemSpawnFn = (
+  file: string,
+  args: readonly string[],
+  options: SpawnHiddenOptions,
+) => SpawnedProcess;
+
+/**
+ * WP-106: the injected spawner, else `spawnHidden` – which a test run never gets (throws before
+ * anything starts, like `systemRunner`). The Linux console opens a terminal emulator with it.
+ */
+export function systemSpawner(spawn?: SystemSpawnFn): SystemSpawnFn {
+  if (spawn !== undefined) return spawn;
+  return (file, args, options) => {
+    if (isTestProcess()) throw new Error(TEST_RUN_REFUSAL);
+    return spawnHidden(file, args, options);
+  };
 }
 
 /** The injected environment, else `process.env` – in a test run an empty one (no real APPDATA). */

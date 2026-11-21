@@ -6,6 +6,8 @@
  * command line parsed, only an absolute `.exe`; started through `spawnGui` (lib/process.ts, ADR-144:
  * PE subsystem GUI checked, blocklist, detached) with the URL in place of `%1`. Never `cmd /c start`.
  * Failures → OPEN_FAILED {reason} (the web then opens the link itself, with a hint).
+ * Linux (WP-106, WP-100 §5.6): `xdg-open <url>` (system/desktop.ts) – the desktop's default browser;
+ * other platforms → OPEN_FAILED {reason: 'platform'}.
  *
  * `createRecordingLinkOpener` starts NOTHING and logs `link.open (fake): <url>` – compose wires it with
  * the FakeBackend (dev, E2E), like the recording file opener (files/open.ts).
@@ -16,6 +18,7 @@ import { makeError } from '@shared/errors';
 import { isHttpUrl } from '@shared/model';
 import { logger as rootLogger } from '../lib/logger';
 import { spawnGui, type GuiSpawnFn } from '../lib/process';
+import { xdgOpen } from '../system/desktop';
 import {
   expandRegValue,
   parseRegValues,
@@ -73,7 +76,12 @@ export function splitCommandLine(line: string): string[] {
 /** `%1` / `%L` placeholders take the URL; other `%` placeholders are dropped; none → URL appended. */
 export function browserLaunch(command: string, url: string): { file: string; args: string[] } | null {
   const [file, ...rest] = splitCommandLine(command);
-  if (file === undefined || !path.win32.isAbsolute(file) || !/\.exe$/i.test(file) || file.startsWith('\\\\')) {
+  if (
+    file === undefined ||
+    !path.win32.isAbsolute(file) ||
+    !/\.exe$/i.test(file) ||
+    file.startsWith('\\\\')
+  ) {
     return null;
   }
   let placed = false;
@@ -118,7 +126,10 @@ export async function defaultBrowserCommand(deps: DefaultBrowserDeps = {}): Prom
   for (const scheme of ['https', 'http'] as const) {
     const output = await queryKey(USER_CHOICE(scheme), 64);
     if (output === null) continue;
-    const progId = parseRegValues(output).find((v) => v.name.toLowerCase() === 'progid')?.data.trim() ?? '';
+    const progId =
+      parseRegValues(output)
+        .find((v) => v.name.toLowerCase() === 'progid')
+        ?.data.trim() ?? '';
     if (!PROG_ID.test(progId)) continue;
     for (const key of COMMAND_KEYS(progId)) {
       const value = await queryDefault(key, 64);
@@ -140,7 +151,16 @@ export function createSystemLinkOpener(deps: SystemLinkOpenerDeps = {}): LinkOpe
   const log = (deps.logger ?? rootLogger).child({ module: 'link' });
   return {
     async open(url) {
-      if ((deps.platform ?? process.platform) !== 'win32') throw openFailed('platform');
+      const platform = deps.platform ?? process.platform;
+      if (platform === 'linux') {
+        if (!isHttpUrl(url)) throw openFailed('url');
+        await xdgOpen(url, {
+          ...(deps.env === undefined ? {} : { env: deps.env }),
+          ...(deps.spawn === undefined ? {} : { spawn: deps.spawn }),
+        });
+        return;
+      }
+      if (platform !== 'win32') throw openFailed('platform');
       const command = await defaultBrowserCommand(deps);
       if (command === null) throw openFailed('no_default_browser');
       const launch = browserLaunch(command, url);
@@ -160,7 +180,9 @@ export function createSystemLinkOpener(deps: SystemLinkOpenerDeps = {}): LinkOpe
 }
 
 /** Starts nothing: logs and records the links (FakeBackend, tests). */
-export function createRecordingLinkOpener(o: { logger?: Logger | undefined } = {}): LinkOpener & { readonly opened: string[] } {
+export function createRecordingLinkOpener(
+  o: { logger?: Logger | undefined } = {},
+): LinkOpener & { readonly opened: string[] } {
   const log = (o.logger ?? rootLogger).child({ module: 'link' });
   const opened: string[] = [];
   return {
@@ -178,7 +200,8 @@ export function createLinkCommands(opener: LinkOpener): HostCommandHandler {
   return {
     names: ['link.open'],
     async handle(cmd) {
-      if (cmd.name !== 'link.open') throw new CommandError(makeError('NOT_IMPLEMENTED', { command: cmd.name }));
+      if (cmd.name !== 'link.open')
+        throw new CommandError(makeError('NOT_IMPLEMENTED', { command: cmd.name }));
       if (!isHttpUrl(cmd.url)) throw openFailed('url');
       await opener.open(cmd.url);
       return {};

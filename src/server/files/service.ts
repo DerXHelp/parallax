@@ -16,6 +16,7 @@ import type { Logger } from 'pino';
 import { LIMITS, type EntryId } from '@shared/common';
 import { makeError } from '@shared/errors';
 import {
+  editorPresetsFor,
   isDefaultProgramAllowed,
   type FileAccess,
   type FileInfo,
@@ -316,8 +317,13 @@ export function createFileService(deps: FileServiceDeps): FileService {
       throw fileAccessError(error);
     }
     const editor = deps.settings().editor;
-    // Preset `system` = "open with the default program" (ADR-144).
-    const target = cmd.target === 'editor' && editor.preset === 'system' ? 'default' : cmd.target;
+    // Preset `system` = "open with the default program" (ADR-144); a preset this platform does not
+    // offer (Notepad++ on Linux, WP-106) counts as `system`.
+    const target =
+      cmd.target === 'editor' &&
+      (editor.preset === 'system' || !editorPresetsFor(rules.flavor).includes(editor.preset))
+        ? 'default'
+        : cmd.target;
     if (target !== 'explorer' && directory) {
       throw new CommandError(makeError('VALIDATION_FAILED', { reason: 'directory' }));
     }

@@ -8,6 +8,7 @@ import {
   type EditorSettings,
   type HostState,
 } from '@shared/model';
+import type { PathFlavor } from '@shared/paths';
 import type { CommandResult } from '@shared/protocol';
 import { useFormat, useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
@@ -58,16 +59,25 @@ const EMPTY_PATHS: Readonly<Record<EditorPreset, string>> = {
   gedit: '',
 };
 
-function formOfDraft(draft: EditorDraft): EditorForm {
+/**
+ * WP-106: the preset as the computer applies it – one its platform does not offer (Notepad++ on
+ * Linux, the default of the settings) counts as the default program (files/editors.ts on the server).
+ */
+function shownPreset(preset: EditorPreset, flavor: PathFlavor): EditorPreset {
+  return editorPresetsFor(flavor).includes(preset) ? preset : 'system';
+}
+
+function formOfDraft(draft: EditorDraft, flavor: PathFlavor): EditorForm {
+  const preset = shownPreset(draft.preset, flavor);
   return {
-    preset: draft.preset,
-    paths: { ...EMPTY_PATHS, [draft.preset]: draft.executable },
+    preset,
+    paths: { ...EMPTY_PATHS, [preset]: preset === draft.preset ? draft.executable : '' },
     args: draft.args,
   };
 }
 
-function formOf(editor: EditorSettings): EditorForm {
-  return formOfDraft(draftOf(editor));
+function formOf(editor: EditorSettings, flavor: PathFlavor): EditorForm {
+  return formOfDraft(draftOf(editor), flavor);
 }
 
 function draftOfForm(form: EditorForm): EditorDraft {
@@ -146,6 +156,8 @@ function issueText(t: ReturnType<typeof useT>, issue: EditorIssue, posix: boolea
   switch (issue) {
     case 'path':
       return posix ? t('preferences.files.posix.pathIssue') : t('preferences.files.issues.path');
+    case 'blocked':
+      return posix ? t('preferences.files.posix.blockedIssue') : t('preferences.files.issues.blocked');
     case 'file_placeholder':
       return t('preferences.files.issues.file_placeholder', { placeholder: '{file}' });
     case 'too_many':
@@ -177,6 +189,8 @@ function FieldIssue({ id, issue, posix }: { id: string; issue: EditorIssue | nul
  * `editor.detect` found. Choosing Notepad++, VS Code or the default program saves at once like the
  * other settings; paths and arguments are a form with "Save" – checked first with the server's
  * schema (issues at the field), then sent as `settings.update {editor}`.
+ * Linux (WP-104, WP-106): the presets of that computer (`editorPresetsFor`); the desktop's default
+ * program is the default there (a stored Notepad++ shows – and works – as that, named in the hint).
  */
 export function FilesSection({
   editor,
@@ -196,7 +210,7 @@ export function FilesSection({
   const id = useId();
   const stored = editor.settings.editor;
   const [form, setForm] = useState<EditorForm>(() =>
-    initialDraft === undefined ? formOf(stored) : formOfDraft(initialDraft),
+    initialDraft === undefined ? formOf(stored, rules.flavor) : formOfDraft(initialDraft, rules.flavor),
   );
   const [baseline, setBaseline] = useState(stored);
   const [attempted, setAttempted] = useState(false);
@@ -206,15 +220,19 @@ export function FilesSection({
 
   const draft = draftOfForm(form);
   const value = editorOfDraft(draft);
-  const dirty = !sameEditor(value, stored);
+  // What the computer applies (a Notepad++ on Linux is the default program): nothing to save then.
+  const applied = editorOfDraft(draftOfForm(formOf(stored, rules.flavor)));
+  const dirty = !sameEditor(value, applied);
   const issues = editorIssues(draft, rules);
 
   // The stored editor changed (ack, rollback, another window): take it over unless the form holds
   // own unsaved changes.
   if (!sameEditor(baseline, stored)) {
     setBaseline(stored);
-    if (sameEditor(editorOfDraft(draftOfForm(form)), baseline)) {
-      setForm(formOf(stored));
+    if (
+      sameEditor(editorOfDraft(draftOfForm(form)), editorOfDraft(draftOfForm(formOf(baseline, rules.flavor))))
+    ) {
+      setForm(formOf(stored, rules.flavor));
       setAttempted(false);
     }
   }
@@ -279,7 +297,7 @@ export function FilesSection({
       <SettingField
         name="editor"
         label={t('preferences.files.editor')}
-        description={t('preferences.files.editorHint')}
+        description={t(posix ? 'preferences.files.posix.editorHint' : 'preferences.files.editorHint')}
         below={({ id: fieldId, labelId, describedBy }) => (
           <div className="grid gap-4">
             <RadioGroup

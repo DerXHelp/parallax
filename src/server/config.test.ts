@@ -386,11 +386,11 @@ describe('loadConfig on Linux (WP-103)', () => {
   const linux = (argv: string[], vars: Record<string, string> = {}, cwd = '/home/u/repo') =>
     loadConfig({ platform: 'linux', argv, env: { HOME, ...vars }, cwd, readFile: noSettings });
 
-  it('production defaults: ~/.local/share/parallax, no native toasts', () => {
+  it('production defaults: ~/.local/share/parallax, native toasts (WP-106)', () => {
     expect(linux([])).toMatchObject({
       home: '/home/u/.local/share/parallax',
       dataDirLabel: '~/.local/share/parallax',
-      toasts: 'off',
+      toasts: 'native',
       backend: 'sdk',
     });
     expect(defaultHome({ HOME }, 'linux')).toBe('/home/u/.local/share/parallax');
@@ -427,11 +427,24 @@ describe('loadConfig on Linux (WP-103)', () => {
     expect(linux(['--backend=fake', '--home=/home/u/.local/share/Parallax']).backend).toBe('fake');
   });
 
-  it('native toasts exist only on Windows: an explicit request is turned off with a note', () => {
+  it('native toasts on Linux (WP-106): off under tests, an explicit request stays', () => {
+    expect(linux(['--home=/tmp/px'], { NODE_ENV: 'test' }).toasts).toBe('off');
     const config = linux(['--home=/tmp/px', '--toasts=native']);
+    expect(config.toasts).toBe('native');
+    expect(config.notes).toEqual([]);
+    expect(linux(['--home=/tmp/px', '--toasts=off']).toasts).toBe('off');
+  });
+
+  it('other platforms have no native toasts: an explicit request is turned off with a note', () => {
+    const config = loadConfig({
+      platform: 'darwin',
+      argv: ['--home=/tmp/px', '--toasts=native'],
+      env: { HOME },
+      cwd: '/home/u/repo',
+      readFile: noSettings,
+    });
     expect(config.toasts).toBe('off');
-    expect(config.notes).toEqual([expect.stringMatching(/only on Windows/)]);
-    expect(linux(['--home=/tmp/px', '--toasts=off']).notes).toEqual([]);
+    expect(config.notes).toEqual([expect.stringMatching(/only on Windows and Linux/)]);
   });
 
   it('the settings file is read from the POSIX home', () => {

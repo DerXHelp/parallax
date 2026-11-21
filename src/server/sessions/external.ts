@@ -10,10 +10,14 @@
  * in the log dropped), adds `system/handoff {returned, importedItems}` and ends in `sleeping`.
  * Server start: an open handoff is checked again (running/unknown → watched, ended → return);
  * the shutdown leaves the console alone (it waits, bounded, for a console still opening – R4-03).
- * `session.consoleCommand` hands out the PowerShell line of the same spec ("copy console command",
- * changes nothing; secret values are asked for in the console, never copied – ADR-123). R4-01:
+ * `session.consoleCommand` hands out the console line of the same spec for the host's platform
+ * ("copy console command": PowerShell on Windows, a POSIX shell line on Linux – WP-106; changes
+ * nothing; secret values are asked for in the console, never copied – ADR-123). R4-01:
  * every command that waited for the lifecycle lock checks the gates again inside it
  * (`assertEntryGate`), and `startRuntime` refuses an external entry – never a second writer.
+ *
+ * WP-106: a launcher with a preflight (`consolePreflight`, the Linux launcher without a terminal
+ * emulator) refuses BEFORE the SDK query is closed – the session keeps running, nothing changed.
  *
  * Secrets: the console spec carries the profile env in plain text (`env`, `explicitEnv`, ADR-104).
  * It is never logged and never put into an op, an item or an error – a launcher failure reason is
@@ -23,10 +27,11 @@ import type { ClientId, PermissionMode, TerminalId } from '@shared/common';
 import { currentSessionId, type ExternalHandoff } from '@shared/model';
 import type { CommandResult, SessionOp } from '@shared/protocol';
 import { isSecretEnvKey } from '@shared/secrets';
-import { consoleCommandText } from '../claude/consoleCommand';
+import { consoleCommandFor } from '../claude/consoleCommand';
 import type { ConsoleLaunchRequest, ConsoleLaunchSpec, LaunchSpec } from '../claude/ports';
 import { redactText, REDACTED } from '../lib/logger';
 import { CommandError } from '../sync/ports';
+import { consolePreflight } from '../system/console';
 import type { ConsoleOpenResult, ConsoleProcess } from '../system/ports';
 import type { TerminalOrigin } from '../terminal/ports';
 import { cancelContinue } from './continuePlan';
@@ -139,6 +144,11 @@ interface HandoffTarget {
   readonly name: 'session.openExternal' | 'session.openInTerminal';
   /** Checked before anything changes; throws CommandError (nothing available here). */
   assertAvailable(): void;
+  /**
+   * WP-106: checked with the spec, still before the SDK query is closed; throws CommandError (no
+   * terminal emulator …). Absent → nothing to check.
+   */
+  preflight?(spec: ConsoleLaunchSpec): Promise<void>;
   /** Opens `claude --resume …`; throws CommandError (the entry stays dormant here). */
   open(spec: ConsoleLaunchSpec): Promise<HandoffOpened>;
 }
@@ -169,6 +179,8 @@ async function handOff(
     // CR2-02: the spec first – profile errors (PROFILE_INVALID, CLAUDE_NOT_FOUND …) pass through
     // before anything changed; the query keeps running.
     const spec = await core.claude.consoleLaunchFor(consoleRequest(core, s, sessionId));
+    // WP-106: nothing to open the console with → refused while the query still runs.
+    await target.preflight?.(spec);
     core.assertRunning();
     await closeRuntime(s, core, 'handoff');
     // R2-02/R2-08: an orphaned claude.exe of an earlier run may still write the Claude JSONL.
@@ -222,6 +234,21 @@ export async function openExternal(
     name: 'session.openExternal',
     assertAvailable: () => {
       if (core.consoleLauncher === null) throw unavailable();
+    },
+    preflight: async (spec) => {
+      const launcher = core.consoleLauncher;
+      if (launcher === null) throw unavailable();
+      const check = consolePreflight(launcher);
+      let refusal: string | null;
+      try {
+        refusal = check === null ? null : await check(spec);
+      } catch (error) {
+        refusal = errorMessage(error);
+      }
+      if (refusal === null) return;
+      const reason = scrubConsoleReason(refusal, spec);
+      core.log.warn({ entryId: s.id, reason }, 'external console unavailable – session keeps running');
+      throw commandError('EXTERNAL_CONSOLE_FAILED', { reason });
     },
     open: async (spec) => {
       const launcher = core.consoleLauncher;
@@ -437,7 +464,10 @@ async function importConsoleTurns(
 
 // ---- session.consoleCommand ----
 
-/** "Copy console command" (ADR-104): the PowerShell line of the console spec; changes nothing. */
+/**
+ * "Copy console command" (ADR-104): the console line of the spec for the host's platform (PowerShell
+ * on Windows, POSIX shell elsewhere – WP-106); changes nothing.
+ */
 export async function consoleCommand(
   core: EngineCore,
   s: EntryState,
@@ -447,5 +477,5 @@ export async function consoleCommand(
   const sessionId = handedOff?.sessionId ?? currentSessionId(s.entry);
   if (sessionId === null) throw commandError('SESSION_NOT_STARTED', { entryId: s.id });
   const spec = await core.claude.consoleLaunchFor(consoleRequest(core, s, sessionId));
-  return { command: consoleCommandText(spec), sessionId };
+  return { command: consoleCommandFor(spec, process.platform), sessionId };
 }

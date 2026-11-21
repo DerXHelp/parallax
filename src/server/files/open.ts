@@ -8,21 +8,33 @@
  *   `windowsHide: true` (CLAUDE.md "Windows").
  * - `createRecordingOpener`: starts NOTHING, logs `file.open (fake): <target> <path>` and records
  *   the request – WP-60 always wires it with the FakeBackend (dev, E2E, verifier); tests use it too.
+ *
+ * Linux (WP-106, WP-100 §5.6): the editor from `PATH` via `spawnGui` (POSIX rules), "show in
+ * folder" through the file manager's D-Bus interface (`FileManager1`, fallback `xdg-open` on the
+ * folder) and the default program through `xdg-open` (system/desktop.ts). A preset Linux does not
+ * offer (`notepadpp`) opens like `system` – the default program, only for the extensions of
+ * `isDefaultProgramAllowed` (requested and physical path, else FILE_TYPE_BLOCKED).
  */
 import path from 'node:path';
 import type { Logger } from 'pino';
-import type { EditorSettings } from '@shared/model';
+import { makeError } from '@shared/errors';
+import { isDefaultProgramAllowed, type EditorSettings } from '@shared/model';
+import { POSIX_PATHS } from '@shared/paths';
 import { logger as rootLogger } from '../lib/logger';
-import { spawnExplorer, spawnGui, type GuiSpawnFn } from '../lib/process';
+import { spawnExplorer, spawnGui, type GuiSpawnFn, type RunFileFn } from '../lib/process';
 import { regKeyQuery, regQuery, type RegKeyQuery, type RegQuery } from '../lib/registry';
 import { nodeFsProbe, type FsProbe } from '../lib/windows';
+import { CommandError } from '../sync/ports';
+import { showInFileManager, xdgOpen } from '../system/desktop';
 import {
   createEditorFinder,
   detectEditors,
   editorArguments,
+  effectiveEditorPreset,
   resolveEditorExecutable,
   type EditorDetection,
   type EditorLocatorDeps,
+  type FindEditor,
 } from './editors';
 
 /** What the launcher starts (already checked by the file service). */
@@ -62,21 +74,65 @@ export interface SystemLauncherDeps {
   platform?: NodeJS.Platform;
   /** Clock of the editor lookup cache (R5-04; default `Date.now`). */
   now?: () => number;
+  /** WP-106 (Linux): runner of `gdbus` for "show in folder" (default `runFile`). */
+  run?: RunFileFn;
+}
+
+/** Linux (WP-106): editor, file manager and default program (see the file comment). */
+function linuxOpen(
+  request: OpenRequest,
+  deps: SystemLauncherDeps,
+  locator: EditorLocatorDeps,
+  find: FindEditor,
+): Promise<void> {
+  const desktop = {
+    ...(deps.env === undefined ? {} : { env: deps.env }),
+    ...(deps.spawn === undefined ? {} : { spawn: deps.spawn }),
+    ...(deps.run === undefined ? {} : { run: deps.run }),
+  };
+  if (request.target === 'explorer') return showInFileManager(request.realPath, request.directory, desktop);
+  const asSystem =
+    request.target === 'editor' && effectiveEditorPreset(request.editor.preset, 'linux') === 'system';
+  if (request.target === 'default' || asSystem) {
+    if (
+      !isDefaultProgramAllowed(request.path, POSIX_PATHS) ||
+      !isDefaultProgramAllowed(request.realPath, POSIX_PATHS)
+    ) {
+      return Promise.reject(new CommandError(makeError('FILE_TYPE_BLOCKED')));
+    }
+    return xdgOpen(request.realPath, desktop);
+  }
+  return (async () => {
+    const executable = await resolveEditorExecutable(request.editor, locator, find);
+    const args = editorArguments(request.editor, request.realPath, request.line, request.col);
+    await spawnGui(executable, args, {
+      ...(deps.env === undefined ? {} : { env: deps.env }),
+      ...(deps.spawn === undefined ? {} : { spawn: deps.spawn }),
+      platform: 'linux',
+      cwd: path.posix.dirname(executable),
+    });
+  })();
 }
 
 export function createSystemLauncher(deps: SystemLauncherDeps = {}): ProgramLauncher {
   const env = deps.env ?? process.env;
+  const platform = deps.platform ?? process.platform;
   const locator: EditorLocatorDeps = {
     regQuery: deps.regQuery ?? regQuery(),
     regKeyQuery: deps.regKeyQuery ?? regKeyQuery(),
     fs: deps.probe ?? nodeFsProbe,
     env,
+    platform,
   };
   // R5-04: a click reuses the editor found within the last minute; `editor.detect` looks afresh.
   const editorFinder = createEditorFinder({ now: deps.now });
   const gui = { env, spawn: deps.spawn, platform: deps.platform };
   return {
     async open(request) {
+      if (platform === 'linux') {
+        await linuxOpen(request, deps, locator, editorFinder.find);
+        return;
+      }
       if (request.target === 'editor') {
         const executable = await resolveEditorExecutable(request.editor, locator, editorFinder.find);
         const args = editorArguments(request.editor, request.realPath, request.line, request.col);

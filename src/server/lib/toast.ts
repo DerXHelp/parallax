@@ -26,12 +26,32 @@
  *   used – exit 4 of the script) from one that may pass (timeout under load, `Show` or
  *   `History.Remove` failed – exit 3, anything unexpected). Only a permanent one may switch the
  *   channel off (sessions/nativeToasts.ts).
+ *
+ * Linux (WP-106, WP-100 §5.7): the desktop's notification server (org.freedesktop.Notifications)
+ * through `notify-send` (absolute `/usr/bin/notify-send`, argument array, no shell; title and body
+ * after `--`): `--app-name=Parallax --print-id`, the hint `desktop-entry:parallax`, `suppress-sound`
+ * when silent; a newer toast of the same `tag` replaces the older one (`--replace-id=<id>` of the
+ * remembered notification). With a `launchUri` the toast gets the default action (`--action=
+ * default=<actionLabel> --wait`): that `notify-send` stays as a waiter (at most `TOAST_WAIT_MAX_MS`,
+ * ended when the toast is replaced or removed) and a click opens the URI with `xdg-open` – the
+ * registered `parallax:` handler opens the session like on Windows. Without `notify-send` (or an
+ * old one without these options) the toast goes through `gdbus` (`Notify`, no click).
+ * `removeToast(tag)` closes it (`CloseNotification`). Permanent: no graphical session or session
+ * bus, neither program there, no notification server on the bus; anything else may pass.
  */
 import { hostSessionProtocolUri, parseHostSessionProtocolUri } from '@shared/http';
-import { PRODUCT_NAME } from '@shared/product';
+import { PRODUCT_ID, PRODUCT_NAME } from '@shared/product';
 import { toError } from './async';
 import { encodePowerShell, powerShellPath } from './powershell';
-import { errnoCode, runFile, type RunFileFn } from './process';
+import {
+  errnoCode,
+  guiEnvironment,
+  runFile,
+  spawnHidden,
+  systemTool,
+  type RunFileFn,
+  type SpawnHiddenOptions,
+} from './process';
 
 export { encodePowerShell };
 
@@ -57,6 +77,8 @@ export interface ToastRequest {
   launchUri?: string | null;
   /** Phase 2 (ADR-109): no sound (`<audio silent="true"/>`). */
   silent?: boolean;
+  /** WP-106 (Linux): label of the click action with a `launchUri` (default `Open`). */
+  actionLabel?: string;
 }
 
 /** `permanent`: deterministic, the next call fails the same way (CR-05, see the file comment). */
@@ -81,6 +103,8 @@ export interface ToastOptions {
   platform?: NodeJS.Platform;
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
+  /** WP-106: the Linux notifier (default one per process, `linuxNotifier()`). */
+  notifier?: LinuxNotifier;
 }
 
 /**
@@ -165,7 +189,7 @@ async function runToast(
   options: ToastOptions,
 ): Promise<ToastResult> {
   if ((options.platform ?? process.platform) !== 'win32')
-    return { kind: 'failed', reason: 'not Windows', permanent: true };
+    return { kind: 'failed', reason: 'unsupported platform', permanent: true };
   const run = options.run ?? runFile;
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(options.env ?? process.env)) {
@@ -198,6 +222,9 @@ async function runToast(
 
 /** Shows a toast (see the file comment). Never throws. */
 export function showToast(request: ToastRequest, options: ToastOptions = {}): Promise<ToastResult> {
+  if ((options.platform ?? process.platform) === 'linux') {
+    return (options.notifier ?? linuxNotifier()).show(request);
+  }
   const launch = toastLaunchUri(request.launchUri);
   return runToast(
     {
@@ -216,6 +243,9 @@ export function showToast(request: ToastRequest, options: ToastOptions = {}): Pr
 
 /** Removes the toast with this tag from the Action Center (no-op if there is none). Never throws. */
 export function removeToast(tag: string, options: ToastOptions = {}): Promise<ToastResult> {
+  if ((options.platform ?? process.platform) === 'linux') {
+    return (options.notifier ?? linuxNotifier()).remove(tag);
+  }
   return runToast(
     {
       PARALLAX_TOAST_ACTION: 'remove',
@@ -225,4 +255,321 @@ export function removeToast(tag: string, options: ToastOptions = {}): Promise<To
     'removed',
     options,
   );
+}
+
+// ---- Linux (WP-106, see the file comment) ----
+
+/** `notify-send` without a waiter and every `gdbus` call. */
+export const NOTIFY_TIMEOUT_MS = 10_000;
+/** Longest life of a waiting `notify-send` (a toast that stays in the desktop's list). */
+export const TOAST_WAIT_MAX_MS = 30 * 60_000;
+export const DEFAULT_ACTION_LABEL = 'Open';
+const NOTIFICATIONS_DEST = 'org.freedesktop.Notifications';
+const NOTIFICATIONS_PATH = '/org/freedesktop/Notifications';
+/** No notification server on the session bus (gdbus error text): nothing will ever show a toast. */
+const NO_NOTIFICATION_SERVER = /ServiceUnknown|not provided by any \.service files|was not provided/i;
+
+/** What the notifier needs of a waiting `notify-send` (a ChildProcess; fakes in tests). */
+export interface ToastWaiter {
+  /** `unref` (a pipe socket): the waiter never keeps the server alive. */
+  readonly stdout: (NodeJS.ReadableStream & { unref?: () => void }) | null;
+  once(event: 'spawn', listener: () => void): unknown;
+  once(event: 'error', listener: (error: Error) => void): unknown;
+  once(event: 'exit', listener: (code: number | null) => void): unknown;
+  kill(signal?: NodeJS.Signals): boolean;
+  unref(): void;
+}
+
+export type ToastSpawnFn = (
+  file: string,
+  args: readonly string[],
+  options: SpawnHiddenOptions,
+) => ToastWaiter;
+
+export interface LinuxNotifierOptions {
+  /** Graphical session, session bus, PATH (default `process.env`). */
+  env?: NodeJS.ProcessEnv;
+  /** `notify-send` without a click, `gdbus` (default `runFile`). */
+  run?: RunFileFn;
+  /** The waiting `notify-send` and the click's `xdg-open` (default `spawnHidden`). */
+  spawn?: ToastSpawnFn;
+  /** Absolute program of a tool name (default `systemTool(name, env, 'linux')`). */
+  tool?: (name: string) => string;
+  timeoutMs?: number;
+  waitMaxMs?: number;
+}
+
+export interface LinuxNotifier {
+  show(request: ToastRequest): Promise<ToastResult>;
+  remove(tag: string): Promise<ToastResult>;
+}
+
+/** True with a graphical session (X11/Wayland) and a reachable session bus. */
+export function hasNotificationSession(env: NodeJS.ProcessEnv): boolean {
+  const set = (name: string): boolean => (env[name] ?? '').trim() !== '';
+  return (
+    (set('DISPLAY') || set('WAYLAND_DISPLAY')) && (set('DBUS_SESSION_BUS_ADDRESS') || set('XDG_RUNTIME_DIR'))
+  );
+}
+
+/** A GVariant string literal (gdbus arguments are GVariant text): `'…'` with escapes. */
+export function gvariantString(text: string): string {
+  const escaped = text.replace(/[\\'\n\t]/g, (char) =>
+    char === '\n' ? '\\n' : char === '\t' ? '\\t' : `\\${char}`,
+  );
+  return `'${escaped}'`;
+}
+
+/** The notification id in `notify-send --print-id` output (first line) or a gdbus reply `(uint32 7,)`. */
+export function parseNotificationId(output: string): number | null {
+  const match = /^\s*(?:\(uint32\s+)?(\d+)/.exec(output);
+  if (match === null) return null;
+  const id = Number(match[1]);
+  return Number.isSafeInteger(id) && id > 0 && id <= 0xffffffff ? id : null;
+}
+
+/** The arguments of `notify-send` (title and body after `--`, never parsed as options). */
+export function notifySendArgs(
+  request: { title: string; body: string; silent: boolean; replaceId: number | null },
+  action: string | null,
+): string[] {
+  return [
+    `--app-name=${PRODUCT_NAME}`,
+    '--print-id',
+    `--hint=string:desktop-entry:${PRODUCT_ID}`,
+    ...(request.silent ? ['--hint=boolean:suppress-sound:true'] : []),
+    ...(request.replaceId === null ? [] : [`--replace-id=${String(request.replaceId)}`]),
+    ...(action === null ? [] : [`--action=default=${action}`, '--wait']),
+    '--',
+    request.title,
+    request.body,
+  ];
+}
+
+interface Shown {
+  id: number | null;
+  /** Ends the waiting `notify-send` (null without one). */
+  stop: (() => void) | null;
+}
+
+export function createLinuxNotifier(opts: LinuxNotifierOptions = {}): LinuxNotifier {
+  const env = (): NodeJS.ProcessEnv => opts.env ?? process.env;
+  const run = opts.run ?? runFile;
+  const spawn: ToastSpawnFn = opts.spawn ?? ((file, args, options) => spawnHidden(file, args, options));
+  const tool = opts.tool ?? ((name: string) => systemTool(name, env(), 'linux'));
+  const timeoutMs = opts.timeoutMs ?? NOTIFY_TIMEOUT_MS;
+  const waitMaxMs = opts.waitMaxMs ?? TOAST_WAIT_MAX_MS;
+  const shown = new Map<string, Shown>();
+
+  const failed = (reason: string, permanent: boolean): ToastResult => ({ kind: 'failed', reason, permanent });
+  const remember = (tag: string, entry: Shown): void => {
+    shown.get(tag)?.stop?.();
+    shown.set(tag, entry);
+  };
+  const runTool = (name: string, args: readonly string[]) =>
+    run(tool(name), args, { env: guiEnvironment(env(), 'linux'), timeoutMs, maxOutputBytes: 16 * 1024 });
+
+  /** `gdbus call … <method> <args>`; a reply, or the failure (permanent without a server or program). */
+  const gdbus = async (
+    method: string,
+    args: readonly string[],
+  ): Promise<{ ok: true; stdout: string } | { ok: false; reason: string; permanent: boolean }> => {
+    try {
+      const result = await runTool('gdbus', [
+        'call',
+        '--session',
+        '--dest',
+        NOTIFICATIONS_DEST,
+        '--object-path',
+        NOTIFICATIONS_PATH,
+        '--method',
+        `${NOTIFICATIONS_DEST}.${method}`,
+        ...args,
+      ]);
+      if (result.timedOut) return { ok: false, reason: 'gdbus timeout', permanent: false };
+      if (result.exitCode === 0) return { ok: true, stdout: result.stdout };
+      const output = (result.stderr.trim() || result.stdout.trim()).slice(0, 300);
+      return {
+        ok: false,
+        reason: `gdbus exit ${String(result.exitCode)}: ${output}`,
+        permanent: NO_NOTIFICATION_SERVER.test(output),
+      };
+    } catch (error) {
+      const code = errnoCode(error) ?? '';
+      return {
+        ok: false,
+        reason: `gdbus could not be started: ${toError(error).message}`,
+        permanent: !TRANSIENT_SPAWN_ERRORS.has(code),
+      };
+    }
+  };
+
+  /** The toast through `Notify` (no click). */
+  const notifyOverBus = async (
+    tag: string,
+    toast: { title: string; body: string; silent: boolean; replaceId: number | null },
+  ): Promise<ToastResult> => {
+    const hints = [`'desktop-entry': <${gvariantString(PRODUCT_ID)}>`];
+    if (toast.silent) hints.push("'suppress-sound': <true>");
+    const reply = await gdbus('Notify', [
+      gvariantString(PRODUCT_NAME),
+      String(toast.replaceId ?? 0),
+      "''",
+      gvariantString(toast.title),
+      gvariantString(toast.body),
+      '[]',
+      `{${hints.join(', ')}}`,
+      '-1',
+    ]);
+    if (!reply.ok) return failed(reply.reason, reply.permanent);
+    remember(tag, { id: parseNotificationId(reply.stdout), stop: null });
+    return { kind: 'shown' };
+  };
+
+  /** `notify-send` without a click; null → use the bus (missing or too old). */
+  const notifyOnce = async (tag: string, args: readonly string[]): Promise<ToastResult | null> => {
+    try {
+      const result = await runTool('notify-send', args);
+      if (result.timedOut) return failed('notify-send timeout', false);
+      if (result.exitCode !== 0) return null;
+      remember(tag, { id: parseNotificationId(result.stdout), stop: null });
+      return { kind: 'shown' };
+    } catch (error) {
+      const code = errnoCode(error) ?? '';
+      return TRANSIENT_SPAWN_ERRORS.has(code)
+        ? failed(`notify-send could not be started: ${code}`, false)
+        : null;
+    }
+  };
+
+  /** Opens the launch URI after a click (`xdg-open`, detached, never awaited). */
+  const openUri = (uri: string): void => {
+    try {
+      const child = spawn(tool('xdg-open'), [uri], { env: guiEnvironment(env(), 'linux'), stdio: 'ignore' });
+      child.once('error', () => undefined);
+      child.unref();
+    } catch {
+      // Nothing to open with: the click only dismisses the toast.
+    }
+  };
+
+  /**
+   * `notify-send … --action=default=… --wait`, kept as a waiter: resolves with its id (shown), or
+   * null when it ended without one (an old notify-send without these options → the caller falls back).
+   */
+  const notifyWaiting = (tag: string, args: readonly string[], uri: string): Promise<ToastResult | null> =>
+    new Promise((resolve) => {
+      let waiter: ToastWaiter;
+      try {
+        waiter = spawn(tool('notify-send'), args, {
+          env: guiEnvironment(env(), 'linux'),
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      } catch {
+        resolve(null);
+        return;
+      }
+      let settled = false;
+      let ended = false;
+      const settle = (result: ToastResult | null): void => {
+        if (settled) return;
+        settled = true;
+        resolve(result);
+      };
+      const stop = (): void => {
+        clearTimeout(maxAge);
+        if (!ended) waiter.kill('SIGTERM');
+      };
+      const maxAge = setTimeout(stop, waitMaxMs);
+      maxAge.unref();
+      const startup = setTimeout(() => {
+        // No id in time: the toast may still come; the waiter goes, the channel stays on.
+        stop();
+        settle(failed('notify-send timeout', false));
+      }, timeoutMs);
+      startup.unref();
+      let buffer = '';
+      let id: number | null = null;
+      waiter.stdout?.setEncoding('utf8');
+      waiter.stdout?.on('data', (chunk: string) => {
+        buffer += chunk;
+        let newline = buffer.indexOf('\n');
+        while (newline >= 0) {
+          const line = buffer.slice(0, newline).trim();
+          buffer = buffer.slice(newline + 1);
+          newline = buffer.indexOf('\n');
+          if (id === null) {
+            id = parseNotificationId(line);
+            if (id !== null) {
+              clearTimeout(startup);
+              remember(tag, { id, stop });
+              settle({ kind: 'shown' });
+            }
+          } else if (line === 'default') {
+            openUri(uri);
+          }
+        }
+      });
+      waiter.once('error', () => {
+        ended = true;
+        clearTimeout(startup);
+        clearTimeout(maxAge);
+        settle(null);
+      });
+      waiter.once('exit', (code) => {
+        ended = true;
+        clearTimeout(startup);
+        clearTimeout(maxAge);
+        const current = shown.get(tag);
+        if (current?.stop === stop) shown.set(tag, { id: current.id, stop: null });
+        settle(
+          id !== null ? { kind: 'shown' } : code === 0 ? failed('notify-send printed no id', false) : null,
+        );
+      });
+      waiter.once('spawn', () => {
+        waiter.unref();
+        waiter.stdout?.unref?.();
+      });
+    });
+
+  return {
+    async show(request) {
+      if (!hasNotificationSession(env())) return failed('no graphical session', true);
+      const tag = cleanText(request.tag, MAX_TAG_CHARS);
+      const toast = {
+        title: cleanText(request.title, MAX_TEXT_CHARS),
+        body: cleanText(request.body, MAX_TEXT_CHARS),
+        silent: request.silent === true,
+        replaceId: shown.get(tag)?.id ?? null,
+      };
+      // The older toast's waiter goes now (its click would open an outdated toast).
+      shown.get(tag)?.stop?.();
+      const uri = toastLaunchUri(request.launchUri);
+      if (uri !== null) {
+        const label = cleanText(request.actionLabel ?? DEFAULT_ACTION_LABEL, MAX_TEXT_CHARS);
+        const waited = await notifyWaiting(tag, notifySendArgs(toast, label), uri);
+        if (waited !== null) return waited;
+      }
+      const once = await notifyOnce(tag, notifySendArgs(toast, null));
+      return once ?? notifyOverBus(tag, toast);
+    },
+    async remove(tag) {
+      const key = cleanText(tag, MAX_TAG_CHARS);
+      const entry = shown.get(key);
+      if (entry === undefined) return { kind: 'removed' };
+      shown.delete(key);
+      entry.stop?.();
+      if (entry.id === null || !hasNotificationSession(env())) return { kind: 'removed' };
+      const reply = await gdbus('CloseNotification', [String(entry.id)]);
+      return reply.ok ? { kind: 'removed' } : failed(reply.reason, reply.permanent);
+    },
+  };
+}
+
+let defaultNotifier: LinuxNotifier | null = null;
+
+/** The notifier of this process (one map of shown toasts for every caller). */
+export function linuxNotifier(): LinuxNotifier {
+  defaultNotifier ??= createLinuxNotifier();
+  return defaultNotifier;
 }

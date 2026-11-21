@@ -474,6 +474,10 @@ export const de: typeof en = {
       pathPlaceholder: '/usr/bin/editor',
       pathIssue: 'Gib einen vollständigen Pfad an (etwa /usr/bin/…) – keinen relativen Pfad.',
       noEditor: 'Dieser Rechner hat keinen Desktop: Dateien öffnen sich im Viewer von Parallax.',
+      editorHint:
+        'Parallax öffnet eine Datei in diesem Programm an der genannten Zeile. Standard ist das Standardprogramm des Desktops; die Änderung gilt ab der nächsten geöffneten Datei.',
+      blockedIssue:
+        'Dieses Programm kann nicht der Editor sein (Shells, Interpreter, Terminal-Emulatoren und Öffner wie xdg-open sind gesperrt).',
     },
   },
   console: {
