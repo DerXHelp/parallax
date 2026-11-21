@@ -56,6 +56,22 @@ export async function createTestRepo(options: { empty?: boolean; bare?: boolean 
   const git = async (args: readonly string[], cwd = root): Promise<string> =>
     (await runner.ok({ cwd, env, args, op: 'status', mode: 'write' })).stdout;
   await git(['init', '-q', ...(options.bare === true ? ['--bare'] : []), '-b', 'main']);
+  if (options.bare !== true) {
+    // Engine code runs git with the host environment (the machine's global configuration), not with
+    // `env` above: local settings win, so its commits work without a global identity (Linux container)
+    // and a signing, hook or line-ending setting of the developer never applies.
+    const hooks = path.join(root, '.git', 'no-hooks');
+    await mkdir(hooks);
+    for (const [key, value] of [
+      ['user.name', 'Test Author'],
+      ['user.email', 'author@test.example'],
+      ['commit.gpgsign', 'false'],
+      ['core.hooksPath', hooks],
+      ['core.autocrlf', 'false'],
+    ] as const) {
+      await git(['config', key, value]);
+    }
+  }
   const write = async (relative: string, text: string | Uint8Array): Promise<string> => {
     const file = path.join(root, ...relative.split('/'));
     await mkdir(path.dirname(file), { recursive: true });
