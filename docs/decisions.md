@@ -2977,3 +2977,71 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
 - **Folgen:** Im üblichen Fenster schrumpft das Transkript mit dem Panel und zentriert seinen Inhalt im sichtbaren Teil.
   Nur sehr schmale Fenster nutzen die Überlagerung. Die übrigen Regeln aus ADR-150 bleiben: Breite je Fenster,
   320 px Minimum, „Breit“ aus WP-93.
+
+## ADR-241 – Linux als zweite Plattform: Pfad-Regelsätze je Host, ein Build, zwei Pakete
+- **Datum/WP:** 20.–21.11.2026, WP-100 (Plan), WP-101 (Spikes), WP-102 (Contracts), `feature/linux`. Auftrag des
+  Nutzers: Ubuntu mit und ohne Desktop, alle Features, zwei Release-Artefakte zulässig.
+- **Kontext:** Server, Web, Agent SDK und Sync-Protokoll waren portabel, die Systemschicht nicht: Pfadregeln nur für
+  Windows (`X:\…`, groß/klein gleich), `.exe`-Pflicht, PowerShell/Registry/DPAPI, ConPTY. Ein Fenster muss außerdem
+  Rechner beider Plattformen steuern können (Mehrere Rechner).
+- **Entscheidung:**
+  - **Regeln gehören dem Host, nicht dem Browser:** `@shared/paths` hat zwei Regelsätze (`WIN32_PATHS`,
+    `POSIX_PATHS`) hinter `PathRules`; der Server nimmt `HOST_PATH_RULES`, das Web die Regeln aus
+    `HostState.platform` des jeweiligen Rechners. Die `windows*`-Funktionen bleiben unverändert als Windows-Satz.
+  - **POSIX-Regeln:** absolut, keine Steuerzeichen, keine `.`/`..`-Segmente, Länge in UTF-8-Bytes (4095/255),
+    groß/klein unterscheidend; `/proc`, `/sys`, `/dev` gesperrt (`pseudo_fs`); unter Linux erlaubte Zeichen und Namen
+    (`:` `*` `?`, `CON`, Punkt am Ende) sind erlaubt.
+  - **Gemeinsame Schemas nach Pfadform:** Einstellungen auf dem Draht und auf der Platte prüfen einen Pfad nach seiner
+    eigenen Form (`pathFlavorOfShape`), der Host prüft beim Speichern zusätzlich mit seinen Regeln.
+  - **Fähigkeiten statt Plattformprüfung im Web:** `HostState.capabilities` (Desktop, externe Konsole, Shell-Fenster,
+    Editor, Dateimanager, Autostart, Protokoll-Handler); ältere Server melden den Windows-Satz.
+  - **Ein JavaScript-Build, zwei Pakete** (`win.zip`, `linux-x64.tar.gz`), gleiche Signatur; Ablage unter Linux nach
+    XDG (`~/.local/share/parallax`, `~/.local/lib/parallax`, `~/.local/bin/parallax`).
+  - Native Anbindung wie unter Windows über `node:ffi` (libc, libsecret) statt nativer Abhängigkeiten.
+  - `PROTOCOL_VERSION` 7 (neue Shell-Arten auf dem Draht).
+- **Begründung:** Gespeicherte Windows-Daten bleiben unberührt (keine Migration), Windows-Verhalten bleibt exakt; der
+  Regelsatz je Host ist die einzige Lösung, die gemischte Rechnerverbünde korrekt prüft.
+- **Folgen:** Jede Pfadprüfung im Server läuft über `HOST_PATH_RULES`, im Web über den Regelsatz des Hosts. Tests mit
+  Windows-Semantik übergeben `WIN32_PATHS` ausdrücklich oder laufen nur unter Windows; CI prüft Linux (`ci.yml`).
+  WSL ist kein eigenes Ziel (verhält sich wie der Server-Modus).
+
+## ADR-242 – Schlüsselspeicher unter Linux: Secret Service, systemd-creds, Datei nur per Opt-in
+- **Datum/WP:** 20.11.2026, WP-100 E1, WP-101 §3 (Nachentscheidung des Nutzers), Spezifikation WP-76 §B.14.
+- **Entscheidung:** Mit Desktop GNOME Keyring über libsecret (`node:ffi`, im Worker mit Frist); ohne Desktop ab
+  Ubuntu 26.04 `systemd-creds --user`, sobald die CI es bestätigt; unter 24.04 (und bis dahin 26.04) eine Datei mit
+  Rechten 0600 nur ausdrücklich (`--key-store=file`) und mit Warnung. Ohne Verfahren kein Freigeben und kein Koppeln.
+- **Begründung:** `systemd-creds --user` fehlt in systemd 255 (24.04); ein Systemdienst (Root-Schlüssel) hätte jedes
+  Erneuern an `sudo` gebunden und damit die Verwaltung aus der Ferne (ADR-243) verhindert.
+- **Folgen:** Der Datei-Weg schützt nicht gegen Diebstahl des Datenordners (Ausnahme von WP-76 §B.5, dokumentiert in
+  §B.14). Ein Wechsel des Verfahrens verlangt neues Koppeln.
+
+## ADR-243 – Verwaltung aus der Ferne: Kopplungsstufe „Verwalten“ und Kommandozeile
+- **Datum/WP:** 20.11.2026, WP-100 E2, Spezifikation WP-76 §B.13, Contracts WP-102c.
+- **Kontext:** Ein Rechner ohne Desktop hat kein lokales Fenster; Einstellungen, Profile, Updates und die Kopplung
+  waren bisher nur lokal erreichbar.
+- **Entscheidung:** Die eine Kopplung eines freigebenden Rechners hat eine Stufe `control` (wie bisher) oder `manage`
+  (zusätzlich `REMOTE_MANAGE_COMMANDS`). Die Stufe wählt der Nutzer vor Ort beim Öffnen des Kopplungsfensters (Fenster
+  oder `parallax remote pair --level manage` über `POST /api/launcher/remote`); hinauf nie aus der Ferne, jede Änderung
+  trennt alle Verbindungen der Kopplung. Ein Kopplungsfenster, sichtbare Programme, der Konsolenbefehl und die
+  Rechnerliste bleiben für jede Stufe gesperrt.
+- **Folgen:** Neue Ereignisse `level_changed`, `manage_command`; `hello.access` steuert nur die Anzeige, geprüft wird im
+  Hub des freigebenden Rechners. Empfehlung in der UI: `manage` nur für Rechner ohne Desktop.
+
+## ADR-244 – Eingebettetes Terminal auch für gekoppelte Rechner (Nachtrag zu ADR-239)
+- **Datum/WP:** 20.11.2026, WP-100 E3 (Entscheidung des Nutzers „Ja, immer“), Spezifikation WP-76 §B.13.
+- **Entscheidung:** Ersetzt in ADR-239 „nie für andere Rechner“: Ein gekoppelter Rechner öffnet das Terminal über den
+  Vermittler (`HOST_API_PATHS.terminalWs` → `REMOTE_PATHS.terminalWs`), jede Stufe, ohne Schalter. Grenzen und
+  Gegendruck wie lokal, nie Ein- oder Ausgabe im Log, fern gestartete Terminals enden mit der Kopplung, lokale Fenster
+  sehen sie live. `shell.detect` ist aus der Ferne erlaubt, `session.openShell` (sichtbares Fenster) nicht.
+- **Begründung:** Ohne Terminal fehlt einem Server ohne Desktop die externe Konsole ganz; „In Terminal fortsetzen“
+  ersetzt sie.
+- **Folgen:** Jede Kopplung hat eine interaktive Shell ohne die Rückfragen von `claude` (Restrisiko in WP-76 §B.13).
+  Unter Linux liefert `terminal/unixPty.ts` (`/dev/ptmx`, `setsid -c`) die Pseudokonsole.
+
+## ADR-245 – Linux-Testumgebung: Docker-Container unter Windows, CI auf Ubuntu
+- **Datum/WP:** 20.–21.11.2026, WP-100 E8, WP-101, `scripts/linux/`.
+- **Entscheidung:** Entwickelt und geprüft wird unter Windows; Linux-Läufe in einem Ubuntu-Image
+  (`scripts/linux/Dockerfile`, Node 26 offiziell, pnpm, Chrome) über `scripts/linux/run.sh` (kopiert den Arbeitsstand,
+  eigene `node_modules`, Store im Volume, Grenzen für CPU und Speicher). systemd-Tests (26.04) in der CI, weil Docker
+  Desktop lokal cgroup v1 nutzt; der Desktop wird live auf echtem Ubuntu mit dem Nutzer abgenommen.
+- **Folgen:** Auch Container-Läufe zählen zur Ressourcenregel (ADR-154): ein schwerer Lauf zur Zeit.
