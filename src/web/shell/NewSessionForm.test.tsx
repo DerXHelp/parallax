@@ -2,7 +2,19 @@ import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { STANDARD_PROFILE_ID } from '@shared/common';
-import { sampleHostState, sampleId, sampleProfileSummary, sampleSummary } from '@shared/samples';
+import { makeError } from '@shared/errors';
+import type { ProjectSettingsMap } from '@shared/model';
+import type { Command } from '@shared/protocol';
+import {
+  sampleGitWorktree,
+  sampleHostState,
+  sampleId,
+  sampleProfileSummary,
+  sampleProjectSettings,
+  sampleSettings,
+  sampleSummary,
+} from '@shared/samples';
+import type { FakeAck } from '@web/state/fake-host';
 import { setSelectedSession } from '@web/state/selection';
 import { resetClientStore } from '@web/state/store';
 import { TooltipProvider } from '@web/ui/tooltip';
@@ -122,5 +134,156 @@ describe('NewSessionForm (inline, empty state)', () => {
     await waitFor(() => {
       expect(running.commands('session.create')).toEqual([{ name: 'session.create', cwd: 'D:\\work', profileId: WORK }]);
     });
+  });
+});
+
+describe('NewSessionForm: own worktree (WP-114, ADR-250)', () => {
+  const REPO = 'D:\\work\\sample';
+  const LINKED = 'D:\\work\\sample\\.claude\\worktrees\\feature-a';
+
+  async function startGitHost(
+    options: {
+      projects?: ProjectSettingsMap;
+      git?: boolean;
+      onCommand?: (cmd: Command) => FakeAck | undefined;
+    } = {},
+  ): Promise<NewSessionDemo> {
+    demo = startNewSessionDemo({
+      immediate: true,
+      hostState: sampleHostState({
+        profiles: PROFILES,
+        defaultProfileId: WORK,
+        features: { git: options.git ?? true, search: false, overview: false },
+        settings: sampleSettings({ projects: options.projects ?? {} }),
+      }),
+      onCommand: (cmd) => {
+        const own = options.onCommand?.(cmd);
+        if (own !== undefined) return own;
+        if (cmd.name !== 'worktree.list') return undefined;
+        return {
+          ok: true,
+          result: {
+            repoRoot: REPO,
+            worktrees: [sampleGitWorktree(), sampleGitWorktree({ path: LINKED, branch: 'feature/a', main: false })],
+          },
+        };
+      },
+    });
+    const running = demo;
+    await waitFor(() => {
+      expect(running.connection.status()).toBe('open');
+    });
+    return running;
+  }
+
+  function renderForm(cwd = 'D:\\work\\sample\\src') {
+    render(
+      <TooltipProvider>
+        <NewSessionForm initialCwd={cwd} />
+      </TooltipProvider>,
+    );
+  }
+
+  it('without the git service of the host: no switch and no git question', async () => {
+    const running = await startGitHost({ git: false });
+    const user = userEvent.setup();
+    renderForm();
+    await waitFor(() => {
+      expect(profileTrigger().getAttribute('data-profile-id')).toBe(WORK);
+    });
+    expect(screen.queryByRole('switch', { name: 'In its own worktree' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Create session' }));
+    await waitFor(() => {
+      expect(running.commands('session.create')).toHaveLength(1);
+    });
+    expect(running.commands('worktree.list')).toEqual([]);
+    expect(running.commands('session.create')[0]?.worktree).toBeUndefined();
+  });
+
+  it('in a repository the switch shows (off); switched on, a new branch from the main branch goes along', async () => {
+    const running = await startGitHost();
+    const user = userEvent.setup();
+    renderForm();
+    const toggle = await screen.findByRole('switch', { name: 'In its own worktree' });
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    expect(running.commands('worktree.list')).toEqual([{ name: 'worktree.list', cwd: 'D:\\work\\sample\\src' }]);
+    await user.click(toggle);
+    const branch = screen.getByRole<HTMLInputElement>('textbox', { name: 'Branch name' });
+    expect(branch.value).toMatch(/^parallax\/[a-z0-9]{6}$/);
+    expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Based on' }).value).toBe('main');
+    await user.clear(branch);
+    await user.type(branch, 'feature/login');
+    expect(document.querySelector('[data-slot="worktree-folder"]')?.textContent).toContain('feature-login');
+    await user.click(screen.getByRole('button', { name: 'Create session' }));
+    await waitFor(() => {
+      expect(running.commands('session.create')).toEqual([
+        {
+          name: 'session.create',
+          cwd: 'D:\\work\\sample\\src',
+          profileId: WORK,
+          worktree: { mode: 'new', branch: 'feature/login', baseRef: 'main' },
+        },
+      ]);
+    });
+  });
+
+  it('the project default switches it on; an invalid branch name blocks "Create" with a reason', async () => {
+    await startGitHost({ projects: { [REPO]: sampleProjectSettings({ worktreeDefault: true }) } });
+    const user = userEvent.setup();
+    renderForm();
+    const toggle = await screen.findByRole('switch', { name: 'In its own worktree' });
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+    const branch = screen.getByRole<HTMLInputElement>('textbox', { name: 'Branch name' });
+    await user.clear(branch);
+    await user.type(branch, 'bad name');
+    expect(screen.getByRole('alert').textContent).toContain('Not a valid branch name');
+    expect(screen.getByRole('button', { name: 'Create session' })).toHaveProperty('disabled', true);
+    await user.clear(branch);
+    expect(screen.getByRole('alert').textContent).toContain('Enter a name for the new branch.');
+  });
+
+  it('an existing worktree (not the main one) can be picked instead', async () => {
+    const running = await startGitHost();
+    const user = userEvent.setup();
+    renderForm(REPO);
+    await user.click(await screen.findByRole('switch', { name: 'In its own worktree' }));
+    await user.click(screen.getByRole('radio', { name: 'Existing worktree' }));
+    expect(screen.getByRole('button', { name: 'Create session' })).toHaveProperty('disabled', true);
+    const options = within(screen.getByRole('radiogroup', { name: 'Worktree' })).getAllByRole('radio');
+    expect(options).toHaveLength(1);
+    await user.click(screen.getByRole('radio', { name: /feature\/a/ }));
+    await user.click(screen.getByRole('button', { name: 'Create session' }));
+    await waitFor(() => {
+      expect(running.commands('session.create')[0]?.worktree).toEqual({ mode: 'existing', path: LINKED });
+    });
+  });
+
+  it('outside a repository nothing shows; a git refusal shows in the form with its detail', async () => {
+    const running = await startGitHost({
+      onCommand: (cmd) => {
+        if (cmd.name === 'worktree.list' && cmd.cwd === 'D:\\elsewhere') {
+          return { ok: false, error: makeError('NOT_A_GIT_REPO', { path: cmd.cwd }) };
+        }
+        if (cmd.name === 'session.create') {
+          return { ok: false, error: makeError('BRANCH_EXISTS', { branch: 'feature/login' }) };
+        }
+        return undefined;
+      },
+    });
+    const user = userEvent.setup();
+    renderForm('D:\\elsewhere');
+    await waitFor(() => {
+      expect(running.commands('worktree.list')).toHaveLength(1);
+    });
+    expect(screen.queryByRole('switch', { name: 'In its own worktree' })).toBeNull();
+    const field = screen.getByLabelText('Project folder');
+    await user.clear(field);
+    await user.type(field, REPO);
+    await user.click(await screen.findByRole('switch', { name: 'In its own worktree' }));
+    await user.click(screen.getByRole('button', { name: 'Create session' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('A branch with this name already exists.');
+    expect(alert.querySelector('[data-slot="error-detail"]')?.textContent).toBe('feature/login');
+    expect(screen.getByRole('textbox', { name: 'Branch name' }).getAttribute('aria-invalid')).toBe('true');
   });
 });

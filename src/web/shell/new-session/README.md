@@ -17,10 +17,15 @@ Dialog merkt sich beim Öffnen das fokussierte Element und gibt ihm den Fokus be
 | `profile-status.tsx` | `ProfileStatus`, `profileStatusText`, `ProfileColorDot`, `ProfileIssueText`, `profileErrors` (leer = Profil nutzbar) – gemeinsam mit `features/profiles`; WP-62: Ton `info` „neuer als geprüft“ (`newSession.status.untested`/`untestedPlan`), wenn `version` neuer als `testedVersion` |
 | `profile-issues.ts` | Details eines Befunds (`issueDetail`, `issueArgIndex`, `issueField`, `issueEnvKey`, `issueCounts`) – nie Env-Werte |
 | `recent-projects.ts` | `recentProjects(entries)` (max. 8, case-insensitiv per `windowsPathKey`, archivierte inklusive), `filterRecentProjects` (Fuzzy, `lib/fuzzy.ts`) |
+| `WorktreeFields.tsx` | WP-114 (ADR-250): Schalter „In eigenem Worktree“ (nur wenn `worktree.list` ein Repository meldet), Modus neu/vorhanden (Auswahl nur, wenn es Worktrees außer dem Haupt-Worktree gibt), Branch und Basis mit Prüfung, Ziel-Ordner `<repo>/.claude/worktrees/<branch, / → ->` (`newWorktreeFolder`) |
+| `use-worktree-choice.ts` | `useWorktreeChoice` – Zustand des Schalters je Repository (Standard aus `settings.projects[repo].worktreeDefault`), `request` für `session.create.worktree` (`undefined` = ohne Worktree, `null` = ungültig), `waiting` (Repo-Prüfung läuft, und ein Projekt hat den Worktree als Standard) |
+| `use-repo-worktrees.ts` | `useRepoWorktrees` – `worktree.list {cwd}` verzögert (300 ms); jeder Fehler (`NOT_A_GIT_REPO`, älterer Server) = kein Repository |
+| `worktree-lib.ts` | Reine Helfer: `defaultWorktreeBranch` (`parallax/<6 Zeichen>`), `projectSettingsFor`/`projectKeyFor` (Schlüssel nach den Pfadregeln), `mainWorktreeBranch`, `pickableWorktrees`, `refIssue` (`isValidGitRefName`), `worktreeRequest`, `gitErrorDetail` |
+| `project-roots.ts` | Projekte der Einstellungen „Projekte“: `knownProjectRoots` (Einstellungen + `worktree.repoRoot`), `foldersToResolve` (übrige Session-Ordner, höchstens 30, neueste zuerst), `distinctRoots`, `sortProjectRoots` |
 | `demo-folders.ts`, `demo-host.ts` | nur Tests/Playground: Ordnerbaum für `fs.listDirectory` und `fs.createDirectory` (je Demo eine Kopie, `cloneDemoFolders`/`createDemoFolder`), FakeHost hinter einer echten `HostConnection` (`startNewSessionDemo`) |
 | `i18n/{en,de}.ts` | Namensraum `newSession` (registriert in `src/web/i18n/dictionaries.ts` bzw. `dictionary.de.ts`, ADR-153); auch Status- und Befundtexte der Profile |
 
-Tests: `FolderBrowser.test.tsx`, `new-session-lib.test.ts`, `i18n/i18n.test.ts` (gleiche Schlüssel,
+Tests: `FolderBrowser.test.tsx`, `new-session-lib.test.ts`, `worktree-lib.test.ts`, `i18n/i18n.test.ts` (gleiche Schlüssel,
 keine Literale in `aria-label`/`title`/`placeholder`/`alt`), dazu `../NewSessionDialog.test.tsx` und
 `../NewSessionForm.test.tsx`.
 

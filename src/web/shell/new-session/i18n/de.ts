@@ -123,4 +123,28 @@ export const de: typeof en = {
       invalidChar: 'Ein Ordnername darf weder / noch Steuerzeichen enthalten.',
     },
   },
+  worktree: {
+    toggle: 'In eigenem Worktree',
+    toggleHint:
+      'Eigener Ordner und Branch in {repo} – die Änderungen bleiben getrennt von anderen Sessions, bis du sie zusammenführst.',
+    checking: 'Git-Repository wird geprüft…',
+    modeLabel: 'Wo die Session läuft',
+    modes: {
+      new: 'Neuer Branch',
+      existing: 'Vorhandener Worktree',
+    },
+    branch: 'Branch-Name',
+    base: 'Basis',
+    basePlaceholder: 'Aktueller Branch',
+    baseHint: 'Branch, Tag oder Commit, von dem der neue Branch abzweigt – leer: der aktuelle Branch.',
+    baseInvalid: 'Kein gültiger Branch-, Tag- oder Commit-Name.',
+    folder: 'Ordner: {folder}',
+    branchIssues: {
+      empty: 'Gib einen Namen für den neuen Branch ein.',
+      invalid: 'Kein gültiger Branch-Name – keine Leerzeichen und keins von ~ ^ : ? * [ \\ oder „..“.',
+    },
+    existing: 'Worktree',
+    existingItem: '{branch} – {folder}',
+    existingHint: 'Wähle den Worktree, in dem die Session läuft.',
+  },
 };

@@ -268,4 +268,8 @@ export const de: typeof en = {
     archived: 'Archiviert – nur lesen.',
     external: 'In externer Konsole geöffnet – hol sie zurück, um hier zu schreiben.',
   },
+  worktreeSetup: {
+    creating: 'Der Worktree wird angelegt – senden geht, sobald er bereit ist.',
+    setup: 'Der Setup-Befehl des Projekts läuft – senden geht, sobald er fertig ist.',
+  },
 };

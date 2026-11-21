@@ -314,4 +314,9 @@ export const en = {
     archived: 'Archived – read only.',
     external: 'Opened in an external console – take it back to write here.',
   },
+  /** WP-114 (ADR-251): sending waits while the session's worktree is being prepared. */
+  worktreeSetup: {
+    creating: 'The worktree is being created – you can send once it is ready.',
+    setup: 'The project’s setup command is running – you can send once it is done.',
+  },
 };

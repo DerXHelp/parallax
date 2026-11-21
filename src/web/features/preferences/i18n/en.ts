@@ -578,7 +578,38 @@ export const en = {
     hint: 'Settings of {name}: every change is saved there. Profiles and updates of {name} are not shown here yet.',
   },
   /** WP-110 (Ausbau 1): section "Projects" – setup, teardown, ports and worktree default per repository (WP-114). */
+  /** WP-114 (ADR-250/251): settings per project (git repository) for worktree sessions. */
   projects: {
-    unavailable: 'Settings per project are not available in this version.',
+    unavailable: 'Settings per project need the Git service of a newer Parallax on this computer.',
+    intro:
+      'All optional: without settings Parallax creates no worktree on its own, runs no command and reserves no ports. A project is a Git repository; its settings apply to sessions in their own worktree (“New session” → “In its own worktree”).',
+    commandsNote:
+      'The commands come only from you – never from the repository – and run visibly in a terminal tab of the session, where you can stop them.',
+    portsNote:
+      'Port block: every new worktree gets 10 free ports from 41000 on. The first one is in the variable PARALLAX_WORKTREE_PORT – in Claude Code, in setup and teardown and in the session’s terminals. Your project has to use it itself, e.g. as the port of its dev server.',
+    list: 'Projects',
+    scanning: 'Looking for the repositories of your sessions…',
+    empty: 'No projects yet. A Git repository shows up here once a session runs in it.',
+    badges: {
+      setup: 'Setup',
+      teardown: 'Teardown',
+      ports: 'Ports',
+      worktreeDefault: 'Worktree by default',
+    },
+    setup: 'Setup command',
+    setupHint:
+      'Runs in a new worktree right after it was created, e.g. installing dependencies. A first message waits for it. Empty = nothing.',
+    setupPlaceholder: 'pnpm install --frozen-lockfile',
+    teardown: 'Teardown command',
+    teardownHint:
+      'Runs in the worktree before Parallax deletes it, e.g. stopping containers. Empty = nothing.',
+    teardownPlaceholder: 'docker compose down',
+    shell: 'Shell for both commands',
+    shellDefault: 'Like “Console” ({shell})',
+    ports: 'Port block for each worktree',
+    portsHint: 'Ten free ports per worktree; the first one in PARALLAX_WORKTREE_PORT.',
+    worktreeDefault: 'Start new sessions in their own worktree',
+    worktreeDefaultHint: '“In its own worktree” is switched on in “New session” for this project.',
+    reset: 'Remove the settings of this project',
   },
 };
