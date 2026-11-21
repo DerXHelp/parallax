@@ -198,6 +198,7 @@ describe('createSystemLauncher on Linux (WP-106; spawn and gdbus faked – nothi
       env: LINUX_ENV,
       spawn,
       run,
+      realpath: (file) => Promise.resolve(file),
       platform: 'linux',
     });
     return { system, spawn, ran };

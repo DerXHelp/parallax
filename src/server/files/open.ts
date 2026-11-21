@@ -71,6 +71,8 @@ export interface SystemLauncherDeps {
   env?: NodeJS.ProcessEnv;
   spawn?: GuiSpawnFn;
   readHead?: (file: string, length: number) => Promise<Uint8Array>;
+  /** Linux: the target of the editor's link (`spawnGui`, default `fs.realpath`). */
+  realpath?: (file: string) => Promise<string>;
   platform?: NodeJS.Platform;
   /** Clock of the editor lookup cache (R5-04; default `Date.now`). */
   now?: () => number;
@@ -108,6 +110,7 @@ function linuxOpen(
     await spawnGui(executable, args, {
       ...(deps.env === undefined ? {} : { env: deps.env }),
       ...(deps.spawn === undefined ? {} : { spawn: deps.spawn }),
+      ...(deps.realpath === undefined ? {} : { realpath: deps.realpath }),
       platform: 'linux',
       cwd: path.posix.dirname(executable),
     });

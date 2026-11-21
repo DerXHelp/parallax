@@ -1,4 +1,4 @@
-import { mkdir, rm, symlink } from 'node:fs/promises';
+import { mkdir, rm, stat, symlink } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { makeTempHome } from '../http/testServer';
@@ -223,6 +223,13 @@ describe.runIf(process.platform === 'linux')('home lock on Linux: abstract Unix 
     await symlink(home, link);
     expect(await homeLockKey(link)).toBe(key);
     expect(await homeLockKey(home.toUpperCase())).not.toBe(key);
+  });
+
+  it('a new data folder is created 0700 (security review WP-109)', async () => {
+    const parent = await tempHome();
+    const home = path.join(parent, 'fresh', 'home');
+    await acquired(home);
+    expect((await stat(home)).mode & 0o777).toBe(0o700);
   });
 
   it('a second acquire of the same home is busy – in any spelling – until released', async () => {

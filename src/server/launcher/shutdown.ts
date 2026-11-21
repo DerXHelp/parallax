@@ -19,7 +19,7 @@
 import type { Logger } from 'pino';
 import { settleWithin } from '../lib/async';
 import { logger as rootLogger } from '../lib/logger';
-import { childProcesses, killProcessTree, type ProcessQueryResult } from '../lib/process';
+import { childProcesses, killProcessTree, userProgramPids, type ProcessQueryResult } from '../lib/process';
 
 export type ShutdownReason = 'command' | 'signal' | 'error';
 
@@ -186,6 +186,8 @@ export async function killChildProcessTrees(
     since?: Date;
     /** Children never ended (the update orchestrator, `createServerShutdown({sparePids})`). */
     except?: readonly number[];
+    /** Programs the user sees (default `userProgramPids()`: editors, terminal windows) – never ended. */
+    userPrograms?: readonly number[];
     list?: (pid: number) => Promise<ProcessQueryResult>;
     kill?: (pid: number) => Promise<void>;
     logger?: Logger;
@@ -205,12 +207,17 @@ export async function killChildProcessTrees(
     return 0;
   }
   const spared = new Set(options.except ?? []);
+  const userPrograms = new Set(options.userPrograms ?? userProgramPids());
   let killed = 0;
   for (const child of listed.processes) {
     if (SWEEP_EXCLUDED.has(child.name.toLowerCase())) continue;
     if (child.startedAt.getTime() < since.getTime()) continue;
     if (spared.has(child.pid)) {
       log.info({ pid: child.pid, name: child.name }, 'shutdown: spared child process (update orchestrator)');
+      continue;
+    }
+    if (userPrograms.has(child.pid)) {
+      log.info({ pid: child.pid, name: child.name }, 'shutdown: spared child process (user program)');
       continue;
     }
     try {

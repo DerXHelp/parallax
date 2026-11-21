@@ -16,7 +16,7 @@ import { open, readFile, realpath, stat, type FileHandle } from 'node:fs/promise
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
-import { windowsPathIssue, windowsPathKey } from '@shared/paths';
+import { POSIX_PATHS, windowsPathIssue, windowsPathKey } from '@shared/paths';
 import { WEB_BUILD_INFO_FILE, parseWebBuildId } from '../app/webSnapshot';
 import { sleep } from '../lib/async';
 import { acquireKeyLock } from '../lib/homeLock';
@@ -221,12 +221,22 @@ export type LockAttempt = { kind: 'acquired'; release: () => Promise<void> } | {
  * Key of the build lock of a checkout (CR-04): the real path of a plain drive path (junctions and
  * `subst` drives share one lock). A path the data-directory rules refuse (`\\nas\share\…`, …) is
  * the checkout this process runs from – it is keyed by its resolved spelling, without any further
- * file system access (never a TypeError, the build still runs).
+ * file system access (never a TypeError, the build still runs). POSIX (review WP-109): the real path,
+ * compared exactly (`POSIX_PATHS.key`).
  */
 export async function buildLockKey(
   repoRoot: string,
   fs: { realpath: (dir: string) => Promise<string> } = { realpath },
+  platform: NodeJS.Platform = process.platform,
 ): Promise<string> {
+  if (platform !== 'win32') {
+    const absolute = path.posix.resolve(repoRoot);
+    try {
+      return POSIX_PATHS.key(await fs.realpath(absolute));
+    } catch {
+      return POSIX_PATHS.key(absolute);
+    }
+  }
   const resolved = path.win32.resolve(repoRoot);
   if (windowsPathIssue(resolved) !== null) return windowsPathKey(resolved);
   try {
@@ -241,7 +251,11 @@ export async function acquireBuildLock(
   repoRoot: string,
   options: { platform?: NodeJS.Platform } = {},
 ): Promise<LockAttempt> {
-  const result = await acquireKeyLock('build', await buildLockKey(repoRoot), options);
+  const result = await acquireKeyLock(
+    'build',
+    await buildLockKey(repoRoot, { realpath }, options.platform),
+    options,
+  );
   if (result.kind === 'busy') return { kind: 'busy' };
   const lock = result.lock;
   return { kind: 'acquired', release: () => lock.release() };

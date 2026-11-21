@@ -2,7 +2,13 @@ import { EventEmitter } from 'node:events';
 import pino from 'pino';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ProcessModule from '../lib/process';
-import { childProcesses, killProcessTree, type ProcessInfo } from '../lib/process';
+import {
+  childProcesses,
+  keepUserProgram,
+  killProcessTree,
+  userProgramPids,
+  type ProcessInfo,
+} from '../lib/process';
 import {
   FORCED_EXIT_CODE,
   createServerShutdown,
@@ -279,6 +285,40 @@ describe('killChildProcessTrees (taskkill /T /F of the remaining children)', () 
     });
     expect(killed).toEqual([201]);
     expect(count).toBe(1);
+  });
+
+  it('never ends a program the user sees (review WP-109: terminal window, editor on Linux)', async () => {
+    const killed: number[] = [];
+    const listed = () =>
+      Promise.resolve({
+        kind: 'ok' as const,
+        processes: [
+          child(201, 'claude', '2026-10-15T08:05:00.000Z'),
+          child(206, 'kitty', '2026-10-15T09:00:00.000Z'),
+        ],
+      });
+    const kill = (pid: number) => {
+      killed.push(pid);
+      return Promise.resolve();
+    };
+    const since = new Date('2026-10-15T08:00:00.000Z');
+    await killChildProcessTrees({
+      parentPid: 100,
+      since,
+      userPrograms: [206],
+      list: listed,
+      kill,
+      logger: silent,
+    });
+    expect(killed).toEqual([201]);
+    // The default comes from keepUserProgram: a started program counts until its exit.
+    const exit: (() => void)[] = [];
+    keepUserProgram({ pid: 206, once: (_event, listener) => exit.push(listener) });
+    expect(userProgramPids()).toContain(206);
+    await killChildProcessTrees({ parentPid: 100, since, list: listed, kill, logger: silent });
+    expect(killed).toEqual([201, 201]);
+    for (const listener of exit) listener();
+    expect(userProgramPids()).not.toContain(206);
   });
 
   it('ends nothing when the children cannot be listed (R2-02: unknown is not "none")', async () => {

@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   SYSTEMD_UNIT_NAME,
   installService,
+  quoteEnvironmentValue,
   quoteUnitValue,
   serviceStatus,
   systemdUnit,
   systemdUnitPath,
   uninstallService,
+  unitPathValue,
   type ServiceDeps,
   type ToolResult,
 } from './systemdService';
@@ -86,6 +88,11 @@ describe('systemd user service (WP-107)', () => {
     expect(quoteUnitValue('50%')).toBe('"50%%"');
     expect(quoteUnitValue('$HOME')).toBe('"$$HOME"');
     expect(() => quoteUnitValue('a\nExecStartPre=/bin/evil')).toThrow(/line break/);
+    // Review WP-109: Environment= expands no variables; WorkingDirectory= takes no quotes at all.
+    expect(quoteEnvironmentValue('PATH=/a$b:/c%d')).toBe('"PATH=/a$b:/c%%d"');
+    expect(unitPathValue('/opt/my app 50%')).toBe('/opt/my app 50%%');
+    expect(() => unitPathValue('relative/dir')).toThrow(/absolute/);
+    expect(() => unitPathValue('/opt/x\n[Service]')).toThrow(/line break/);
   });
 
   it('the unit starts the launcher with --server in the foreground (Type=simple)', () => {
@@ -94,7 +101,7 @@ describe('systemd user service (WP-107)', () => {
       'ExecStart="/usr/bin/node" "/opt/parallax/start.mjs" "--server" "--home=/home/demo/.local/share/parallax"',
     );
     expect(text).toContain('Type=simple');
-    expect(text).toContain('WorkingDirectory="/opt/parallax"');
+    expect(text.split('\n')).toContain('WorkingDirectory=/opt/parallax');
     expect(text).toContain('Environment="PATH=/home/demo/.local/bin:/usr/bin"');
     expect(text).toContain('WantedBy=default.target');
     expect(systemdUnit({ ...OPTIONS, path: '' })).not.toContain('Environment=');

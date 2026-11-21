@@ -524,8 +524,10 @@ export const DEFAULT_PROGRAM_EXTENSIONS = [
 
 /**
  * Linux counterpart of `EDITOR_BLOCKED_EXECUTABLES` (WP-102, base name, case-insensitive, a trailing
- * version like `python3.12` ignored): shells, interpreters, wrappers that run another program, terminal
- * emulators and openers that hand the file to whatever program the desktop picks.
+ * version like `python3.12` ignored, and – security review WP-109 – the part before the first `-`, `.`
+ * or digit, like `perl5.38-x86_64-linux-gnu`): shells, interpreters, wrappers that run another program,
+ * terminal emulators and openers that hand the file to whatever program the desktop picks. The server
+ * also checks the target of a link (`spawnGui`).
  */
 export const EDITOR_BLOCKED_POSIX_EXECUTABLES = [
   // shells
@@ -540,8 +542,13 @@ export const EDITOR_BLOCKED_POSIX_EXECUTABLES = [
   'tcsh',
   'pwsh',
   'busybox',
+  'rbash',
   // interpreters
   'python',
+  'pypy',
+  'java',
+  'gjs',
+  'cjs',
   'perl',
   'ruby',
   'node',
@@ -573,6 +580,15 @@ export const EDITOR_BLOCKED_POSIX_EXECUTABLES = [
   'systemd-run',
   'flatpak',
   'snap',
+  'unshare',
+  'flock',
+  'stdbuf',
+  'chroot',
+  'firejail',
+  'bwrap',
+  'dbus-launch',
+  'dbus-run-session',
+  'gtk-launch',
   // terminal emulators
   'x-terminal-emulator',
   'gnome-terminal',
@@ -591,6 +607,7 @@ export const EDITOR_BLOCKED_POSIX_EXECUTABLES = [
   'foot',
   'urxvt',
   'rxvt',
+  'xdg-terminal-exec',
   // openers
   'xdg-open',
   'gio',
@@ -622,8 +639,9 @@ export function editorExecutableIssue(
     return (EDITOR_BLOCKED_EXECUTABLES as readonly string[]).includes(base) ? 'blocked' : null;
   }
   const unversioned = base.replace(/[\d.]+$/, '');
+  const stem = base.replace(/[-.\d].*$/, '');
   const blocked = EDITOR_BLOCKED_POSIX_EXECUTABLES as readonly string[];
-  return blocked.includes(base) || blocked.includes(unversioned) ? 'blocked' : null;
+  return [base, unversioned, stem].some((name) => blocked.includes(name)) ? 'blocked' : null;
 }
 
 export const editorSettingsSchema = z

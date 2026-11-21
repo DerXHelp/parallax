@@ -24,6 +24,7 @@ import path from 'node:path';
 import { POSIX_PATHS } from '@shared/paths';
 import type { ConsoleLaunchSpec } from '../claude/ports';
 import { sleep as realSleep, toError } from '../lib/async';
+import { keepUserProgram } from '../lib/process';
 import { createProcfsReader, isEndedState, type ProcfsReader } from '../lib/procfs';
 import { nodeFsProbe, type FsProbe } from '../lib/windows';
 import {
@@ -131,6 +132,8 @@ export function createLinuxConsoleLauncher(opts: LinuxConsoleLauncherOptions = {
       });
       child.once('spawn', () => {
         child.unref();
+        // Security review WP-109: the window with the user's console survives the shutdown sweep.
+        keepUserProgram(child);
         resolve();
       });
     });

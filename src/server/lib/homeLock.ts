@@ -144,7 +144,9 @@ export async function acquireDirectoryLock(
   const issue = pathRules(pathFlavorOf(platform)).issue(dir);
   if (issue !== null) throw new TypeError(`${kind} lock: unsafe path (${issue})`);
   if (lockAddress(kind, '', platform) === null) return acquireKeyLock(kind, '', options);
-  await mkdir(dir, { recursive: true });
+  // Security review WP-109: a new data folder is the user's alone from the start (POSIX 0700; the
+  // server narrows an existing one before its first store, app/compose.ts).
+  await mkdir(dir, kind === 'home' ? { recursive: true, mode: 0o700 } : { recursive: true });
   return acquireKeyLock(kind, await homeLockKey(dir, platform), options);
 }
 

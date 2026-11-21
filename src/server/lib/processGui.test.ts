@@ -136,7 +136,7 @@ describe('spawnGui on POSIX (WP-103: absolute program, POSIX block list, no PE c
     PARALLAX_ENTRY_ID: 'en_x',
     DISPLAY: ':0',
   };
-  const posix = (spawn: GuiSpawnFn, onRead?: () => void) => ({
+  const posix = (spawn: GuiSpawnFn, onRead?: () => void, links: Record<string, string> = {}) => ({
     cwd: '/home/u/project',
     env: POSIX_ENV,
     spawn,
@@ -144,6 +144,7 @@ describe('spawnGui on POSIX (WP-103: absolute program, POSIX block list, no PE c
       onRead?.();
       return Promise.resolve(Buffer.from('#!/bin/sh'));
     },
+    realpath: (file: string) => Promise.resolve(links[file] ?? file),
     platform: 'linux' as const,
   });
   // Absolute and not on this machine in any case (a Linux host checks an existing file's x bit).
@@ -210,6 +211,25 @@ describe('spawnGui on POSIX (WP-103: absolute program, POSIX block list, no PE c
       code: 'OPEN_FAILED',
       params: { reason: 'ENOENT' },
     });
+  });
+
+  it('a harmless name that links to a blocked program is blocked; a snap link starts (review WP-109)', async () => {
+    const spawn = fakeSpawn();
+    const notes = '/home/u/bin/notes';
+    expect(
+      await openFailure(spawnGui(notes, [], posix(spawn, undefined, { [notes]: '/usr/bin/python3.12' }))),
+    ).toEqual({ code: 'OPEN_FAILED', params: { reason: 'blocked' } });
+    expect(spawn.calls).toEqual([]);
+    // `/snap/bin/code` → `/usr/bin/snap`: snap starts the installed snap named like the link.
+    await spawnGui('/snap/bin/code', [], posix(spawn, undefined, { '/snap/bin/code': '/usr/bin/snap' }));
+    expect(spawn.calls.map((call) => call.file)).toEqual(['/snap/bin/code']);
+    // A link that cannot be resolved (gone meanwhile) starts nothing.
+    const gone = () => Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    expect(await openFailure(spawnGui(GEDIT, [], { ...posix(spawn), realpath: gone }))).toEqual({
+      code: 'OPEN_FAILED',
+      params: { reason: 'ENOENT' },
+    });
+    expect(spawn.calls).toHaveLength(1);
   });
 });
 

@@ -551,9 +551,10 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   const instance = createServerInstance();
   let stores: Stores;
   try {
-    stores = await openStores(config, instance, log);
-    // WP-107/109 (WP-76 §B.14): on POSIX the data folder is the user's alone (keys, tokens, sessions).
+    // WP-107/109 (WP-76 §B.14): on POSIX the data folder is the user's alone (keys, tokens, sessions) –
+    // narrowed BEFORE the first store writes (security review WP-109: the cookie secret of a first start).
     await narrowPrivateDir(config.home);
+    stores = await openStores(config, instance, log);
   } catch (error) {
     if (error instanceof StoreVersionTooNewError) {
       throw new StartupError(SERVER_EXIT_CODES.storeVersionTooNew, error.message, { cause: error });

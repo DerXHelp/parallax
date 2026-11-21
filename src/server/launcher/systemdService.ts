@@ -67,15 +67,40 @@ export function systemdUnitPath(env: NodeJS.ProcessEnv, homeDir: string): string
   return path.posix.join(base, 'systemd', 'user', SYSTEMD_UNIT_NAME);
 }
 
-/** One value for a unit line: always quoted, `\` and `"` escaped, `%` and `$` doubled. */
-export function quoteUnitValue(value: string): string {
+function assertUnitValue(value: string): void {
   if (/[\r\n\0]/u.test(value)) throw new Error('unit value with a line break or NUL');
+}
+
+/** One word of `ExecStart=`: always quoted, `\` and `"` escaped, `%` and `$` doubled. */
+export function quoteUnitValue(value: string): string {
+  assertUnitValue(value);
   const escaped = value
     .replace(/\\/gu, '\\\\')
     .replace(/"/gu, '\\"')
     .replace(/%/gu, '%%')
     .replace(/\$/gu, '$$$$');
   return `"${escaped}"`;
+}
+
+/**
+ * One assignment of `Environment=` (review WP-109): quoted and escaped like `ExecStart=`, `%` doubled –
+ * but `$` stays (systemd expands no variables there, `$$` would stay two dollars).
+ */
+export function quoteEnvironmentValue(value: string): string {
+  assertUnitValue(value);
+  const escaped = value.replace(/\\/gu, '\\\\').replace(/"/gu, '\\"').replace(/%/gu, '%%');
+  return `"${escaped}"`;
+}
+
+/**
+ * The path of `WorkingDirectory=` (review WP-109): systemd takes the rest of the line as is – quotes
+ * make it "not absolute", a fatal error of the unit (checked with `systemd-analyze verify`). Only `%`
+ * is doubled (specifiers).
+ */
+export function unitPathValue(value: string): string {
+  assertUnitValue(value);
+  if (!value.startsWith('/') || value.trim() !== value) throw new Error('unit path not absolute');
+  return value.replace(/%/gu, '%%');
 }
 
 /** The unit file (Type=simple: the launcher stays in the foreground with the server). */
@@ -91,10 +116,10 @@ export function systemdUnit(options: ServiceUnitOptions): string {
     '[Service]',
     'Type=simple',
     `ExecStart=${exec}`,
-    `WorkingDirectory=${quoteUnitValue(options.workDir)}`,
+    `WorkingDirectory=${unitPathValue(options.workDir)}`,
     ...(options.path === undefined || options.path === ''
       ? []
-      : [`Environment=${quoteUnitValue(`PATH=${options.path}`)}`]),
+      : [`Environment=${quoteEnvironmentValue(`PATH=${options.path}`)}`]),
     'Restart=on-failure',
     'RestartSec=10',
     // The server ends its sessions itself (SIGTERM); give it time before systemd kills.

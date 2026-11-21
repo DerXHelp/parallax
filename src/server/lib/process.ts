@@ -19,6 +19,7 @@
  * it uses the POSIX block list.
  */
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { makeError } from '@shared/errors';
 import { EDITOR_BLOCKED_EXECUTABLES, editorExecutableIssue } from '@shared/model';
@@ -771,8 +772,35 @@ export function guiEnvironment(
 
 /** What `spawnGui`/`spawnExplorer` need of a started child (ChildProcess; fakes in tests). */
 export interface GuiChild {
-  once(event: 'spawn' | 'error', listener: (error?: Error) => void): unknown;
+  readonly pid?: number | undefined;
+  once(event: 'spawn' | 'error' | 'exit', listener: (error?: Error) => void): unknown;
   unref(): void;
+}
+
+/**
+ * Security review WP-109: direct children of the server the user sees and works in – GUI programs of
+ * `spawnGui`, the terminal emulator of the Linux console and shell window. The shutdown sweep
+ * (`launcher/shutdown.ts`) never ends them: on Linux they stay children of the server (Windows starts
+ * its console through `powershell.exe`, which the sweep skips by name).
+ */
+const keptUserPrograms = new Set<number>();
+
+/** Registers a started user program until its exit (no pid: nothing to keep). */
+export function keepUserProgram(child: {
+  readonly pid?: number | undefined;
+  once(event: 'exit', listener: () => void): unknown;
+}): void {
+  const pid = child.pid;
+  if (pid === undefined) return;
+  keptUserPrograms.add(pid);
+  child.once('exit', () => {
+    keptUserPrograms.delete(pid);
+  });
+}
+
+/** PIDs of the user programs still running (see `keepUserProgram`). */
+export function userProgramPids(): number[] {
+  return [...keptUserPrograms];
 }
 
 /** Spawn seam of the GUI start (default: `child_process.spawn`). */
@@ -792,6 +820,8 @@ export interface SpawnGuiOptions extends GuiStartOptions {
   cwd: string;
   /** Reads the PE header (default `readFileHead`). */
   readHead?: (file: string, length: number) => Promise<Uint8Array>;
+  /** POSIX: the target of a link (default `fs.realpath`). */
+  realpath?: (file: string) => Promise<string>;
 }
 
 function openFailed(reason: string): CommandError {
@@ -813,6 +843,7 @@ function startDetached(start: () => GuiChild): Promise<void> {
     }
     child.once('spawn', () => {
       child.unref();
+      keepUserProgram(child);
       resolve();
     });
     child.once('error', (error) => {
@@ -853,6 +884,18 @@ export async function spawnGui(
     const issue = editorExecutableIssue(file, POSIX_PATHS);
     if (issue === 'blocked') throw openFailed('blocked');
     if (issue !== null) throw openFailed('path');
+    // Security review WP-109: a harmless name may link to a blocked program (`~/bin/notes` →
+    // python3). `snap` is the exception as a link target: it starts the installed snap named like the
+    // link (`/snap/bin/code`), never a program from the arguments.
+    let target: string;
+    try {
+      target = await (options.realpath ?? realpath)(file);
+    } catch (error) {
+      throw openFailed(errnoCode(error) ?? 'path');
+    }
+    if (POSIX_PATHS.baseName(target) !== 'snap' && editorExecutableIssue(target, POSIX_PATHS) === 'blocked') {
+      throw openFailed('blocked');
+    }
     const posixOptions: SpawnOptions = {
       cwd: options.cwd,
       env: guiEnvironment(options.env, platform),

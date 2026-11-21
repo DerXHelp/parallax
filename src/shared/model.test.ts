@@ -844,6 +844,10 @@ describe('Phase 3 contracts (WP-50 §4.5)', () => {
     expect(posix('/proc/self/exe')).toBe('path');
     expect(posix('/usr/bin/bash')).toBe('blocked');
     expect(posix('/usr/bin/python3.12')).toBe('blocked');
+    // Security review WP-109: versioned and suffixed names, more programs that run others.
+    expect(posix('/usr/bin/perl5.38-x86_64-linux-gnu')).toBe('blocked');
+    expect(posix('/usr/bin/pypy3')).toBe('blocked');
+    expect(posix('/usr/bin/gjs')).toBe('blocked');
     expect(posix('/usr/bin/x-terminal-emulator')).toBe('blocked');
     expect(posix('/usr/bin/xdg-open')).toBe('blocked');
     for (const name of EDITOR_BLOCKED_POSIX_EXECUTABLES) {
