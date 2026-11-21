@@ -1,6 +1,6 @@
 import { FolderGit2Icon, LoaderCircleIcon } from 'lucide-react';
 import { useEffect, useId, useMemo, useState } from 'react';
-import { LIMITS, LOCAL_HOST_ID, type HostId } from '@shared/common';
+import { LIMITS, type HostId } from '@shared/common';
 import {
   DEFAULT_PROJECT_SETTINGS,
   shellKindSchema,
@@ -20,7 +20,7 @@ import {
   type ProjectSource,
 } from '@web/shell/new-session/project-roots';
 import { projectKeyFor, projectSettingsFor } from '@web/shell/new-session/worktree-lib';
-import { useConnectionStatus, useHostStates, useSummaries } from '@web/state/hooks';
+import { useConnectionStatus, useSummaries } from '@web/state/hooks';
 import { sendHostCommand } from '@web/state/hosts';
 import { Badge } from '@web/ui/badge';
 import { Button } from '@web/ui/button';
@@ -35,11 +35,8 @@ import type { SettingsEditor } from '../state/settings-editor';
 export interface ProjectsSectionProps {
   editor: SettingsEditor;
   hostState: HostState | null;
-  /**
-   * The computer whose settings the page edits. Missing: the host whose state is `hostState`
-   * (looked up in the store), else this computer.
-   */
-  hostId?: HostId;
+  /** The computer whose settings the page edits (this one or one managed at the level "Manage"). */
+  hostId: HostId;
 }
 
 /** Select value of "like the setting Console" (`ProjectSettings.shell: null`). */
@@ -70,14 +67,6 @@ export function withProject(
   const rest = Object.fromEntries(Object.entries(projects).filter(([name]) => name !== key));
   if (next === null || isDefault(next)) return rest;
   return { ...rest, [key]: next };
-}
-
-/** The host id of the page: given, else the host whose state object this is, else this computer. */
-function useSettingsHostId(hostState: HostState | null, given: HostId | undefined): HostId {
-  const states = useHostStates();
-  if (given !== undefined) return given;
-  const found = Object.entries(states).find(([, state]) => state === hostState);
-  return found?.[0] ?? LOCAL_HOST_ID;
 }
 
 /** `shell.detect` of the computer (its installed shells); null until answered or when refused. */
@@ -337,9 +326,8 @@ function ProjectRow({
  * blur, switches and the shell at once; every save replaces the whole field `projects`, a project
  * back at the defaults leaves the map. Without the git service of the host: only a hint.
  */
-export function ProjectsSection({ editor, hostState, hostId: givenHostId }: ProjectsSectionProps) {
+export function ProjectsSection({ editor, hostState, hostId }: ProjectsSectionProps) {
   const t = useT();
-  const hostId = useSettingsHostId(hostState, givenHostId);
   const { settings, save } = editor;
   const { flavor, rules } = settingsHostOf(hostState);
   const gitService = hostState?.features.git === true;

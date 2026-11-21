@@ -100,11 +100,13 @@ function UpdatesSection() {
 function SectionContent({
   section,
   editor,
+  hostId,
   hostState,
   onProfilesDirtyChange,
 }: {
   section: PageSection;
   editor: SettingsEditor;
+  hostId: HostId;
   hostState: HostState | null;
   onProfilesDirtyChange: (dirty: boolean) => void;
 }) {
@@ -123,7 +125,7 @@ function SectionContent({
       return <ConsoleSection editor={editor} hostState={hostState} />;
     case 'projects':
       // WP-110 (ADR-251): settings per project (settings.projects; WP-114).
-      return <ProjectsSection editor={editor} hostState={hostState} />;
+      return <ProjectsSection editor={editor} hostState={hostState} hostId={hostId} />;
     case 'profiles':
       return <ProfilesSection onDirtyChange={onProfilesDirtyChange} />;
     case 'server':
@@ -399,6 +401,7 @@ export function SettingsPage({ section, onClose }: SettingsPageSlotProps) {
                 <SectionContent
                   section={value}
                   editor={editor}
+                  hostId={hostId}
                   hostState={hostState}
                   onProfilesDirtyChange={setProfilesDirty}
                 />

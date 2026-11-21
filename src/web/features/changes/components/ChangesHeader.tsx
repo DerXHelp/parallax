@@ -52,12 +52,17 @@ export function BranchLine({
           className="text-muted-foreground min-w-0 truncate font-mono text-2xs"
           data-slot="changes-upstream"
           title={
-            status.upstream === null
-              ? t('changes.header.noUpstream')
-              : t('changes.header.upstream', { upstream: status.upstream })
+            status.upstream !== null
+              ? t('changes.header.upstream', { upstream: status.upstream })
+              : status.pushRemote === null && status.branch !== null
+                ? t('changes.header.noRemoteTitle')
+                : t('changes.header.noUpstream')
           }
         >
-          {status.upstream ?? t('changes.header.noUpstream')}
+          {status.upstream ??
+            (status.pushRemote === null && status.branch !== null
+              ? t('changes.header.noRemote')
+              : t('changes.header.noUpstream'))}
         </span>
       ) : null}
       {status?.isRepo === true && (status.ahead > 0 || status.behind > 0) ? (

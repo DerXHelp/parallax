@@ -173,6 +173,7 @@ const NO_REPO_STATUS: GitStatus = {
   detached: false,
   head: null,
   upstream: null,
+  pushRemote: null,
   ahead: 0,
   behind: 0,
   files: [],
@@ -195,6 +196,9 @@ export async function readStatus(ctx: GitContext, cwd: string): Promise<GitStatu
   );
   const parsed = parseStatusV2(result.stdout);
   const truncated = result.truncated || parsed.files.length > LIMITS.gitFilesMax;
+  // Only a branch without an upstream needs it: Push then sets the upstream on this remote.
+  const pushRemote =
+    parsed.branch !== null && parsed.upstream === null ? await defaultPushRemote(ctx, root) : null;
   return {
     isRepo: true,
     root,
@@ -202,6 +206,7 @@ export async function readStatus(ctx: GitContext, cwd: string): Promise<GitStatu
     detached: parsed.detached,
     head: parsed.head,
     upstream: parsed.upstream === null ? null : parsed.upstream.slice(0, LIMITS.gitRefChars),
+    pushRemote,
     ahead: parsed.ahead,
     behind: parsed.behind,
     files: parsed.files.slice(0, LIMITS.gitFilesMax),
@@ -592,15 +597,18 @@ export async function switchBranch(ctx: GitContext, cwd: string, name: string): 
   );
 }
 
-/** The remote a new upstream goes to: `origin`, else the only remote; null = none (or ambiguous). */
-async function pushRemote(ctx: GitContext, root: string): Promise<string | null> {
-  const result = await ctx.runner.ok(call(ctx, root, 'push', 'read', ['remote']));
+/**
+ * The remote a new upstream goes to (`GitStatus.pushRemote`): `origin`, else the only remote; null =
+ * none, ambiguous, or a name that is no valid ref name or too long (SR4: such a name never reaches git).
+ */
+async function defaultPushRemote(ctx: GitContext, root: string): Promise<string | null> {
+  const result = await ctx.runner.ok(call(ctx, root, 'status', 'read', ['remote']));
   const remotes = result.stdout
     .split(/\r?\n/)
     .map((r) => r.trim())
     .filter((r) => r !== '');
-  if (remotes.includes('origin')) return 'origin';
-  return remotes.length === 1 ? (remotes[0] ?? null) : null;
+  const remote = remotes.includes('origin') ? 'origin' : remotes.length === 1 ? (remotes[0] ?? null) : null;
+  return remote !== null && remote.length <= LIMITS.gitRefChars && isValidGitRefName(remote) ? remote : null;
 }
 
 function pushFailed(reason: 'auth' | 'rejected' | 'network' | 'other', detail: string): CommandError {
@@ -616,11 +624,11 @@ export async function push(ctx: GitContext, cwd: string): Promise<void> {
   const root = status.root;
   let args: string[];
   if (status.upstream === null) {
-    const remote = await pushRemote(ctx, root);
+    // The status checked the remote's name (defaultPushRemote); the UI disables Push without one.
+    const remote = status.pushRemote;
     if (remote === null) throw pushFailed('other', 'no remote');
     // SR4: names from the repository's configuration never become options (`--`, ref name rules).
-    if (!isValidGitRefName(remote) || !isValidGitRefName(status.branch))
-      throw pushFailed('other', 'invalid name');
+    if (!isValidGitRefName(status.branch)) throw pushFailed('other', 'invalid name');
     args = ['push', '--porcelain', '-u', '--', remote, status.branch];
   } else {
     args = ['push', '--porcelain'];

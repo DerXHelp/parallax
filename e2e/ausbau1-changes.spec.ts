@@ -8,8 +8,8 @@
  *   next prompt;
  * - commit with a message → nothing left to commit (scope "Uncommitted" empty), one commit ahead of
  *   the upstream (header and Push badge); Push → in sync (the bare remote has the commit);
- * - without a remote: Push stays available (it would set the upstream) and fails with a clean error
- *   in the panel (`GIT_PUSH_FAILED`, "Git reported an error.", git's detail).
+ * - without a remote: "No remote", Push disabled with a hint; the remote added again: "No upstream",
+ *   Push names the remote it sets and pushes with `-u` (the upstream is back).
  * Own server (worker) for the file; 1600 px wide, so the panel lies next to the transcript.
  */
 import path from 'node:path';
@@ -147,16 +147,21 @@ test('changes tab: file list and diffs, line comments → paste chip, commit, ah
   const remoteHead = await git.run(path.join(server.root, 'changes-remote.git'), ['rev-parse', 'main']);
   expect(remoteHead.trim()).toBe((await git.run(repo, ['rev-parse', 'HEAD'])).trim());
 
-  // Without a remote: Push is offered (it would set the upstream) and fails with a clean error.
+  // Without a remote: nowhere to push – Push is disabled and says why (WP-117, `pushRemote`).
   await git.run(repo, ['remote', 'remove', 'origin']);
+  await panel.locator('[data-action="changes-refresh"]').click();
+  await expect(panel.locator('[data-slot="changes-upstream"]')).toHaveText('No remote');
+  await expect(push).toBeDisabled();
+  await expect(push).toHaveAttribute('title', 'No remote to push to – add one with git remote add');
+
+  // The remote back (git dropped the upstream with it): Push sets the upstream on origin again.
+  await git.run(repo, ['remote', 'add', 'origin', path.join(server.root, 'changes-remote.git')]);
   await panel.locator('[data-action="changes-refresh"]').click();
   await expect(panel.locator('[data-slot="changes-upstream"]')).toHaveText('No upstream');
   await expect(push).toBeEnabled();
+  await expect(push).toHaveAttribute('title', 'Push to origin and set the upstream');
   await push.click();
-  const error = panel.locator('[data-slot="changes-error"]');
-  await expect(error).toHaveAttribute('data-code', 'GIT_PUSH_FAILED');
-  await expect(error).toHaveAttribute('role', 'alert');
-  await expect(error).toContainText('Push failed');
-  await expect(error).toContainText('Git reported an error.');
-  await expect(error).toContainText('Git: no remote');
+  await expect(panel.locator('[data-slot="changes-outcome"]')).toHaveText('Pushed.');
+  await expect(panel.locator('[data-slot="changes-upstream"]')).toHaveText('origin/main');
+  await expect(panel.locator('[data-slot="changes-error"]')).toHaveCount(0);
 });

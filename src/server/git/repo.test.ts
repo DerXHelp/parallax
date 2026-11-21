@@ -189,15 +189,20 @@ describe('git repo operations (WP-111, real repositories)', () => {
 
   it('push: without a remote GIT_PUSH_FAILED other; first push sets the upstream; a rejected push', async () => {
     const repo = await createTestRepo();
+    // The status tells the UI there is nowhere to push (it disables Push).
+    expect(await readStatus(repo.ctx, repo.root)).toMatchObject({ upstream: null, pushRemote: null });
     expect((await errorOf(push(repo.ctx, repo.root))).error).toMatchObject({
       code: 'GIT_PUSH_FAILED',
       params: { reason: 'other', detail: 'no remote' },
     });
     const remote = await createTestRepo({ bare: true });
     await repo.git(['remote', 'add', 'origin', remote.root]);
+    expect(await readStatus(repo.ctx, repo.root)).toMatchObject({ upstream: null, pushRemote: 'origin' });
     await push(repo.ctx, repo.root);
     const status = await readStatus(repo.ctx, repo.root);
     expect(status.upstream).toBe('origin/main');
+    // With an upstream, git knows the target: no extra `git remote` call, no pushRemote.
+    expect(status.pushRemote).toBeNull();
 
     // A second clone pushes first → ours is rejected.
     const other = await createTestRepo({ empty: true });
@@ -432,12 +437,29 @@ describe('code and security review WP-117 (real repositories)', () => {
     const repo = await createTestRepo();
     const remote = await createTestRepo({ bare: true });
     await repo.git(['config', 'remote.--upload-pack=evil.url', remote.root]);
+    // Such a name never counts as a push target: the status has none, Push is disabled in the UI.
+    expect((await readStatus(repo.ctx, repo.root)).pushRemote).toBeNull();
     const { runner, calls } = recording(repo.runner);
     expect((await errorOf(push({ ...repo.ctx, runner }, repo.root))).error).toEqual({
       code: 'GIT_PUSH_FAILED',
-      params: { reason: 'other', detail: 'invalid name' },
+      params: { reason: 'other', detail: 'no remote' },
     });
     expect(calls.some((args) => args[0] === 'push')).toBe(false);
+  });
+
+  it('pushRemote: origin wins over other remotes; several without origin are ambiguous', async () => {
+    const repo = await createTestRepo();
+    const a = await createTestRepo({ bare: true });
+    const b = await createTestRepo({ bare: true });
+    await repo.git(['remote', 'add', 'upstream', a.root]);
+    expect((await readStatus(repo.ctx, repo.root)).pushRemote).toBe('upstream');
+    await repo.git(['remote', 'add', 'fork', b.root]);
+    expect((await readStatus(repo.ctx, repo.root)).pushRemote).toBeNull();
+    await repo.git(['remote', 'add', 'origin', b.root]);
+    expect((await readStatus(repo.ctx, repo.root)).pushRemote).toBe('origin');
+    // Detached HEAD: nothing to push, no lookup.
+    await repo.git(['checkout', '-q', '--detach']);
+    expect((await readStatus(repo.ctx, repo.root)).pushRemote).toBeNull();
   });
 });
 

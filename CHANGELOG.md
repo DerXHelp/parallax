@@ -48,7 +48,8 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 - Zeilen im Tab „Änderungen“ lassen sich kommentieren; „An Claude senden“ legt alle offenen Kommentare als einen Block
   ins Eingabefeld (WP-111, WP-113).
 - Die Git-Leiste im Tab „Änderungen“ committet alles oder ausgewählte Dateien, legt Branches an, wechselt sie und
-  pusht; fehlt Git eine Anmeldung, bietet sie „Im Terminal pushen“ an (WP-111, WP-113).
+  pusht; ohne Upstream nennt der Push-Knopf sein Ziel, ohne Remote ist er gesperrt, und fehlt Git eine Anmeldung, bietet
+  sie „Im Terminal pushen“ an (WP-111, WP-113, WP-117).
 - „Neue Session“ kann eine Session in einem eigenen Git-Worktree mit eigenem Branch starten; beim Archivieren oder
   Entfernen fragt Parallax, ob Worktree und Branch bleiben (WP-111, WP-114).
 - Unter Einstellungen → Projekte lassen sich je Repository optional ein Setup- und ein Teardown-Befehl für Worktrees,

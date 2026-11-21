@@ -594,4 +594,25 @@ describe('ChangesPanel – git bar (WP-113, F4)', () => {
     await user.click(within(alert).getByRole('button', { name: 'Push in terminal' }));
     expect(requests).toEqual([{ kind: 'sidePanel', sessionKey: CHANGES_SESSION_KEY, tab: 'terminal' }]);
   });
+
+  it('without an upstream Push names the remote it sets; without any remote it is disabled', async () => {
+    start({ git: { status: sampleGitStatus({ root: CHANGES_ROOT, upstream: null, pushRemote: 'origin' }) } });
+    const view = renderPanel();
+    await ready();
+    const push = screen.getByRole('button', { name: /^Push/ });
+    expect(push.hasAttribute('disabled')).toBe(false);
+    expect(push.getAttribute('title')).toBe('Push to origin and set the upstream');
+    expect(screen.getByText('No upstream')).toBeTruthy();
+    view.unmount();
+    host().stop();
+
+    start({ git: { status: sampleGitStatus({ root: CHANGES_ROOT, upstream: null, pushRemote: null }) } });
+    renderPanel();
+    await ready();
+    const disabled = screen.getByRole('button', { name: /^Push/ });
+    expect(disabled.hasAttribute('disabled')).toBe(true);
+    expect(disabled.getAttribute('title')).toBe('No remote to push to – add one with git remote add');
+    expect(screen.getByText('No remote')).toBeTruthy();
+    expect(host().commands('git.push')).toEqual([]);
+  });
 });
