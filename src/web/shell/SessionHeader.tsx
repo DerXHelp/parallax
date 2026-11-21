@@ -11,6 +11,7 @@ import { effectiveEffort } from '@web/lib/effort';
 import { sessionTitle } from '@web/lib/session-title';
 import { cliVersionStatus, knownVersion } from '@web/lib/version';
 import { useDisplayStatus, useHostState, useSessionSelector, useSummary } from '@web/state/hooks';
+import { useSessionCapabilities } from '@web/state/host-platform';
 import { sessionAllows, useHostLabels } from '@web/state/hosts';
 import { Badge } from '@web/ui/badge';
 import { Gauge } from '@web/ui/gauge';
@@ -132,6 +133,8 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
   useRenameHeader(sessionKey);
   const editing = useRenaming(sessionKey, 'header');
   const [compact, barRef] = useCompactHeader();
+  // WP-104: the shell button only where the session's computer opens shell windows.
+  const shellWindow = useSessionCapabilities(sessionKey).shellWindow;
   // The header sits in a pane that holds the subscription; this only reads the reported effort.
   const initEffort = useSessionSelector(sessionKey, selectInitEffort, null);
   // WP-65 §1.1: the sidebar's session line, after the badges while the bar is wide enough.
@@ -304,7 +307,7 @@ export const SessionHeader = memo(function SessionHeader({ sessionKey }: { sessi
         {showsRemoteInHeader(summary.remoteControl) ? (
           <RemoteControlMenu sessionKey={sessionKey} summary={summary} />
         ) : null}
-        {compact || !sessionAllows(sessionKey, 'session.openShell') ? null : (
+        {compact || !shellWindow || !sessionAllows(sessionKey, 'session.openShell') ? null : (
           <ConsoleButton sessionKey={sessionKey} summary={summary} />
         )}
         {compact ? null : <HeaderPanelButtons sessionKey={sessionKey} />}

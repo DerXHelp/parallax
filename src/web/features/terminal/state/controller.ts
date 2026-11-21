@@ -56,6 +56,11 @@ export class TerminalController {
     this.store = terminalStore(options.sessionKey);
   }
 
+  /** The session whose terminals this controller runs (WP-104: its host decides the pty kind). */
+  get sessionKey(): string {
+    return this.options.sessionKey;
+  }
+
   /** The shell of the automatic first terminal (settings `console.defaultShell`). */
   setDefaultShell(shell: ShellKind): void {
     this.defaultShell = shell;

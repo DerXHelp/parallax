@@ -2,9 +2,10 @@ import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { LIMITS, parseSessionKey } from '@shared/common';
 import { makeError } from '@shared/errors';
 import type { FileStatResult } from '@shared/model';
-import { windowsPathIssue, windowsPathKey } from '@shared/paths';
+import type { PathRules } from '@shared/paths';
 import { SizedLru } from '@web/lib/sized-cache';
 import { ClientCommandError } from '@web/state/connection';
+import { getSessionPaths } from '@web/state/host-platform';
 import { sendCommand } from '@web/state/hooks';
 import { useFileWriteStamp } from './file-tools';
 
@@ -13,7 +14,8 @@ import { useFileWriteStamp } from './file-tools';
  * only after `file.statMany` answered `ok: true`. Requests are collected for 50 ms and sent in
  * batches of at most `LIMITS.fileStatBatchMax` per session; answers stay 30 s (LRU, 2 000 entries)
  * and are dropped early when a write tool finishes on the same file. Only paths that pass
- * `windowsPathIssue` are ever sent (defence in depth – FileLink filters before).
+ * the C.10 filter of the session's host are ever sent (defence in depth – FileLink filters before);
+ * keys compare by the host's rules (case-insensitive only on Windows, WP-104).
  */
 
 export const STAT_BATCH_MS = 50;
@@ -39,14 +41,13 @@ export interface StatCacheOptions {
   batchMs?: number;
   ttlMs?: number;
   maxEntries?: number;
-}
-
-function cacheKey(sessionKey: string, path: string): string {
-  return `${sessionKey}\u0000${windowsPathKey(path)}`;
+  /** Path rules of a session's host (default: from the client store, `getSessionPaths`). */
+  pathsOf?: (sessionKey: string) => PathRules;
 }
 
 export class StatCache {
   private readonly send: StatSender;
+  private readonly pathsOf: (sessionKey: string) => PathRules;
   private readonly now: () => number;
   private readonly batchMs: number;
   private readonly ttlMs: number;
@@ -62,6 +63,7 @@ export class StatCache {
 
   constructor(options: StatCacheOptions) {
     this.send = options.send;
+    this.pathsOf = options.pathsOf ?? ((sessionKey) => getSessionPaths(sessionKey));
     this.now = options.now ?? Date.now;
     this.batchMs = options.batchMs ?? STAT_BATCH_MS;
     this.ttlMs = options.ttlMs ?? STAT_TTL_MS;
@@ -69,6 +71,10 @@ export class StatCache {
       maxEntries: options.maxEntries ?? STAT_CACHE_MAX,
       maxSize: Number.POSITIVE_INFINITY,
     });
+  }
+
+  private cacheKey(sessionKey: string, path: string): string {
+    return `${sessionKey}\u0000${this.pathsOf(sessionKey).key(path)}`;
   }
 
   /** Number of cached entries (tests). */
@@ -85,13 +91,13 @@ export class StatCache {
 
   /** The entry of a path (no LRU touch – safe in render). */
   peek(sessionKey: string, path: string): StatEntry | undefined {
-    return this.entries.peek(cacheKey(sessionKey, path));
+    return this.entries.peek(this.cacheKey(sessionKey, path));
   }
 
   /** Fetches the path unless a fresh answer exists or a request is under way. */
   ensure(sessionKey: string, path: string): void {
-    if (windowsPathIssue(path) !== null || parseSessionKey(sessionKey) === null) return;
-    const key = cacheKey(sessionKey, path);
+    if (parseSessionKey(sessionKey) === null || this.pathsOf(sessionKey).issue(path) !== null) return;
+    const key = this.cacheKey(sessionKey, path);
     const entry = this.entries.get(key);
     if (entry !== undefined && (entry.loading || this.now() - entry.at < this.ttlMs)) return;
     this.write(key, { result: entry?.result ?? null, at: entry?.at ?? 0, loading: true });
@@ -113,7 +119,7 @@ export class StatCache {
    * again (CR3-06). A request still waiting for its batch is answered after the change – nothing to do.
    */
   invalidate(sessionKey: string, path: string): void {
-    const key = cacheKey(sessionKey, path);
+    const key = this.cacheKey(sessionKey, path);
     const entry = this.entries.peek(key);
     if (entry === undefined) return;
     if (entry.loading) {
@@ -130,7 +136,7 @@ export class StatCache {
    * still on its way (it may have been computed before the write).
    */
   invalidateBefore(sessionKey: string, path: string, at: number): void {
-    const entry = this.entries.peek(cacheKey(sessionKey, path));
+    const entry = this.entries.peek(this.cacheKey(sessionKey, path));
     if (entry !== undefined && (entry.loading || entry.at < at)) this.invalidate(sessionKey, path);
   }
 

@@ -16,6 +16,8 @@ export const en = {
     viewer: 'Open in viewer',
     editor: 'Open in editor',
     explorer: 'Show in Explorer',
+    /** WP-104: the same action on a Linux host. */
+    fileManager: 'Show in file manager',
     default: 'Open with default program',
     copyPath: 'Copy path',
     /** Button of the action menu of one file. */

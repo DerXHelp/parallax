@@ -27,15 +27,16 @@ import {
 import { Fragment } from 'react';
 import { LOCAL_HOST_ID, parseSessionKey, type HostId } from '@shared/common';
 import { makeError } from '@shared/errors';
-import { WINDOWS_SHELL_KINDS, type SessionSummary, type ShellKind } from '@shared/model';
-import { windowsPathIssue } from '@shared/paths';
+import type { SessionSummary, ShellKind } from '@shared/model';
 import type { Command, CommandName } from '@shared/protocol';
 import { useT, type TranslationKey } from '@web/i18n';
 import { copyText } from '@web/lib/clipboard';
 import { focusElement, focusedElement } from '@web/lib/return-focus';
+import { effectiveShell, shellChoices } from '@web/lib/shells';
 import { openClaudeSessionUrl, openSessionWindow } from '@web/lib/windows';
 import { errorPayloadOf } from '@web/state/connection';
 import { sendCommand } from '@web/state/hooks';
+import { getSessionCapabilities, getSessionPaths } from '@web/state/host-platform';
 import { selectTerminalAvailable, sessionAllows } from '@web/state/hosts';
 import { showErrorNotice, showTextNotice } from '@web/state/notices';
 import { selectSettings } from '@web/state/settings';
@@ -228,11 +229,12 @@ export function newSessionIn(cwd: string, hostId: HostId = LOCAL_HOST_ID): void 
  * "Open folder in Explorer" (WP-58, ADR-144): `file.open {target: 'explorer', path: cwd}` – the
  * `cwd` string exactly as stored; the server checks the path and starts Explorer (only on the local
  * host). A refusal (`OPEN_FAILED`, `PATH_NOT_ALLOWED`, `FILE_NOT_FOUND` …) becomes a notice.
- * Defence in depth (R5W-10, C.10): a `cwd` that `windowsPathIssue` rejects (UNC, device, ADS …) is
- * never sent – the same notice as the server's refusal instead.
+ * Defence in depth (R5W-10, C.10): a `cwd` that the rules of the session's host reject (Windows: UNC,
+ * device, ADS …; Linux: relative, `/proc` … – WP-104) is never sent – the same notice as the server's
+ * refusal instead. WP-104: on Linux the file manager of the desktop (`capabilities.fileManager`).
  */
 export function openFolderInExplorer(sessionKey: string, summary: SessionSummary): void {
-  if (windowsPathIssue(summary.cwd) !== null) {
+  if (getSessionPaths(sessionKey).issue(summary.cwd) !== null) {
     showErrorNotice(makeError('PATH_REJECTED'), { sessionKey });
     return;
   }
@@ -261,23 +263,32 @@ export const SHELL_LABELS: Readonly<Record<ShellKind, TranslationKey>> = {
   pwsh: 'navigation.shells.pwsh',
 };
 
-/** The default shell of this computer's settings (shells open only on this computer). */
-export function defaultShell(): ShellKind {
-  return selectSettings(clientStore.getState()).console.defaultShell;
+/**
+ * The default shell of this computer's settings (shells open only on this computer); WP-104: when the
+ * session's computer does not offer it (a Windows setting on Linux), that computer's default.
+ */
+export function defaultShell(sessionKey: string | null = null): ShellKind {
+  const setting = selectSettings(clientStore.getState()).console.defaultShell;
+  return effectiveShell(setting, getSessionPaths(sessionKey).flavor);
+}
+
+/** The shells offered for a session's computer (WP-104: by its platform; Linux shells start with WP-105). */
+export function sessionShellChoices(sessionKey: string | null): readonly ShellKind[] {
+  return shellChoices(getSessionPaths(sessionKey).flavor);
 }
 
 /**
  * "Open shell in folder" (WP-97, ADR-238): `session.openShell {shell}` – the server opens cmd,
  * PowerShell or Git Bash as a window in the session's stored cwd (only on the local host). A
  * refusal (SHELL_NOT_FOUND, CWD_NOT_FOUND …) becomes a notice. Defence in depth like
- * `openFolderInExplorer`: a `cwd` that `windowsPathIssue` rejects is never sent.
+ * `openFolderInExplorer`: a `cwd` that the host's rules reject is never sent.
  */
 export function openShellIn(
   sessionKey: string,
   summary: SessionSummary,
-  shell: ShellKind = defaultShell(),
+  shell: ShellKind = defaultShell(sessionKey),
 ): void {
-  if (windowsPathIssue(summary.cwd) !== null) {
+  if (getSessionPaths(sessionKey).issue(summary.cwd) !== null) {
     showErrorNotice(makeError('PATH_REJECTED'), { sessionKey });
     return;
   }
@@ -373,6 +384,8 @@ function build(
 ): SessionAction | null {
   const command = ACTION_COMMANDS[id];
   if (command !== undefined && !sessionAllows(sessionKey, command)) return null;
+  // WP-104: what the session's computer has on its desktop (all true on Windows).
+  const capabilities = getSessionCapabilities(sessionKey);
   const entryId = summary.entryId;
   const external = summary.external !== null;
   const started = summary.sessionId !== null;
@@ -437,9 +450,14 @@ function build(
       };
     case 'openFolder':
       // Explorer opens on the session's computer: only this computer's sessions (ADR-144, ACTION_COMMANDS).
+      // WP-104: left out without a file manager there; on Linux its name is not "Explorer".
+      if (!capabilities.fileManager) return null;
       return {
         id,
-        label: 'navigation.actions.openFolder',
+        label:
+          getSessionPaths(sessionKey).flavor === 'win32'
+            ? 'navigation.actions.openFolder'
+            : 'navigation.actions.openFolderFileManager',
         icon: FolderOpenIcon,
         disabled: false,
         run: () => {
@@ -448,7 +466,9 @@ function build(
       };
     case 'openShell': {
       // A window on the session's computer: only this computer's sessions (ACTION_COMMANDS).
-      const preferred = defaultShell();
+      // WP-104: left out without shell windows there (`capabilities.shellWindow`).
+      if (!capabilities.shellWindow) return null;
+      const preferred = defaultShell(sessionKey);
       return {
         id,
         label: 'navigation.actions.openShell',
@@ -457,8 +477,8 @@ function build(
         run: () => {
           openShellIn(sessionKey, summary, preferred);
         },
-        // WP-102: the Windows three until WP-104/105 pass the host's shells.
-        children: WINDOWS_SHELL_KINDS.map((shell): SessionSubAction => {
+        // WP-104: the shells of the session's computer (its platform).
+        children: sessionShellChoices(sessionKey).map((shell): SessionSubAction => {
           const item: SessionSubAction = {
             id: shell,
             label: SHELL_LABELS[shell],
@@ -512,6 +532,8 @@ function build(
         },
       };
     case 'openExternal':
+      // WP-104: left out when the session's computer cannot open a console window (`externalConsole`).
+      if (!capabilities.externalConsole) return null;
       return {
         id,
         label: 'navigation.actions.openExternal',

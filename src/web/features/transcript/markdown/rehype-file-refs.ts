@@ -1,5 +1,12 @@
 import type { ExtraProps } from 'react-markdown';
-import { findFileRefs, type FileRef, type FileRefKind, type FileTarget } from '@web/lib/file-refs';
+import {
+  WINDOWS_FILE_REF_SCOPE,
+  findFileRefs,
+  type FileRef,
+  type FileRefKind,
+  type FileRefScope,
+  type FileTarget,
+} from '@web/lib/file-refs';
 
 /**
  * rehype plugin of the Markdown renderer (WP-55): file references in running text (`findFileRefs`)
@@ -7,6 +14,7 @@ import { findFileRefs, type FileRef, type FileRefKind, type FileTarget } from '@
  * (no link in a link), in code (inline code links itself, code blocks never) is left alone. The
  * plugin only marks – resolving against cwd/baseDir and the stat check happen when rendering. Raw
  * HTML is dropped before (`skipHtml`), so a `data-file-ref` span always comes from here.
+ * WP-104: the plugin option is the scope of the session's host (`FileRefScope`: path rules, cwd).
  */
 
 type HastElement = NonNullable<ExtraProps['node']>;
@@ -22,6 +30,8 @@ const KINDS: ReadonlySet<string> = new Set<FileRefKind>([
   'relative',
   'unc',
   'device',
+  'posix',
+  'home',
 ]);
 
 function isKind(value: unknown): value is FileRefKind {
@@ -43,8 +53,8 @@ function refElement(ref: FileRef): HastElement {
   };
 }
 
-function splitText(node: HastText): HastContent[] | null {
-  const refs = findFileRefs(node.value);
+function splitText(node: HastText, scope: FileRefScope): HastContent[] | null {
+  const refs = findFileRefs(node.value, scope);
   if (refs.length === 0) return null;
   const parts: HastContent[] = [];
   let position = 0;
@@ -57,28 +67,28 @@ function splitText(node: HastText): HastContent[] | null {
   return parts;
 }
 
-function visit(parent: { children: HastContent[] }): void {
+function visit(parent: { children: HastContent[] }, scope: FileRefScope): void {
   const children: HastContent[] = [];
   let changed = false;
   for (const child of parent.children) {
     if (child.type === 'text') {
-      const parts = splitText(child);
+      const parts = splitText(child, scope);
       if (parts !== null) {
         children.push(...parts);
         changed = true;
         continue;
       }
     } else if (child.type === 'element' && !SKIP.has(child.tagName)) {
-      visit(child);
+      visit(child, scope);
     }
     children.push(child);
   }
   if (changed) parent.children = children;
 }
 
-export function rehypeFileRefs() {
+export function rehypeFileRefs(scope: FileRefScope = WINDOWS_FILE_REF_SCOPE) {
   return (tree: { children: HastContent[] }): void => {
-    visit(tree);
+    visit(tree, scope);
   };
 }
 

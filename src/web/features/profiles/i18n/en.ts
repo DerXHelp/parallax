@@ -69,6 +69,8 @@ export const en = {
     executablePath: 'Fixed path',
     executablePathLabel: 'Path to claude.exe',
     executablePlaceholder: 'C:\\Users\\me\\.local\\bin\\claude.exe',
+    /** WP-104: the example on a Linux computer. */
+    executablePlaceholderPosix: '/home/me/.local/bin/claude',
     configDir: 'Config folder (CLAUDE_CONFIG_DIR)',
     configDirPlaceholder: 'Empty = the default folder of Claude Code',
     configDirBrowse: 'Browse…',

@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
-import { SAMPLE_IDS, sampleItems, sampleSystemItems, sampleTime } from '@shared/samples';
+import { POSIX_PATHS, WIN32_PATHS } from '@shared/paths';
+import { SAMPLE_IDS, sampleHostState, sampleItems, sampleSystemItems, sampleTime } from '@shared/samples';
+import { clientStore, resetClientStore, updateHost } from '@web/state/store';
 import { fileActions } from './actions';
 import { columnOffset } from './columns';
 import { fileToolIndex, toolFilePath } from './file-tools';
@@ -114,5 +116,83 @@ describe('files lib/actions', () => {
       'copy',
     ]);
     expect(fileActions({ sessionKey: KEY, path: '\\\\server\\share\\a.pdf' })).toEqual([]);
+  });
+});
+
+describe('Linux hosts (WP-104)', () => {
+  const LINUX = sampleHostState({ platform: 'linux' });
+  afterEach(() => {
+    resetClientStore();
+  });
+
+  it('paths: case-sensitive, `/` only, roots of POSIX', () => {
+    expect(relativeToRoot('/w/sample/src/Main.ts', '/w/sample', POSIX_PATHS)).toBe('src/Main.ts');
+    expect(relativeToRoot('/w/sample/src/a.ts', '/W/sample', POSIX_PATHS)).toBeNull();
+    expect(relativeToRoot('/w/sample//src/a.ts', '/w/sample/', POSIX_PATHS)).toBe('src/a.ts');
+    expect(parentPath('/a/b.txt', POSIX_PATHS)).toBe('/a');
+    expect(parentPath('/a.txt', POSIX_PATHS)).toBe('/');
+    expect(parentPath('/', POSIX_PATHS)).toBe('');
+    expect(fileName('/a/b\\c.txt', POSIX_PATHS)).toBe('b\\c.txt');
+    expect(fileName('/', POSIX_PATHS)).toBe('/');
+  });
+
+  it('file tools: POSIX paths stay as they are, Git Bash forms are not converted', () => {
+    expect(toolFilePath({ toolName: 'Read', input: { file_path: '/home/a/x.ts' } }, POSIX_PATHS)).toBe(
+      '/home/a/x.ts',
+    );
+    expect(toolFilePath({ toolName: 'Edit', input: { file_path: '/d/work/a.ts' } }, POSIX_PATHS)).toBe(
+      '/d/work/a.ts',
+    );
+    expect(toolFilePath({ toolName: 'Read', input: { file_path: 'D:\\a.ts' } }, POSIX_PATHS)).toBeNull();
+    expect(
+      toolFilePath({ toolName: 'Read', input: { file_path: '/proc/1/environ' } }, POSIX_PATHS),
+    ).toBeNull();
+    const write = (id: string, path: string, at: number) =>
+      sampleItems.toolCall({
+        id,
+        toolUseId: `toolu_${id}`,
+        toolName: 'Write',
+        input: { file_path: path },
+        result: {
+          isError: false,
+          content: [],
+          structured: null,
+          structuredTruncated: null,
+          at: sampleTime(at),
+        },
+      });
+    const items = [write('a', '/w/A.ts', 10), write('b', '/w/a.ts', 11)];
+    expect([...fileToolIndex(items, POSIX_PATHS).writes.keys()]).toEqual(['/w/A.ts', '/w/a.ts']);
+    // One cache per flavor: the same array gives each its own index.
+    expect(fileToolIndex(items, POSIX_PATHS)).not.toBe(fileToolIndex(items));
+  });
+
+  it('actions follow the host: a server without a desktop offers viewer and copy only', () => {
+    updateHost(clientStore, LOCAL_HOST_ID, () => ({
+      hostState: { ...LINUX, capabilities: { ...LINUX.capabilities, editor: false, fileManager: false } },
+    }));
+    expect(fileActions({ sessionKey: KEY, path: '/home/a/x.pdf' }).map((action) => action.id)).toEqual([
+      'viewer',
+      'copy',
+    ]);
+    // A Windows path is unsafe on a Linux host: no action at all.
+    expect(fileActions({ sessionKey: KEY, path: 'D:\\a.pdf' })).toEqual([]);
+  });
+
+  it('actions follow the host: a Linux desktop shows "file manager" instead of Explorer', () => {
+    updateHost(clientStore, LOCAL_HOST_ID, () => ({ hostState: LINUX }));
+    const actions = fileActions({ sessionKey: KEY, path: '/home/a/x.pdf' });
+    expect(actions.map((action) => [action.id, action.label])).toEqual([
+      ['viewer', 'files.actions.viewer'],
+      ['editor', 'files.actions.editor'],
+      ['explorer', 'files.actions.fileManager'],
+      ['default', 'files.actions.default'],
+      ['copy', 'files.actions.copyPath'],
+    ]);
+    // Explicit host data wins over the store (components pass it from hooks).
+    const windows = { rules: WIN32_PATHS, capabilities: { ...LINUX.capabilities, fileManager: false } };
+    expect(
+      fileActions({ sessionKey: KEY, path: 'D:\\a.pdf', host: windows }).map((action) => action.id),
+    ).toEqual(['viewer', 'editor', 'default', 'copy']);
   });
 });

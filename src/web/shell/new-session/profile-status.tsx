@@ -7,9 +7,11 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import type { ClaudeInstallStatus, ProfileColor, ProfileIssue, ProfileSummary } from '@shared/model';
+import type { PathFlavor } from '@shared/paths';
 import { useI18n, type TranslationKey, type TranslationParams } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { newerThanTested } from '@web/lib/version';
+import { useHostPaths } from '@web/state/host-platform';
 import { PROFILE_BG } from '@web/shell/navigation/profile-colors';
 import { issueDetail } from './profile-issues';
 
@@ -119,14 +121,18 @@ export function ProfileIssueText({
   finding,
   id,
   className,
+  flavor,
 }: {
   finding: ProfileIssue;
   id?: string;
   className?: string;
+  /** Paths of the profile's host (WP-104); default: this computer. */
+  flavor?: PathFlavor;
 }) {
   const { t, tError } = useI18n();
+  const local = useHostPaths();
   const Icon = LEVEL_ICON[finding.level];
-  const detail = issueDetail(finding.issue);
+  const detail = issueDetail(finding.issue, flavor ?? local.flavor);
   return (
     <span
       id={id}

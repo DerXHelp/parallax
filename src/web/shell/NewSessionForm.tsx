@@ -3,12 +3,12 @@ import { useId, useMemo, useState } from 'react';
 import { LOCAL_HOST_ID, makeSessionKey, type HostId, type ProfileId } from '@shared/common';
 import { makeError, type ErrorPayload } from '@shared/errors';
 import type { ProfileSummary } from '@shared/model';
-import { windowsPathIssue, windowsPathKey } from '@shared/paths';
 import { useI18n } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { shortPath } from '@web/lib/path-display';
 import { STORAGE_KEYS, readStorage, writeStorage } from '@web/lib/storage';
 import { errorPayloadOf } from '@web/state/connection';
+import { useHostPaths } from '@web/state/host-platform';
 import { useConnectionStatus, useHostState, useSelectedSession, useSummaries } from '@web/state/hooks';
 import { sendHostCommand, useHostLabels, type HostLabels } from '@web/state/hosts';
 import { Alert } from '@web/ui/alert';
@@ -109,7 +109,8 @@ export function initialHost(hosts: HostLabels, prefill: HostId | undefined): Hos
  * picked) → `session.create {cwd, profileId}` with an explicit profile. Without a first prompt the
  * server creates a sleeping entry; the first message in the composer starts it. The new session
  * is selected and its message field focused. Unsafe paths (UNC, device, ADS …) are rejected
- * before sending (`@shared/paths`); server errors (CWD_NOT_FOUND …) are shown translated.
+ * before sending (`@shared/paths`, with the rules of the chosen computer – WP-104: `/home/…` on a
+ * Linux computer); server errors (CWD_NOT_FOUND …) are shown translated.
  * WP-80 (WP-75 §4.4): with other computers the computer comes first (last used pre-selected);
  * folder browser, profiles, default profile and recent folders come from it; switching the computer
  * clears a folder that came from the other one; the session key carries the chosen computer.
@@ -147,6 +148,7 @@ export function NewSessionForm({
   const [, select] = useSelectedSession();
   const entries = useSummaries();
   const hostState = useHostState(hostId);
+  const rules = useHostPaths(hostId);
   const host = hosts.get(hostId);
   const hostUsable = host === undefined || host.availability === 'available';
   const online = useConnectionStatus(hostId) === 'open' && hostUsable;
@@ -164,19 +166,24 @@ export function NewSessionForm({
     setCwdHost(next);
   };
   const recent = useMemo(
-    () => recentProjects(entries.filter((entry) => entry.hostId === hostId)),
-    [entries, hostId],
+    () =>
+      recentProjects(
+        entries.filter((entry) => entry.hostId === hostId),
+        undefined,
+        rules,
+      ),
+    [entries, hostId, rules],
   );
-  const shownRecent = useMemo(() => filterRecentProjects(recent, cwd), [recent, cwd]);
+  const shownRecent = useMemo(() => filterRecentProjects(recent, cwd, rules), [recent, cwd, rules]);
   const profiles = hostState?.profiles ?? [];
   const profile = chosenProfile(profiles, choice, hostState?.defaultProfileId ?? null);
   const blocking = profile === null ? [] : profileErrors(profile);
-  const cwdKey = windowsPathKey(cwd.trim());
+  const cwdKey = rules.key(cwd.trim());
 
   const submit = async () => {
     const value = cwd.trim();
     if (value === '' || pending || profile === null || blocking.length > 0) return;
-    const issue = windowsPathIssue(value);
+    const issue = rules.issue(value);
     if (issue !== null) {
       setError(makeError('PATH_REJECTED', { reason: issue }));
       return;
@@ -257,7 +264,9 @@ export function NewSessionForm({
             value={cwd}
             spellCheck={false}
             autoComplete="off"
-            placeholder={t('newSession.cwd.placeholder')}
+            placeholder={t(
+              rules.flavor === 'win32' ? 'newSession.cwd.placeholder' : 'newSession.cwd.placeholderPosix',
+            )}
             aria-invalid={error === null ? undefined : true}
             aria-describedby={hintId}
             className="font-mono text-xs"
@@ -293,7 +302,7 @@ export function NewSessionForm({
           </span>
           <ul className="grid grid-cols-[minmax(0,1fr)] gap-px" aria-label={t('newSession.recent.label')}>
             {shownRecent.map((path) => {
-              const current = windowsPathKey(path) === cwdKey;
+              const current = rules.key(path) === cwdKey;
               return (
                 <li key={path}>
                   <button
@@ -331,6 +340,7 @@ export function NewSessionForm({
           profiles={profiles}
           value={profile?.id ?? null}
           onValueChange={setChoice}
+          flavor={rules.flavor}
         />
         <div id={profileHintId} className="grid grid-cols-[minmax(0,1fr)] gap-1">
           {defaultParts.length === 0 ? null : (
@@ -352,7 +362,11 @@ export function NewSessionForm({
             <Alert tone="error" title={t('newSession.profile.unusable')} data-slot="profile-unusable">
               <span className="grid gap-1">
                 {blocking.map((finding, index) => (
-                  <ProfileIssueText key={`${finding.issue.code}-${String(index)}`} finding={finding} />
+                  <ProfileIssueText
+                    key={`${finding.issue.code}-${String(index)}`}
+                    finding={finding}
+                    flavor={rules.flavor}
+                  />
                 ))}
               </span>
             </Alert>

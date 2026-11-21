@@ -90,6 +90,23 @@ export const en = {
       'Registers the link type “parallax:” for your Windows user; a click opens the session in a new app window.',
     openOnClickForeign:
       'Another program is already registered for “parallax:” links on your Windows user. Parallax does not replace it.',
+    /** WP-104: the texts on a Linux computer (its desktop's notifications; none without a desktop). */
+    linux: {
+      eventsHint:
+        'Per event: a desktop notification and a sound. Parallax shows every notification only once.',
+      eventsHintNoDesktop:
+        'Per event: a sound. This computer has no desktop, so there are no desktop notifications.',
+      toast: 'Desktop notification',
+      toastFor: 'Desktop notification: {event}',
+      doNotDisturbHint:
+        'No desktop notifications and no sounds. Hints in the window and the count in the window title stay.',
+      focusedElsewhereSystem: 'Show a desktop notification',
+      openOnClick: 'Clicking a desktop notification opens the session',
+      openOnClickHint:
+        'Registers the link type “parallax:” for your user; a click opens the session in a new app window.',
+      openOnClickForeign:
+        'Another program is already registered for “parallax:” links for your user. Parallax does not replace it.',
+    },
   },
   sessions: {
     idleSleep: 'Put idle sessions to sleep',
@@ -446,6 +463,19 @@ export const en = {
       too_many: 'At most {max} arguments.',
       invalid: 'This entry is not valid.',
     },
+    /** WP-104: the texts on a Linux computer. */
+    posix: {
+      system: 'Default program of the desktop',
+      systemHint:
+        'Opens a file with the program the desktop assigns to its type – only for harmless types ({extensions}). Other files cannot be opened this way.',
+      path: 'Program',
+      pathOptionalHint:
+        'Empty = the installation Parallax found. Enter the full path of a program to use another one.',
+      customHint: 'The full path of the program on this computer.',
+      pathPlaceholder: '/usr/bin/editor',
+      pathIssue: 'Enter a full path (like /usr/bin/…) – no relative path.',
+      noEditor: 'This computer has no desktop: files open in the viewer of Parallax.',
+    },
   },
   /** Section "Console" (WP-97, ADR-238): "Open shell in folder". */
   console: {
@@ -456,6 +486,12 @@ export const en = {
       cmd: 'Command Prompt (cmd)',
       powershell: 'Windows PowerShell',
       gitbash: 'Git Bash',
+      /** WP-104: the shells of a Linux computer. */
+      login: 'Login shell',
+      bash: 'Bash',
+      zsh: 'Zsh',
+      fish: 'fish',
+      pwsh: 'PowerShell 7',
     },
     defaultBadge: 'Default',
     gitBashWindow: 'Git Bash window',

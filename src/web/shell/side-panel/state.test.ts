@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { LOCAL_HOST_ID } from '@shared/common';
+import { sampleHostState } from '@shared/samples';
+import { clientStore, resetClientStore, updateHost } from '@web/state/store';
 import {
   getSidePanelFile,
   goBackSidePanelFile,
@@ -16,6 +19,7 @@ function open(path: string, line: number | null = null): void {
 
 afterEach(() => {
   resetSidePanelState();
+  resetClientStore();
 });
 
 describe('side panel state (WP-54)', () => {
@@ -56,6 +60,18 @@ describe('side panel state (WP-54)', () => {
     expect(goBackSidePanelFile(KEY, 2)).toBe(true);
     expect(getSidePanelFile(KEY)?.path).toBe('D:\\a.ts');
     expect(goBackSidePanelFile(KEY)).toBe(false);
+  });
+
+  it('compares paths by the rules of the session host: case-sensitive on Linux (WP-104)', () => {
+    updateHost(clientStore, LOCAL_HOST_ID, () => ({ hostState: sampleHostState({ platform: 'linux' }) }));
+    open('/home/alice/A.ts');
+    open('/home/alice/a.ts'); // another file on Linux
+    expect(getSidePanelFile(KEY)).toMatchObject({ path: '/home/alice/a.ts', revision: 0 });
+    expect(goBackSidePanelFile(KEY)).toBe(true);
+    expect(getSidePanelFile(KEY)?.path).toBe('/home/alice/A.ts');
+    // Going back remounted it (revision 1); the same file in another spelling remounts again.
+    open('/home/alice//A.ts');
+    expect(getSidePanelFile(KEY)?.revision).toBe(2);
   });
 });
 

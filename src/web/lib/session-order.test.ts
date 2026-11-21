@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionSummary } from '@shared/model';
+import { POSIX_PATHS, WIN32_PATHS } from '@shared/paths';
 import { sampleId, sampleStatusFacts, sampleSummary } from '@shared/samples';
 import {
   archivedOrder,
@@ -101,6 +102,18 @@ describe('groupSessions', () => {
     const a = { ...entry(1, { cwd: 'D:\\x' }), hostId: 'local' };
     const b = { ...entry(2, { cwd: 'D:\\x' }), hostId: 'vm' };
     expect(groupSessions([a, b], NOW)).toHaveLength(2);
+  });
+
+  it('compares folders by the rules of the entry host: case-sensitive on Linux (WP-104)', () => {
+    const a = { ...entry(1, { cwd: '/home/alice/Work' }), hostId: 'pc-linux' };
+    const b = { ...entry(2, { cwd: '/home/alice/work' }), hostId: 'pc-linux' };
+    const c = { ...entry(3, { cwd: 'D:\\Work' }), hostId: 'local' };
+    const d = { ...entry(4, { cwd: 'd:\\work' }), hostId: 'local' };
+    const pathKey = (hostId: string | undefined, path: string) =>
+      hostId === 'pc-linux' ? POSIX_PATHS.key(path) : WIN32_PATHS.key(path);
+    expect(groupSessions([a, b, c, d], NOW, pathKey)).toHaveLength(3);
+    // Default (no host rules known): every folder as on Windows.
+    expect(groupSessions([a, b, c, d], NOW)).toHaveLength(2);
   });
 });
 

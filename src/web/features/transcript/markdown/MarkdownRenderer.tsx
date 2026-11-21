@@ -8,15 +8,16 @@ import {
   type JSX,
   type ReactNode,
 } from 'react';
-import ReactMarkdown, { type Components, type ExtraProps } from 'react-markdown';
+import ReactMarkdown, { type Components, type ExtraProps, type Options } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { SessionSummary } from '@shared/model';
 import { useT } from '@web/i18n';
 import { cn } from '@web/lib/cn';
 import { onExternalLinkClick } from '@web/lib/external-link';
-import { parseFileTarget } from '@web/lib/file-refs';
+import { WINDOWS_FILE_REF_SCOPE, parseFileTarget } from '@web/lib/file-refs';
 import { resolveLanguage } from '@web/lib/languages';
 import { useFeatureSlots } from '@web/shell/slots';
+import { useSessionPaths } from '@web/state/host-platform';
 import { useSummarySelector } from '@web/state/hooks';
 import { CodeBlock } from '../components/CodeBlock';
 import { splitMarkdownBlocks } from '@web/lib/markdown-blocks';
@@ -34,11 +35,20 @@ import { fileRefOf, rehypeFileRefs } from './rehype-file-refs';
  * block is parsed again (B "Speicher und Performance"). File references (WP-55): paths in text and
  * inline code and local link targets become the `FileLink` slot (`verify`, FileReference.tsx) –
  * not in code blocks, and not in the block that is still streaming (half a path would be checked).
+ * WP-104: references are found and resolved with the path rules of the session's host.
  */
 
 const REMARK_PLUGINS = [remarkGfm];
-const NO_REHYPE_PLUGINS: [] = [];
-const FILE_REF_PLUGINS = [rehypeFileRefs];
+type RehypePlugins = NonNullable<Options['rehypePlugins']>;
+const NO_REHYPE_PLUGINS: RehypePlugins = [];
+/** Windows hosts: the scope does not depend on the cwd – one list for every block. */
+const WINDOWS_FILE_REF_PLUGINS: RehypePlugins = [[rehypeFileRefs, WINDOWS_FILE_REF_SCOPE]];
+
+function fileRefPlugins(fileRefs: FileRefBase | null): RehypePlugins {
+  if (fileRefs === null) return NO_REHYPE_PLUGINS;
+  if (fileRefs.rules.flavor === 'win32') return WINDOWS_FILE_REF_PLUGINS;
+  return [[rehypeFileRefs, { rules: fileRefs.rules, cwd: fileRefs.cwd }]];
+}
 
 const selectCwd = (summary: SessionSummary): string | null => summary.cwd;
 
@@ -93,7 +103,7 @@ function Link({ href, children }: Props<'a'>) {
   const url = safeHttpUrl(href);
   if (url === null) {
     // A local target (drive, relative, file:///C:/…): a file link, never an <a href> (WP-55).
-    const target = typeof href === 'string' && href !== '' ? parseFileTarget(href) : null;
+    const target = typeof href === 'string' && href !== '' ? parseFileTarget(href, fileRefs?.rules) : null;
     const path = target === null ? null : linkedPath(target, fileRefs);
     if (target !== null && path !== null && fileRefs !== null) {
       return (
@@ -241,12 +251,13 @@ const MarkdownBlockView = memo(function MarkdownBlockView({
   openFence: boolean;
   fileRefs: FileRefBase | null;
 }) {
+  const rehypePlugins = useMemo(() => fileRefPlugins(fileRefs), [fileRefs]);
   return (
     <OpenFenceContext value={openFence}>
       <FileRefContext value={fileRefs}>
         <ReactMarkdown
           remarkPlugins={REMARK_PLUGINS}
-          rehypePlugins={fileRefs === null ? NO_REHYPE_PLUGINS : FILE_REF_PLUGINS}
+          rehypePlugins={rehypePlugins}
           skipHtml
           urlTransform={markdownUrlTransform}
           components={COMPONENTS}
@@ -272,10 +283,11 @@ export function MarkdownRenderer({
   // V2-12: backslashes of Windows paths in running text stay visible (`\.` is no escape there).
   const blocks = useMemo(() => splitMarkdownBlocks(preserveWindowsPaths(text)), [text]);
   const cwd = useSummarySelector(sessionKey ?? null, selectCwd, null);
+  const rules = useSessionPaths(sessionKey ?? null);
   const base = baseDir ?? cwd;
   const fileRefs = useMemo<FileRefBase | null>(
-    () => (sessionKey === undefined ? null : { sessionKey, base }),
-    [sessionKey, base],
+    () => (sessionKey === undefined ? null : { sessionKey, base, cwd, rules }),
+    [sessionKey, base, cwd, rules],
   );
   return blocks.map((block, index) => (
     <MarkdownBlockView

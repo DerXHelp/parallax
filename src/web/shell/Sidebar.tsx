@@ -32,6 +32,7 @@ import {
   useSummaries,
   type SummaryEntry,
 } from '@web/state/hooks';
+import { useHostPathKey } from '@web/state/host-platform';
 import { useHostLabels } from '@web/state/hosts';
 import { clientStore } from '@web/state/store';
 import { Badge } from '@web/ui/badge';
@@ -207,6 +208,7 @@ export function Sidebar({
   const hosts = useHostLabels();
   const collapsed = useCollapsedGroups();
   const { layout, grouping, hostOrder, hasRemoteHosts } = useSidebarLayout(entries, now);
+  const pathKey = useHostPathKey();
 
   const archived: Ordered[] = useMemo(() => archivedOrder(entries, new Date(now)), [entries, now]);
   const mainOrder = layout.order;
@@ -221,9 +223,9 @@ export function Sidebar({
   );
   useEffect(() => {
     if (!allLoaded) return;
-    const folders = groupSessions(entries, new Date(now)).map(folderGroupKey);
+    const folders = groupSessions(entries, new Date(now), pathKey).map(folderGroupKey);
     pruneCollapsedGroups([...hostOrder.map(hostGroupKey), ...folders]);
-  }, [allLoaded, entries, hostOrder, now]);
+  }, [allLoaded, entries, hostOrder, now, pathKey]);
 
   // V3-14: the last archived session was restored (or deleted) – back to the sessions instead of
   // an empty "Archive (0)"; a focus that went down with the row moves to the list.

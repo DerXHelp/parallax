@@ -1,9 +1,9 @@
 import { memo, type MouseEvent } from 'react';
 import type { FileKind } from '@shared/model';
-import { windowsPathIssue } from '@shared/paths';
 import { useT } from '@web/i18n';
 import { pathTail } from '@web/lib/path-display';
 import type { FileLinkSlotProps } from '@web/shell/slots';
+import { useSessionCapabilities, useSessionPaths } from '@web/state/host-platform';
 import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '@web/ui/context-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@web/ui/tooltip';
 import { FileActionItems, FileActionsMenu } from './components/FileActionItems';
@@ -15,7 +15,8 @@ import { useFileStat, type StatEntry } from './state/stat-cache';
 
 /**
  * Slot `FileLink` (WP-54, ADR-141/144, L15): a file reference with actions. A path that fails the
- * C.10 filter (`windowsPathIssue`: UNC, device, ADS …) stays plain text and never causes a command.
+ * C.10 filter of the session's host (Windows: UNC, device, ADS …; WP-104) stays plain text and never
+ * causes a command.
  * With `verify` the reference becomes a link only after `file.statMany` answered `ok: true`
  * (batching cache, state/stat-cache.ts); a refused path (`PATH_NOT_ALLOWED`) says so in a tooltip.
  * Click → viewer (shell request `openFile`), Ctrl/Cmd+click or middle click → editor (local host),
@@ -49,7 +50,9 @@ export const FileLink = memo(function FileLink({
   children,
 }: FileLinkSlotProps) {
   const t = useT();
-  const safe = windowsPathIssue(path) === null;
+  const rules = useSessionPaths(sessionKey);
+  const capabilities = useSessionCapabilities(sessionKey);
+  const safe = rules.issue(path) === null;
   const entry = useFileStat(sessionKey, safe && verify ? path : null);
   const state = linkState(safe, verify, entry);
   const label = children ?? defaultFileLinkLabel(path, line);
@@ -68,7 +71,7 @@ export const FileLink = memo(function FileLink({
   const result = entry?.result;
   const kind: FileKind | null = result?.ok === true ? result.file.kind : null;
   const target: FileTarget = { sessionKey, path, line, col };
-  const actions = fileActions({ ...target, kind });
+  const actions = fileActions({ ...target, kind, host: { rules, capabilities } });
   if (variant === 'menu') return <FileActionsMenu path={path} actions={actions} />;
 
   const onClick = (event: MouseEvent) => {
@@ -104,8 +107,13 @@ export const FileLink = memo(function FileLink({
             >
               {variant === 'chip' ? (
                 <>
-                  <FileIcon path={path} kind={kind} className="text-muted-foreground size-3.5 shrink-0" />
-                  <span className="shrink-0 font-medium">{children ?? fileName(path)}</span>
+                  <FileIcon
+                    path={path}
+                    kind={kind}
+                    rules={rules}
+                    className="text-muted-foreground size-3.5 shrink-0"
+                  />
+                  <span className="shrink-0 font-medium">{children ?? fileName(path, rules)}</span>
                   <span className="text-muted-foreground min-w-0 truncate font-mono text-2xs">
                     {pathTail(path, 3)}
                   </span>

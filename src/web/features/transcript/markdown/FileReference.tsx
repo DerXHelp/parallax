@@ -1,5 +1,5 @@
 import { createContext, useContext, type ReactNode } from 'react';
-import { findCodeRefs, resolveFileRef, type FileTarget } from '@web/lib/file-refs';
+import { findCodeRefs, resolveFileRef, type FileRefScope, type FileTarget } from '@web/lib/file-refs';
 import { useFeatureSlots } from '@web/shell/slots';
 
 /**
@@ -7,9 +7,10 @@ import { useFeatureSlots } from '@web/shell/slots';
  * with `verify` – a link only once `file.statMany` found the file –, resolved against `baseDir`
  * (viewer of a Markdown file) or the session's cwd. UNC/device references stay plain text and never
  * reach the slot; without a session (or without a base for a relative one) the text stays text.
+ * WP-104: found and resolved with the path rules of the session's host (`FileRefScope`).
  */
 
-export interface FileRefBase {
+export interface FileRefBase extends FileRefScope {
   sessionKey: string;
   /** Directory relative references resolve against (baseDir ?? cwd), null = none known. */
   base: string | null;
@@ -21,7 +22,8 @@ export const FileRefContext = createContext<FileRefBase | null>(null);
 /** The absolute path a reference links to under `context`, else null (unsafe, no base, C.10). */
 export function linkedPath(target: FileTarget, context: FileRefBase | null): string | null {
   if (context === null || target.unsafe) return null;
-  return resolveFileRef(target, context.base);
+  // `~/…` is resolved against the session's folder (resolveFileRef), never against a viewer's baseDir.
+  return resolveFileRef(target, target.kind === 'home' ? context.cwd : context.base, context.rules);
 }
 
 export function FileReference({ target, children }: { target: FileTarget; children: ReactNode }) {
@@ -44,7 +46,7 @@ export function FileReference({ target, children }: { target: FileTarget; childr
  */
 export function LinkedText({ text }: { text: string }): ReactNode {
   const context = useContext(FileRefContext);
-  const refs = context === null ? [] : findCodeRefs(text);
+  const refs = context === null ? [] : findCodeRefs(text, context);
   if (refs.length === 0) return text;
   const parts: ReactNode[] = [];
   let position = 0;

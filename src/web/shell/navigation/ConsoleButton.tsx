@@ -1,7 +1,9 @@
 import { ChevronDownIcon, PanelRightOpenIcon, SettingsIcon, TerminalIcon } from 'lucide-react';
 import { useRef } from 'react';
-import { WINDOWS_SHELL_KINDS, type SessionSummary } from '@shared/model';
+import type { SessionSummary } from '@shared/model';
 import { useT } from '@web/i18n';
+import { effectiveShell, shellChoices } from '@web/lib/shells';
+import { useSessionPaths } from '@web/state/host-platform';
 import { useTerminalAvailable } from '@web/state/hosts';
 import { useSettings } from '@web/state/settings';
 import {
@@ -34,7 +36,10 @@ import {
  */
 export function ConsoleButton({ sessionKey, summary }: { sessionKey: string; summary: SessionSummary }) {
   const t = useT();
-  const preferred = useSettings().console.defaultShell;
+  // WP-104: the shells of the session's computer; a setting it does not offer falls back to its default.
+  const flavor = useSessionPaths(sessionKey).flavor;
+  const choices = shellChoices(flavor);
+  const preferred = effectiveShell(useSettings().console.defaultShell, flavor, choices);
   const keys = shortcutKeyLabels(OPEN_SHELL_KEYS, t).join('+');
   const terminalKeys = shortcutKeyLabels(OPEN_TERMINAL_KEYS, t).join('+');
   const terminal = useTerminalAvailable(sessionKey);
@@ -79,7 +84,7 @@ export function ConsoleButton({ sessionKey, summary }: { sessionKey: string; sum
             event.preventDefault();
           }}
         >
-          {WINDOWS_SHELL_KINDS.map((shell) => (
+          {choices.map((shell) => (
             <DropdownMenuItem
               key={shell}
               data-choice={shell}

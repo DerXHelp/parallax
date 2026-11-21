@@ -25,7 +25,7 @@ const FolderBrowserContent = lazy(() => import('./FolderBrowserContent'));
  */
 
 export interface FolderBrowserProps {
-  /** Start folder: used when it is a safe absolute path (`windowsPathIssue`), else the roots. */
+  /** Start folder: used when it is a safe absolute path (rules of the host, WP-104), else the roots. */
   initialPath: string | null;
   onSelect: (path: string) => void;
   /** The trigger, e.g. a "Browse…" button (rendered as is; a click opens the dialog). */

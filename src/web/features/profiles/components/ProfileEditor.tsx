@@ -15,6 +15,7 @@ import { FolderBrowser } from '@web/shell/new-session/FolderBrowser';
 import { issueCounts } from '@web/shell/new-session/profile-issues';
 import { ProfileIssueText } from '@web/shell/new-session/profile-status';
 import { errorPayloadOf } from '@web/state/connection';
+import { useHostPaths } from '@web/state/host-platform';
 import { sendCommand } from '@web/state/hooks';
 import { Alert } from '@web/ui/alert';
 import { Badge } from '@web/ui/badge';
@@ -205,6 +206,8 @@ function ProfileForm({
   events: ProfileEditorEvents;
 }) {
   const { t, tError, format } = useI18n();
+  // Profiles live on this computer (the settings page); WP-104: its paths decide examples and comparisons.
+  const rules = useHostPaths();
   const ids = {
     name: useId(),
     nameNotes: useId(),
@@ -270,7 +273,7 @@ function ProfileForm({
   const isDefault = summary?.isDefault === true;
   const savedErrors = summary === null ? 0 : issueCounts(summary.issues).error;
   const showConfigDirWarning =
-    profileId !== null && entryCount > 0 && configDirChanged(savedConfigDir, draft.configDir);
+    profileId !== null && entryCount > 0 && configDirChanged(savedConfigDir, draft.configDir, rules);
 
   const reportDirty = useEffectEvent((value: boolean) => {
     events.onDirtyChange(value);
@@ -504,7 +507,11 @@ function ProfileForm({
               spellCheck={false}
               autoComplete="off"
               aria-label={t('profiles.fields.executablePathLabel')}
-              placeholder={t('profiles.fields.executablePlaceholder')}
+              placeholder={t(
+                rules.flavor === 'win32'
+                  ? 'profiles.fields.executablePlaceholder'
+                  : 'profiles.fields.executablePlaceholderPosix',
+              )}
               aria-invalid={
                 executableProblems.length > 0 ||
                 placed.executable.some((finding) => finding.level === 'error')

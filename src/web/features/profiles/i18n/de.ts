@@ -65,6 +65,7 @@ export const de: typeof en = {
     executablePath: 'Fester Pfad',
     executablePathLabel: 'Pfad zu claude.exe',
     executablePlaceholder: 'C:\\Users\\ich\\.local\\bin\\claude.exe',
+    executablePlaceholderPosix: '/home/ich/.local/bin/claude',
     configDir: 'Konfigurationsordner (CLAUDE_CONFIG_DIR)',
     configDirPlaceholder: 'Leer = der Standardordner von Claude Code',
     configDirBrowse: 'Durchsuchen…',

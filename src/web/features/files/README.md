@@ -37,3 +37,5 @@ Session“ (Slot `FilesPanel`) über die Host-Befehle `file.*`/`files.*` und `GE
   im Start-Chunk liegen nur `index.ts`, `PlainReference` und die Wörterbücher.
 - Querverbindungen zur Shell nur über `requestShell` (`openFile`, `sidePanel`) und
   `@web/shell/side-panel/state`.
+
+WP-104 (Linux): Pfade, Symbole und Aktionen nach dem Rechner der Session (`useSessionPaths`, `useSessionCapabilities` aus `@web/state/host-platform`). `lib/paths.ts`, `file-tools`, `stat-cache` und `actions.ts` nehmen den Regelsatz des Hosts (Standard `WIN32_PATHS`); „Im Explorer zeigen“ heißt unter Linux „Im Dateimanager zeigen“ und erscheint nur mit `capabilities.fileManager`, Editor und Standardprogramm nur mit `capabilities.editor`.

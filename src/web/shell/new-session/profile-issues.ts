@@ -1,5 +1,6 @@
 import { PROFILE_ARG_INVALID_REASONS, type ErrorPayload } from '@shared/errors';
 import type { ProfileIssue } from '@shared/model';
+import type { PathFlavor } from '@shared/paths';
 import type { TranslationKey, TranslationParams } from '@web/i18n';
 
 /**
@@ -45,8 +46,11 @@ function isExecutableReason(value: string | null): value is ExecutableReason {
   return EXECUTABLE_REASONS.some((reason) => reason === value);
 }
 
-/** The second line of a finding, or null when the error text says it all. */
-export function issueDetail(issue: ErrorPayload): IssueDetail | null {
+/**
+ * The second line of a finding, or null when the error text says it all. `flavor`: the paths of the
+ * profile's host (the example of a full path, WP-104).
+ */
+export function issueDetail(issue: ErrorPayload, flavor: PathFlavor = 'win32'): IssueDetail | null {
   const flag = text(issue, 'flag') ?? '';
   switch (issue.code) {
     case 'PROFILE_ARG_INVALID': {
@@ -70,6 +74,9 @@ export function issueDetail(issue: ErrorPayload): IssueDetail | null {
       if (field === 'configDir') return { key: 'newSession.issues.configDir', params: {} };
       const reason = text(issue, 'reason');
       if (field === 'executable' && isExecutableReason(reason)) {
+        if (reason === 'not_absolute' && flavor === 'posix') {
+          return { key: 'newSession.issues.executable.not_absolute_posix', params: {} };
+        }
         return { key: `newSession.issues.executable.${reason}`, params: {} };
       }
       return null;

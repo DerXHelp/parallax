@@ -128,7 +128,10 @@ export type FileLinkVariant = 'inline' | 'chip' | 'menu';
 
 export interface FileLinkSlotProps {
   sessionKey: string;
-  /** Absolute Windows path (callers resolve relative paths with resolveWindowsPath against the cwd). */
+  /**
+   * Absolute path on the session's host (callers resolve relative paths against the cwd with the
+   * host's rules, WP-104).
+   */
   path: string;
   line?: number | null;
   col?: number | null;

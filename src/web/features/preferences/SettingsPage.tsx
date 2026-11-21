@@ -99,10 +99,10 @@ function SectionContent({
       return <SessionsSection editor={editor} hostState={hostState} />;
     case 'files':
       // Phase 3 (WP-58): the editor for "Open in editor" (settings.editor, ADR-144).
-      return <FilesSection editor={editor} />;
+      return <FilesSection editor={editor} hostState={hostState} />;
     case 'console':
       // WP-97: "Open shell in folder" (settings.console, ADR-238).
-      return <ConsoleSection editor={editor} />;
+      return <ConsoleSection editor={editor} hostState={hostState} />;
     case 'profiles':
       return <ProfilesSection onDirtyChange={onProfilesDirtyChange} />;
     case 'server':

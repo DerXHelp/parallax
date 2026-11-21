@@ -1,12 +1,12 @@
 import { CircleCheckIcon, CircleXIcon, LoaderCircleIcon } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
-import { windowsPathsEqual } from '@shared/paths';
 import {
   DEFAULT_PROGRAM_EXTENSIONS,
   EDITOR_PRESETS,
   editorPresetSchema,
   type EditorPreset,
   type EditorSettings,
+  type HostState,
 } from '@shared/model';
 import type { CommandResult } from '@shared/protocol';
 import { useFormat, useT } from '@web/i18n';
@@ -19,6 +19,7 @@ import { Label } from '@web/ui/label';
 import { RadioGroup, RadioGroupItem } from '@web/ui/radio-group';
 import { Textarea } from '@web/ui/textarea';
 import { SettingField, SettingList } from '../components/SettingField';
+import { settingsHostOf } from '../lib/host-platform';
 import {
   EDITOR_ARGS_MAX,
   PREVIEW_TARGET,
@@ -135,8 +136,10 @@ function DetectLine({ id, preset, detection }: { id: string; preset: EditorPrese
   );
 }
 
-function issueText(t: ReturnType<typeof useT>, issue: EditorIssue): string {
+function issueText(t: ReturnType<typeof useT>, issue: EditorIssue, posix: boolean): string {
   switch (issue) {
+    case 'path':
+      return posix ? t('preferences.files.posix.pathIssue') : t('preferences.files.issues.path');
     case 'file_placeholder':
       return t('preferences.files.issues.file_placeholder', { placeholder: '{file}' });
     case 'too_many':
@@ -146,7 +149,7 @@ function issueText(t: ReturnType<typeof useT>, issue: EditorIssue): string {
   }
 }
 
-function FieldIssue({ id, issue }: { id: string; issue: EditorIssue | null }) {
+function FieldIssue({ id, issue, posix }: { id: string; issue: EditorIssue | null; posix: boolean }) {
   const t = useT();
   if (issue === null) return null;
   return (
@@ -156,7 +159,7 @@ function FieldIssue({ id, issue }: { id: string; issue: EditorIssue | null }) {
       data-issue={issue}
       className="text-destructive text-2xs leading-relaxed"
     >
-      {issueText(t, issue)}
+      {issueText(t, issue, posix)}
     </p>
   );
 }
@@ -171,13 +174,18 @@ function FieldIssue({ id, issue }: { id: string; issue: EditorIssue | null }) {
  */
 export function FilesSection({
   editor,
+  hostState,
   initialDraft,
 }: {
   editor: SettingsEditor;
+  /** The computer whose settings these are (WP-104: its path rules and desktop). */
+  hostState?: HostState | null;
   /** Playground: start with this (unsaved) form. */
   initialDraft?: EditorDraft;
 }) {
   const t = useT();
+  const { rules, capabilities } = settingsHostOf(hostState);
+  const posix = rules.flavor === 'posix';
   const format = useFormat();
   const id = useId();
   const stored = editor.settings.editor;
@@ -193,7 +201,7 @@ export function FilesSection({
   const draft = draftOfForm(form);
   const value = editorOfDraft(draft);
   const dirty = !sameEditor(value, stored);
-  const issues = editorIssues(draft);
+  const issues = editorIssues(draft, rules);
 
   // The stored editor changed (ack, rollback, another window): take it over unless the form holds
   // own unsaved changes.
@@ -212,7 +220,7 @@ export function FilesSection({
     const nextDraft = draftOfForm(next);
     const nextValue = editorOfDraft(nextDraft);
     // A preset without a form of its own is saved at once; "own program" waits for "Save".
-    const saveNow = preset !== 'custom' && !hasIssues(editorIssues(nextDraft));
+    const saveNow = preset !== 'custom' && !hasIssues(editorIssues(nextDraft, rules));
     if (saveNow && !sameEditor(nextValue, stored)) editor.save({ editor: nextValue });
   };
 
@@ -241,13 +249,24 @@ export function FilesSection({
     detection.status === 'done' &&
     detection.result.custom !== null &&
     path.trim() !== '' &&
-    windowsPathsEqual(detection.result.custom.executable, path.trim())
+    rules.equal(detection.result.custom.executable, path.trim())
       ? detection.result.custom.exists
       : null;
   const preview =
     custom && issues.executable === null && path.trim() !== ''
       ? commandLinePreview(path.trim(), argLines(form.args))
       : null;
+
+  if (!capabilities.editor) {
+    // WP-104: no desktop on that computer – files open in the viewer only.
+    return (
+      <SettingList>
+        <p data-slot="editor-unavailable" className="text-muted-foreground text-xs leading-relaxed">
+          {t('preferences.files.posix.noEditor')}
+        </p>
+      </SettingList>
+    );
+  }
 
   return (
     <SettingList>
@@ -281,7 +300,9 @@ export function FilesSection({
                     />
                     <div className="grid min-w-0 gap-0.5">
                       <Label htmlFor={itemId} className="gap-1.5 font-normal">
-                        {t(`preferences.files.presets.${preset}`)}
+                        {posix && preset === 'system'
+                          ? t('preferences.files.posix.system')
+                          : t(`preferences.files.presets.${preset}`)}
                         {preset === 'notepadpp' ? (
                           <Badge variant="outline">{t('preferences.files.defaultBadge')}</Badge>
                         ) : null}
@@ -295,13 +316,17 @@ export function FilesSection({
 
             {form.preset === 'system' ? (
               <p data-slot="editor-system-hint" className="text-muted-foreground text-2xs leading-relaxed">
-                {t('preferences.files.systemHint', { extensions: format.list(DEFAULT_PROGRAM_EXTENSIONS) })}
+                {t(posix ? 'preferences.files.posix.systemHint' : 'preferences.files.systemHint', {
+                  extensions: format.list(DEFAULT_PROGRAM_EXTENSIONS),
+                })}
               </p>
             ) : (
               <div data-slot="editor-form" className="grid gap-3">
                 <div className="grid gap-1">
                   <Label htmlFor={pathId}>
-                    {custom ? t('preferences.files.path') : t('preferences.files.pathOptional')}
+                    {custom
+                      ? t(posix ? 'preferences.files.posix.path' : 'preferences.files.path')
+                      : t('preferences.files.pathOptional')}
                   </Label>
                   <Input
                     ref={pathRef}
@@ -310,7 +335,9 @@ export function FilesSection({
                     spellCheck={false}
                     autoComplete="off"
                     className="font-mono text-xs"
-                    placeholder={t('preferences.files.pathPlaceholder')}
+                    placeholder={t(
+                      posix ? 'preferences.files.posix.pathPlaceholder' : 'preferences.files.pathPlaceholder',
+                    )}
                     aria-invalid={showPathIssue === null ? undefined : true}
                     aria-describedby={[
                       pathHintId,
@@ -328,9 +355,15 @@ export function FilesSection({
                     }}
                   />
                   <p id={pathHintId} className="text-muted-foreground text-2xs leading-relaxed">
-                    {custom ? t('preferences.files.customHint') : t('preferences.files.pathOptionalHint')}
+                    {custom
+                      ? t(posix ? 'preferences.files.posix.customHint' : 'preferences.files.customHint')
+                      : t(
+                          posix
+                            ? 'preferences.files.posix.pathOptionalHint'
+                            : 'preferences.files.pathOptionalHint',
+                        )}
                   </p>
-                  <FieldIssue id={pathIssueId} issue={showPathIssue} />
+                  <FieldIssue id={pathIssueId} issue={showPathIssue} posix={posix} />
                   {customCheck === null ? null : (
                     <p
                       id={pathStateId}
@@ -361,7 +394,7 @@ export function FilesSection({
                     <p id={argsHintId} className="text-muted-foreground text-2xs leading-relaxed">
                       {t('preferences.files.argsHint', { file: '{file}', line: '{line}', col: '{col}' })}
                     </p>
-                    <FieldIssue id={argsIssueId} issue={showArgsIssue} />
+                    <FieldIssue id={argsIssueId} issue={showArgsIssue} posix={posix} />
                   </div>
                 ) : null}
                 {preview === null ? null : (

@@ -1,5 +1,6 @@
 import { LOCAL_HOST_ID } from '@shared/common';
 import type { HostState, SessionSummary } from '@shared/model';
+import { pathFlavorOf, pathRules } from '@shared/paths';
 import type { Command } from '@shared/protocol';
 import { sampleHostState } from '@shared/samples';
 import {
@@ -10,7 +11,13 @@ import {
 } from '@web/state/connection';
 import { FakeHost, type FakeAck } from '@web/state/fake-host';
 import { createMemoryTransport } from '@web/state/transport';
-import { cloneDemoFolders, createDemoFolder, listDemoFolder } from './demo-folders';
+import {
+  cloneDemoFolders,
+  createDemoFolder,
+  DEMO_FOLDERS,
+  LINUX_DEMO_FOLDERS,
+  listDemoFolder,
+} from './demo-folders';
 
 /**
  * A FakeHost behind a real HostConnection on host `local` for the tests and playground demos of
@@ -39,25 +46,28 @@ export interface NewSessionDemo {
 export function startNewSessionDemo(options: NewSessionDemoOptions = {}): NewSessionDemo {
   unregisterConnection(LOCAL_HOST_ID);
   const transport = createMemoryTransport();
-  // WP-94: "New folder" changes this run's own copy of the tree.
-  const folders = cloneDemoFolders();
+  // WP-94: "New folder" changes this run's own copy of the tree. WP-104: a Linux host state gets the
+  // Linux tree and POSIX rules.
+  const hostState = options.hostState ?? sampleHostState();
+  const rules = pathRules(pathFlavorOf(hostState.platform));
+  const folders = cloneDemoFolders(rules.flavor === 'posix' ? LINUX_DEMO_FOLDERS : DEMO_FOLDERS);
   const host = new FakeHost({
     transport,
     // A new instance id per run: the client treats it like a fresh server (no stale seqs).
     serverInstanceId: crypto.randomUUID(),
-    hostState: options.hostState ?? sampleHostState(),
+    hostState,
     summaries: options.summaries ?? [],
     onCommand: (cmd, fake) => {
       const own = options.onCommand?.(cmd, fake);
       if (own !== undefined) return own;
       if (cmd.name === 'fs.createDirectory') {
-        const created = createDemoFolder(cmd.parent, cmd.folderName, folders);
+        const created = createDemoFolder(cmd.parent, cmd.folderName, folders, rules);
         return created.ok
           ? { ok: true, result: { path: created.path } }
           : { ok: false, error: created.error };
       }
       if (cmd.name !== 'fs.listDirectory') return undefined;
-      const result = listDemoFolder(cmd.path, cmd.showHidden, folders);
+      const result = listDemoFolder(cmd.path, cmd.showHidden, folders, rules);
       return result.ok ? { ok: true, result: result.listing } : { ok: false, error: result.error };
     },
   });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { POSIX_PATHS, WIN32_PATHS } from '@shared/paths';
 import {
   findCodeRefs,
   findFileRefs,
@@ -7,6 +8,7 @@ import {
   resolveFileRef,
   type FileRef,
   type FileRefKind,
+  type FileRefScope,
 } from './file-refs';
 
 const CWD = 'D:\\work\\sample';
@@ -342,5 +344,187 @@ describe('resolveFilePath (tool inputs, search hits)', () => {
     ['', CWD, null],
   ])('%j (cwd %j) → %j', (path, cwd, expected) => {
     expect(resolveFilePath(path, cwd)).toBe(expected);
+  });
+});
+
+describe('POSIX hosts (WP-104)', () => {
+  const HOME_CWD = '/home/alice/work/sample';
+  const scope = (cwd: string | null = HOME_CWD): FileRefScope => ({ rules: POSIX_PATHS, cwd });
+  const posixRefs = (text: string, cwd: string | null = HOME_CWD) =>
+    findFileRefs(text, scope(cwd)).map(rowOf);
+  const posix = (raw: string, path = raw, line: number | null = null): Row => [
+    raw,
+    path,
+    line,
+    null,
+    'posix',
+    false,
+  ];
+  const home = (raw: string): Row => [raw, raw, null, null, 'home', false];
+  const relative = (raw: string, path = raw, line: number | null = null): Row => [
+    raw,
+    path,
+    line,
+    null,
+    'relative',
+    false,
+  ];
+  const fileUrl = (raw: string, path: string): Row => [raw, path, null, null, 'file_url', false];
+
+  it.each<[string, Row[]]>([
+    // Well-known roots
+    ['see /home/alice/notes.txt here', [posix('/home/alice/notes.txt')]],
+    ['/tmp/build/out.log:12', [posix('/tmp/build/out.log:12', '/tmp/build/out.log', 12)]],
+    ['/usr/lib/x.so', [posix('/usr/lib/x.so')]],
+    ['/etc/hosts.', [posix('/etc/hosts')]],
+    ['(/var/log/syslog)', [posix('/var/log/syslog')]],
+    ['/opt/tool/bin/tool', [posix('/opt/tool/bin/tool')]],
+    ['/mnt/data/a.csv /media/usb/b.png', [posix('/mnt/data/a.csv'), posix('/media/usb/b.png')]],
+    ['/srv/app/main.py#L3', [posix('/srv/app/main.py#L3', '/srv/app/main.py', 3)]],
+    ['/root/.bashrc and /run/user/1000/x.sock', [posix('/root/.bashrc'), posix('/run/user/1000/x.sock')]],
+    ['/workspace/repo/src/a.ts', [posix('/workspace/repo/src/a.ts')]],
+    ['→/home/alice/a.ts', [posix('/home/alice/a.ts')]],
+    ['path=/home/alice/a.ts', [posix('/home/alice/a.ts')]],
+    // A file without an extension followed by prose stays a reference (differs from Windows, V4-01).
+    ['The file /etc/hosts contains it', [posix('/etc/hosts')]],
+    // Spaces in folder names: extended up to a file with an extension.
+    ['see /home/alice/My Project/a.md now', [posix('/home/alice/My Project/a.md')]],
+    // Not under a known root and not under the cwd
+    ['/data/proj/src/a.ts', []],
+    // ~/… (resolved later)
+    ['~/notes.txt and ~/.config/app/x.json', [home('~/notes.txt'), home('~/.config/app/x.json')]],
+    // Relative paths: only `/` separates
+    ['src/a.ts:7', [relative('src/a.ts:7', 'src/a.ts', 7)]],
+    ['./a.ts and ../b.md', [relative('./a.ts'), relative('../b.md')]],
+    ['src\\a.ts', []],
+    // file:// URLs
+    ['file:///home/alice/a%20b.txt', [fileUrl('file:///home/alice/a%20b.txt', '/home/alice/a b.txt')]],
+    ['file://localhost/tmp/x.log', [fileUrl('file://localhost/tmp/x.log', '/tmp/x.log')]],
+    ['file://server/share/x.txt', []],
+    ['file:///C:/x/a.txt', []],
+    // Windows forms are no references on a Linux host
+    ['C:\\work\\a.ts and C:/x/b.md', []],
+    ['/c/Users/x/a.log', []],
+    ['\\\\server\\share\\x.txt and //server/share/x.txt', []],
+    ['\\\\?\\C:\\x\\a.txt', []],
+    // Counter checks: URLs, fractions, dates, prose, commands
+    ['https://example.com/home/alice/a.ts', []],
+    ['see http://x.org/tmp/a.md, and www.example.com/usr/a.html', []],
+    ['git@github.com:org/repo.git', []],
+    ['1/2, 3/4.5, 24/7 and 2026/11/21', []],
+    ['and/or, km/h, TCP/IP', []],
+    ['/clear and /model and /api/hosts/x', []],
+    ['the /s/ sound', []],
+    ['/home and /tmp/ alone', []],
+    ['// comment', []],
+    ['scp host:/home/alice/a.txt', []],
+    ['src/**/*.ts', []],
+    ['/proc/1/status', []],
+    ['e.g./i.e. are prose', []],
+    ['~ and ~user/x.txt and $HOME/a.txt', []],
+  ])('%j', (text, expected) => {
+    expect(posixRefs(text)).toEqual(expected);
+  });
+
+  it('takes absolute paths under the cwd with any root, never with the cwd /', () => {
+    expect(posixRefs('/data/proj/src/a.ts and /data/other/b.ts', '/data/proj')).toEqual([
+      posix('/data/proj/src/a.ts'),
+    ]);
+    expect(posixRefs('/data/proj', '/data/proj')).toEqual([posix('/data/proj')]);
+    expect(posixRefs('/data/proj/a.ts', '/')).toEqual([]);
+    expect(posixRefs('/data/proj/a.ts', null)).toEqual([]);
+  });
+
+  it('keeps Windows hosts exactly as before (no POSIX references)', () => {
+    expect(refsOf('/home/alice/notes.txt and ~/a.txt')).toEqual([]);
+    expect(findFileRefs('/data/proj/a.ts', { rules: WIN32_PATHS, cwd: '/data/proj' })).toEqual([]);
+  });
+
+  it('finds inline code paths with spaces', () => {
+    const codeRefs = (code: string) => findCodeRefs(code, scope()).map(rowOf);
+    expect(codeRefs('/home/alice/My Project/My File.txt:3')).toEqual([
+      posix('/home/alice/My Project/My File.txt:3', '/home/alice/My Project/My File.txt', 3),
+    ]);
+    expect(codeRefs('~/My Notes/a b.md')).toEqual([home('~/My Notes/a b.md')]);
+    expect(codeRefs('cat /etc/hosts | grep x')).toEqual([posix('/etc/hosts')]);
+    expect(codeRefs('/srv/x y/a.md')).toEqual([posix('/srv/x y/a.md')]);
+    // Not under a known root: the text as running text (only the relative tail).
+    expect(codeRefs('/data/x y/a.md')).toEqual([relative('y/a.md')]);
+  });
+
+  it('stays linear on long input', () => {
+    const start = performance.now();
+    findFileRefs(`/home/a${' b/c'.repeat(12_000)}`, scope());
+    findFileRefs('/home/a b '.repeat(8_000), scope());
+    findCodeRefs(`~/${'a/'.repeat(20_000)}`, scope());
+    expect(performance.now() - start).toBeLessThan(250);
+  });
+
+  describe('resolveFileRef', () => {
+    const resolve = (text: string, cwd: string | null = HOME_CWD) => {
+      const [ref] = findFileRefs(text, scope(cwd));
+      return ref === undefined ? undefined : resolveFileRef(ref, cwd, POSIX_PATHS);
+    };
+
+    it.each<[string, string | null, string | null]>([
+      ['src/a.ts', HOME_CWD, '/home/alice/work/sample/src/a.ts'],
+      ['../b/c.md', HOME_CWD, '/home/alice/work/b/c.md'],
+      ['src/a.ts', null, null],
+      ['/tmp/x/../y.log', null, '/tmp/y.log'],
+      ['file:///home/alice/a%20b.txt', null, '/home/alice/a b.txt'],
+      // ~/… only where the home derived from the cwd puts the file under the cwd
+      ['~/work/sample/README.md', HOME_CWD, '/home/alice/work/sample/README.md'],
+      ['~/.bashrc.d/x.sh', HOME_CWD, null],
+      ['~/work/sample/a.md', '/srv/app', null],
+      ['~/proj/a.md', '/root/proj', '/root/proj/a.md'],
+      ['~/work/sample/a.md', null, null],
+    ])('%j (cwd %j) → %j', (text, cwd, expected) => {
+      expect(resolve(text, cwd)).toBe(expected);
+    });
+
+    it('never leaves the root and refuses kernel files and drive paths', () => {
+      const ref = (path: string, kind: FileRefKind) => ({ path, kind, unsafe: false });
+      expect(resolveFileRef(ref('../../../../../x.ts', 'relative'), '/home/a', POSIX_PATHS)).toBeNull();
+      expect(resolveFileRef(ref('/proc/1/environ', 'posix'), null, POSIX_PATHS)).toBeNull();
+      expect(resolveFileRef(ref('C:\\x\\a.ts', 'drive'), null, POSIX_PATHS)).toBeNull();
+      // ~/… never on a Windows host
+      expect(resolveFileRef(ref('~/a.ts', 'home'), 'C:\\Users\\x', WIN32_PATHS)).toBeNull();
+    });
+  });
+
+  describe('parseFileTarget', () => {
+    it.each<[string, Partial<ReturnType<typeof parseFileTarget>> | null]>([
+      ['/docs/a.md', { path: '/docs/a.md', kind: 'posix', unsafe: false }],
+      ['/home/alice/a.ts#L5', { path: '/home/alice/a.ts', line: 5, kind: 'posix' }],
+      ['~/notes.md', { path: '~/notes.md', kind: 'home' }],
+      ['docs/guide', { path: 'docs/guide', kind: 'relative' }],
+      ['file:///home/alice/a.md', { path: '/home/alice/a.md', kind: 'file_url', unsafe: false }],
+      ['file://host/share/a.md', null],
+      ['C:%5Cwork%5Ca.ts', null],
+      ['//server/share', null],
+      ['https://example.com/a.md', null],
+      ['#section', null],
+    ])('%j', (target, expected) => {
+      const parsed = parseFileTarget(target, POSIX_PATHS);
+      if (expected === null) expect(parsed).toBeNull();
+      else expect(parsed).toMatchObject(expected);
+    });
+  });
+
+  describe('resolveFilePath', () => {
+    it.each<[string, string | null, string | null]>([
+      ['/home/alice/work/sample/src/main.ts', null, '/home/alice/work/sample/src/main.ts'],
+      ['/srv//app/./x.ts', null, '/srv/app/x.ts'],
+      ['src/main.ts', HOME_CWD, '/home/alice/work/sample/src/main.ts'],
+      ['src/main.ts', null, null],
+      ['~/work/sample/a.ts', HOME_CWD, '/home/alice/work/sample/a.ts'],
+      ['~/other/a.ts', HOME_CWD, null],
+      ['~alice/a.ts', HOME_CWD, null],
+      ['C:\\work\\a.ts', HOME_CWD, null],
+      ['/proc/self/environ', null, null],
+      ['', HOME_CWD, null],
+    ])('%j (cwd %j) → %j', (path, cwd, expected) => {
+      expect(resolveFilePath(path, cwd, POSIX_PATHS)).toBe(expected);
+    });
   });
 });
