@@ -1,5 +1,5 @@
-import type { EntryId } from '@shared/common';
-import { API_PATHS } from '@shared/http';
+import { LOCAL_HOST_ID, type EntryId, type HostId } from '@shared/common';
+import { hostTerminalWsPath } from '@shared/http';
 import {
   TERMINAL_CLOSE_CODES,
   TERMINAL_LIMITS,
@@ -71,9 +71,16 @@ export const browserTerminalSocketFactory: TerminalSocketFactory = (url, handler
   };
 };
 
-/** `ws://<host>/api/terminal/ws` of the page, like the main connection (Vite proxies `/api` in dev). */
-export function terminalSocketUrl(location: { protocol: string; host: string } = window.location): string {
-  return webSocketUrl(location, API_PATHS.terminalWs);
+/**
+ * `ws://<host>/api/terminal/ws` of the page, like the main connection (Vite proxies `/api` in dev).
+ * WP-105 (E3): for a session of another computer `/api/hosts/<hostId>/terminal/ws` – the relay of this
+ * server, same protocol (`hostTerminalWsPath`).
+ */
+export function terminalSocketUrl(
+  hostId: HostId = LOCAL_HOST_ID,
+  location: { protocol: string; host: string } = window.location,
+): string {
+  return webSocketUrl(location, hostTerminalWsPath(hostId));
 }
 
 /** connecting = until the first `welcome`; open; reconnecting = lost, next attempt pending; failed = final. */

@@ -127,6 +127,8 @@ export const de: typeof en = {
     choose: 'Shell wählen',
     group: 'Shell im Projektordner',
     settings: 'Konsolen-Einstellungen…',
+    /** WP-105: SHELL_NOT_FOUND of a Linux shell (`{shell}` = the shell's menu text). */
+    missing: '{shell} ist auf diesem Rechner nicht installiert.',
   },
   quickAsk: {
     title: 'Kurz fragen · {title}',
@@ -195,6 +197,10 @@ export const de: typeof en = {
     copied:
       'Konsolenbefehl kopiert. Geheime Werte des Profils stehen nicht darin – die Konsole fragt sie ab. Nutze diese Session nicht in Parallax, solange claude in der Konsole läuft – zwei Schreiber würden die Unterhaltung durcheinanderbringen.',
     copyFailed: 'Der Konsolenbefehl konnte nicht in die Zwischenablage kopiert werden.',
+    /** WP-105 (102e): `claude --resume` in the embedded terminal of the session's computer. */
+    continueInTerminal: 'Im Terminal fortsetzen',
+    /** WP-105: claude runs in an embedded terminal – the panel at that terminal. */
+    showTerminal: 'Terminal mit claude zeigen',
   },
   switcher: {
     title: 'Session wechseln',

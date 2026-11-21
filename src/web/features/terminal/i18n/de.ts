@@ -9,6 +9,7 @@ export const de: typeof en = {
     protocol: 'Der Terminal-Dienst dieses Rechners spricht eine andere Version. Lade das Fenster neu.',
     starting: '{shell} wird gestartet…',
     dismiss: 'Ausblenden',
+    shellMissing: '{shell} ist auf diesem Rechner nicht installiert.',
   },
   shells: {
     cmd: 'Eingabeaufforderung (cmd)',
@@ -29,6 +30,7 @@ export const de: typeof en = {
     zsh: 'zsh',
     fish: 'fish',
     pwsh: 'pwsh',
+    claude: 'claude',
   },
   tabs: {
     label: 'Terminals dieser Session',
@@ -56,6 +58,10 @@ export const de: typeof en = {
     failed: 'Die Shell konnte nicht gestartet werden.',
     restart: 'Neu starten',
     close: 'Schließen',
+    claude: 'claude wurde mit Code {code} beendet – die Session geht hier weiter',
+    claudeUnknown: 'claude wurde beendet – die Session geht hier weiter',
+    claudeFailed: 'claude konnte nicht gestartet werden.',
+    shell: '{shell} öffnen',
   },
   menu: {
     copy: 'Kopieren',

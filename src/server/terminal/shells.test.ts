@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_CONSOLE_SETTINGS, type ConsoleSettings } from '@shared/model';
+import { DEFAULT_CONSOLE_SETTINGS, POSIX_SHELL_KINDS, type ConsoleSettings } from '@shared/model';
+import { POSIX_PATHS } from '@shared/paths';
 import type { RegView } from '../lib/registry';
 import { createMemoryFs } from '../lib/windows';
 import { CommandError } from '../sync/ports';
 import {
+  availablePosixShells,
   createGitFinder,
   findGitDir,
+  findLoginShell,
   gitBashCdArgument,
   isGitDir,
+  posixLoginArgs,
   resolveShellLaunch,
   shellEnvironment,
   type GitLocatorDeps,
@@ -60,17 +64,20 @@ async function errorPayload(promise: Promise<unknown>): Promise<unknown> {
 
 describe('shellEnvironment (ADR-238: neutral)', () => {
   it('drops Claude session, Parallax and pnpm run variables and node_modules\\.bin, keeps the rest', () => {
-    const env = shellEnvironment({
-      Path: 'D:\\work\\proj\\node_modules\\.bin;C:\\Windows\\System32;C:\\Program Files\\Git\\cmd',
-      CLAUDECODE: '1',
-      CLAUDE_CODE_ENTRYPOINT: 'cli',
-      PARALLAX: '1',
-      PARALLAX_ENTRY_ID: 'en_x',
-      npm_lifecycle_event: 'start',
-      CLAUDE_CONFIG_DIR: 'C:\\Users\\jane\\.claude-work',
-      USERPROFILE: 'C:\\Users\\jane',
-      NODE_OPTIONS: '--max-old-space-size=4096',
-    });
+    const env = shellEnvironment(
+      {
+        Path: 'D:\\work\\proj\\node_modules\\.bin;C:\\Windows\\System32;C:\\Program Files\\Git\\cmd',
+        CLAUDECODE: '1',
+        CLAUDE_CODE_ENTRYPOINT: 'cli',
+        PARALLAX: '1',
+        PARALLAX_ENTRY_ID: 'en_x',
+        npm_lifecycle_event: 'start',
+        CLAUDE_CONFIG_DIR: 'C:\\Users\\jane\\.claude-work',
+        USERPROFILE: 'C:\\Users\\jane',
+        NODE_OPTIONS: '--max-old-space-size=4096',
+      },
+      'win32',
+    );
     expect(env.Path).toBe('C:\\Windows\\System32;C:\\Program Files\\Git\\cmd');
     expect(env.USERPROFILE).toBe('C:\\Users\\jane');
     expect(env.NODE_OPTIONS).toBe('--max-old-space-size=4096');
@@ -86,8 +93,27 @@ describe('shellEnvironment (ADR-238: neutral)', () => {
   });
 
   it('never adds a profile: only what the base has (no CLAUDE_CONFIG_DIR of its own)', () => {
-    const env = shellEnvironment({ Path: 'C:\\Windows' });
+    const env = shellEnvironment({ Path: 'C:\\Windows' }, 'win32');
     expect(Object.keys(env)).toEqual(['Path']);
+  });
+
+  it('POSIX (WP-105): only PATH exactly, split at a colon', () => {
+    const env = shellEnvironment(
+      {
+        PATH: '/home/demo/proj/node_modules/.bin:/usr/local/bin:/usr/bin',
+        Path: '/home/demo/proj/node_modules/.bin',
+        PARALLAX_ENTRY_ID: 'en_x',
+        CLAUDECODE: '1',
+        HOME: '/home/demo',
+      },
+      'linux',
+    );
+    expect(env.PATH).toBe('/usr/local/bin:/usr/bin');
+    // Another spelling is another variable on POSIX – left alone.
+    expect(env.Path).toBe('/home/demo/proj/node_modules/.bin');
+    expect(env.HOME).toBe('/home/demo');
+    expect(env).not.toHaveProperty('PARALLAX_ENTRY_ID');
+    expect(env).not.toHaveProperty('CLAUDECODE');
   });
 });
 
@@ -162,15 +188,16 @@ describe('createGitFinder', () => {
 describe('resolveShellLaunch (WP-97)', () => {
   const noGit = () => Promise.resolve(null);
   const withGit = () => Promise.resolve(GIT);
+  const windows = { env: ENV, platform: 'win32' } as const;
 
   it('cmd and PowerShell from the Windows folder, never through PATH', async () => {
     const cmd = await resolveShellLaunch('cmd', 'D:\\work', settings(), 'window', {
-      env: ENV,
+      ...windows,
       gitDir: noGit,
     });
     expect(cmd).toMatchObject({ executablePath: 'C:\\Windows\\System32\\cmd.exe', args: [] });
     const ps = await resolveShellLaunch('powershell', 'D:\\work', settings(), 'window', {
-      env: ENV,
+      ...windows,
       gitDir: noGit,
     });
     expect(ps).toMatchObject({
@@ -181,7 +208,7 @@ describe('resolveShellLaunch (WP-97)', () => {
 
   it('Git Bash as mintty: git-bash.exe with --cd (a drive root gets a dot)', async () => {
     const launch = await resolveShellLaunch('gitbash', 'D:\\Mein Ordner\\ä', settings(), 'window', {
-      env: ENV,
+      ...windows,
       gitDir: withGit,
     });
     expect(launch).toMatchObject({
@@ -199,14 +226,14 @@ describe('resolveShellLaunch (WP-97)', () => {
       settings({ gitBashWindow: 'terminal' }),
       'window',
       {
-        env: ENV,
+        ...windows,
         gitDir: withGit,
       },
     );
     expect(terminal).toMatchObject({ executablePath: `${GIT}\\bin\\bash.exe`, args: ['--login', '-i'] });
     expect(terminal.env.CHERE_INVOKING).toBe('1');
     const embedded = await resolveShellLaunch('gitbash', 'D:\\work', settings(), 'embedded', {
-      env: ENV,
+      ...windows,
       gitDir: withGit,
     });
     expect(embedded.executablePath).toBe(`${GIT}\\bin\\bash.exe`);
@@ -215,8 +242,148 @@ describe('resolveShellLaunch (WP-97)', () => {
   it('SHELL_NOT_FOUND without Git for Windows', async () => {
     expect(
       await errorPayload(
-        resolveShellLaunch('gitbash', 'D:\\work', settings(), 'window', { env: ENV, gitDir: noGit }),
+        resolveShellLaunch('gitbash', 'D:\\work', settings(), 'window', { ...windows, gitDir: noGit }),
       ),
     ).toEqual({ code: 'SHELL_NOT_FOUND', params: { shell: 'gitbash' } });
+  });
+
+  it('the Linux shells are SHELL_NOT_FOUND on Windows (WP-105)', async () => {
+    for (const kind of POSIX_SHELL_KINDS) {
+      expect(
+        await errorPayload(
+          resolveShellLaunch(kind, 'D:\\work', settings(), 'embedded', { ...windows, gitDir: withGit }),
+        ),
+      ).toEqual({ code: 'SHELL_NOT_FOUND', params: { shell: kind } });
+    }
+  });
+});
+
+// ---- Linux (WP-105) – through the seams, so it runs on every platform ----
+
+const HOME_ENV = {
+  HOME: '/home/demo',
+  PATH: '/home/demo/proj/node_modules/.bin:/usr/local/bin:/usr/bin:/bin',
+  SHELL: '/usr/bin/zsh',
+  PARALLAX_ENTRY_ID: 'en_parent',
+  CLAUDECODE: '1',
+};
+
+/** A POSIX memory file system (exact case); `links` = realpath answers. */
+function posixFs(
+  files: readonly string[],
+  options: { notExecutable?: string[]; links?: Record<string, string> } = {},
+) {
+  return createMemoryFs(Object.fromEntries(files.map((file) => [file, ''])), {
+    rules: POSIX_PATHS,
+    ...options,
+  });
+}
+
+describe('findLoginShell (WP-105)', () => {
+  it('$SHELL first, then the passwd entry, then /bin/bash and /bin/sh', async () => {
+    const all = posixFs(['/usr/bin/zsh', '/usr/bin/fish', '/bin/bash', '/bin/sh']);
+    expect(await findLoginShell(HOME_ENV, all, () => '/usr/bin/fish')).toBe('/usr/bin/zsh');
+    expect(await findLoginShell({ ...HOME_ENV, SHELL: '' }, all, () => '/usr/bin/fish')).toBe(
+      '/usr/bin/fish',
+    );
+    expect(await findLoginShell({}, all, () => null)).toBe('/bin/bash');
+    expect(await findLoginShell({}, posixFs(['/bin/sh']), () => null)).toBe('/bin/sh');
+    expect(await findLoginShell({}, posixFs([]), () => null)).toBeNull();
+  });
+
+  it('skips relative, unsafe, missing, non-executable and no-login shells', async () => {
+    const fs = posixFs(['/bin/bash', '/usr/bin/zsh', '/usr/sbin/nologin', '/opt/sh/link'], {
+      notExecutable: ['/usr/bin/zsh'],
+      links: { '/opt/sh/link': '/proc/self/exe' },
+    });
+    for (const shell of ['zsh', '/usr/bin/../bin/zsh', '/usr/bin/zsh', '/usr/sbin/nologin', '/opt/sh/link']) {
+      expect(await findLoginShell({ SHELL: shell }, fs, () => null)).toBe('/bin/bash');
+    }
+    expect(await findLoginShell({ SHELL: '/usr/bin/fish' }, fs, () => '/bin/false')).toBe('/bin/bash');
+    // `$SHELL` is exact on POSIX: `shell` is another variable.
+    expect(
+      await findLoginShell({ shell: '/usr/bin/zsh' }, posixFs(['/usr/bin/zsh', '/bin/bash']), () => null),
+    ).toBe('/bin/bash');
+  });
+});
+
+describe('posixLoginArgs (WP-105)', () => {
+  it('-l for sh-like shells, --login for fish, -Login -NoLogo for pwsh', () => {
+    expect(posixLoginArgs('/usr/bin/bash')).toEqual(['-l']);
+    expect(posixLoginArgs('/usr/bin/zsh')).toEqual(['-l']);
+    expect(posixLoginArgs('/bin/sh')).toEqual(['-l']);
+    expect(posixLoginArgs('/usr/bin/fish')).toEqual(['--login']);
+    expect(posixLoginArgs('/opt/microsoft/powershell/7/pwsh')).toEqual(['-Login', '-NoLogo']);
+    expect(posixLoginArgs('/snap/bin/pwsh-preview')).toEqual(['-Login', '-NoLogo']);
+  });
+});
+
+describe('resolveShellLaunch on Linux (WP-105)', () => {
+  const linux = (fs: ReturnType<typeof posixFs>, passwd: string | null = null) =>
+    ({
+      env: HOME_ENV,
+      platform: 'linux',
+      fs,
+      passwdShell: () => passwd,
+      gitDir: () => Promise.reject(new Error('no Git lookup on Linux')),
+    }) as const;
+
+  it('login: the login shell as a login shell, neutral environment, the same in the window', async () => {
+    const fs = posixFs(['/usr/bin/zsh', '/bin/bash']);
+    const embedded = await resolveShellLaunch('login', '/home/demo/proj', settings(), 'embedded', linux(fs));
+    expect(embedded).toMatchObject({ executablePath: '/usr/bin/zsh', args: ['-l'] });
+    expect(embedded.env.PATH).toBe('/usr/local/bin:/usr/bin:/bin');
+    expect(embedded.env).not.toHaveProperty('PARALLAX_ENTRY_ID');
+    expect(embedded.env).not.toHaveProperty('CLAUDECODE');
+    // The pty adds TERM itself; the window's terminal emulator sets its own.
+    expect(embedded.env).not.toHaveProperty('TERM');
+    const window = await resolveShellLaunch('login', '/home/demo/proj', settings(), 'window', linux(fs));
+    expect(window).toMatchObject({ executablePath: '/usr/bin/zsh', args: ['-l'] });
+  });
+
+  it('bash, zsh, fish and pwsh from the PATH of the shell (never node_modules/.bin, never the cwd)', async () => {
+    const fs = posixFs([
+      '/home/demo/proj/node_modules/.bin/bash',
+      '/usr/bin/bash',
+      '/usr/bin/zsh',
+      '/usr/local/bin/fish',
+      '/usr/bin/pwsh',
+    ]);
+    const launch = (kind: 'bash' | 'zsh' | 'fish' | 'pwsh') =>
+      resolveShellLaunch(kind, '/home/demo/proj', settings(), 'embedded', linux(fs));
+    expect(await launch('bash')).toMatchObject({ executablePath: '/usr/bin/bash', args: ['-l'] });
+    expect(await launch('zsh')).toMatchObject({ executablePath: '/usr/bin/zsh', args: ['-l'] });
+    expect(await launch('fish')).toMatchObject({ executablePath: '/usr/local/bin/fish', args: ['--login'] });
+    expect(await launch('pwsh')).toMatchObject({
+      executablePath: '/usr/bin/pwsh',
+      args: ['-Login', '-NoLogo'],
+    });
+  });
+
+  it('SHELL_NOT_FOUND for a missing shell and for the Windows kinds', async () => {
+    const fs = posixFs(['/usr/bin/bash']);
+    for (const kind of ['zsh', 'cmd', 'powershell', 'gitbash'] as const) {
+      expect(
+        await errorPayload(resolveShellLaunch(kind, '/home/demo/proj', settings(), 'embedded', linux(fs))),
+      ).toEqual({ code: 'SHELL_NOT_FOUND', params: { shell: kind } });
+    }
+    expect(
+      await errorPayload(
+        resolveShellLaunch('login', '/home/demo', settings(), 'embedded', linux(posixFs([]))),
+      ),
+    ).toEqual({ code: 'SHELL_NOT_FOUND', params: { shell: 'login' } });
+  });
+});
+
+describe('availablePosixShells (WP-105)', () => {
+  it('login always, then the installed shells in display order', async () => {
+    expect(await availablePosixShells({ PATH: '/usr/bin' }, posixFs([]))).toEqual(['login']);
+    const fs = posixFs(['/usr/bin/pwsh', '/usr/bin/bash', '/usr/local/bin/fish']);
+    expect(await availablePosixShells({ PATH: '/usr/local/bin:/usr/bin' }, fs)).toEqual([
+      'login',
+      'bash',
+      'fish',
+      'pwsh',
+    ]);
   });
 });

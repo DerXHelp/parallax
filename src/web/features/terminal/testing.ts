@@ -1,4 +1,4 @@
-import { LOCAL_HOST_ID, makeSessionKey } from '@shared/common';
+import { LOCAL_HOST_ID, makeSessionKey, type HostId } from '@shared/common';
 import type { ErrorPayload } from '@shared/errors';
 import type { ShellKind } from '@shared/model';
 import { SAMPLE_IDS, SAMPLE_TIME } from '@shared/samples';
@@ -24,6 +24,11 @@ import type { TerminalSocketFactory, TerminalSocketHandlers, TerminalSocketLike 
 
 export const TERMINAL_SESSION_KEY = makeSessionKey(LOCAL_HOST_ID, SAMPLE_IDS.entry);
 export const TERMINAL_SOCKET_URL = 'ws://127.0.0.1:4712/api/terminal/ws';
+
+/** WP-105 (E3): the relay URL of another computer's terminal in the fake environment. */
+export function remoteTerminalSocketUrl(hostId: HostId): string {
+  return `ws://127.0.0.1:4712/api/hosts/${hostId}/terminal/ws`;
+}
 
 /** Deterministic terminal id `tm_<n as 32 hex>`. */
 export function sampleTerminalId(n = 1): TerminalId {
@@ -181,6 +186,12 @@ export class FakeTerminalServer {
     this.pushList(this.socket);
   }
 
+  /** A terminal started elsewhere (WP-105: "Continue in terminal") – the list goes to the latest socket. */
+  add(terminal: TerminalInfo): void {
+    this.items = [...this.items, terminal];
+    this.pushList(this.socket);
+  }
+
   /** Live output of an attached terminal on the latest socket. */
   emit(terminalId: TerminalId, text: string): void {
     const channel = this.channels.get(terminalId);
@@ -280,7 +291,7 @@ export function fakeTerminalEnvironment(
   return {
     createEngine,
     createSocket,
-    socketUrl: () => TERMINAL_SOCKET_URL,
+    socketUrl: (hostId) => (hostId === LOCAL_HOST_ID ? TERMINAL_SOCKET_URL : remoteTerminalSocketUrl(hostId)),
     copyText: async () => Promise.resolve(true),
     readClipboard: async () => Promise.resolve(clipboardText),
     fontReady: () => true,

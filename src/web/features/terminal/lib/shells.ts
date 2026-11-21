@@ -1,6 +1,7 @@
 import { WINDOWS_SHELL_KINDS, type ShellKind } from '@shared/model';
 import { preferredFirst } from '@web/lib/shells';
 import type { TerminalKey } from '../i18n';
+import type { TerminalKind } from '../state/terminals';
 
 /** Menu text of each shell. */
 export const SHELL_KEYS: Readonly<Record<ShellKind, TerminalKey>> = {
@@ -14,8 +15,8 @@ export const SHELL_KEYS: Readonly<Record<ShellKind, TerminalKey>> = {
   pwsh: 'shells.pwsh',
 };
 
-/** Short name of each shell (tabs). */
-export const SHORT_SHELL_KEYS: Readonly<Record<ShellKind, TerminalKey>> = {
+/** Short name of each shell (tabs); WP-105: `claude` for the terminal of "Continue in terminal". */
+export const SHORT_SHELL_KEYS: Readonly<Record<TerminalKind, TerminalKey>> = {
   cmd: 'short.cmd',
   powershell: 'short.powershell',
   gitbash: 'short.gitbash',
@@ -24,11 +25,12 @@ export const SHORT_SHELL_KEYS: Readonly<Record<ShellKind, TerminalKey>> = {
   zsh: 'short.zsh',
   fish: 'short.fish',
   pwsh: 'short.pwsh',
+  claude: 'short.claude',
 };
 
 /**
  * The shells with `preferred` (the default of the settings) first. WP-104: `shells` = the kinds of the
- * session's computer (`shellChoices`, default the Windows three); WP-105 passes its `shell.detect` list.
+ * session's computer (`shellChoices`, default the Windows three); WP-105: on Linux its `shell.detect` list.
  */
 export function shellOrder(
   preferred: ShellKind,
