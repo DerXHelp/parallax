@@ -5,6 +5,8 @@ Pflege und Release-Ablauf stehen in `docs/wp/WP-83.md` §4.
 
 ## [Unveröffentlicht]
 
+## [2.1.0] – 2026-11-22
+
 ### Neu
 - Der Zoom lässt sich unter Einstellungen → Allgemein wählen (50–200 %, gilt für alle Fenster); Strg+Mausrad und
   Strg+Plus/Minus ändern diese Einstellung statt Chromes eigenen Zoom, Strg+0 setzt auf 100 % zurück (WP-92).
