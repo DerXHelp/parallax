@@ -291,6 +291,9 @@ Integrations-Branch `feature/phase-3`. Kritischer Pfad: 50 (Teil 2) → 54 → 5
 - 11.11.2026 (OpenCode): Machbarkeit geprüft (`docs/wp/MACHBARKEIT-OPENCODE.md`). Anlass: auf der Arbeit wird
   voraussichtlich auf OpenCode umgestellt. Entscheidung: **nicht jetzt**, ganz ans Ende des Ausblicks
   (`docs/plan.md` „Backlog“), später gemeinsam ansehen; das Phase-3-Design bekommt keine Vorgabe zur Backend-Neutralität.
+- 24.11.2026 (OpenCode, Nutzer: „trag das nach, aber setze noch nichts um“): Machbarkeit gegen `79f84ce` und OpenCode
+  2.4.1 neu geprüft, Teil A/B aktualisiert, Teil C (Umsetzungsweg, etwa 10–13 Pakete, offene Entscheidungen) ergänzt.
+  Weiterhin nicht beauftragt.
 - 11.11.2026: Push von `main` (`a9447cc`) freigegeben und erledigt. Alte Plan-Datei
   `~/.claude/plans/plan-how-to-create-jolly-nest.md` (Spike aus einem Live-Test) gelöscht; die drei verwaisten
   headless-Chrome-Prozesse vom 05.11. beendet (Windows hält sie bis zum Neustart als Reste).
