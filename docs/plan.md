@@ -888,7 +888,8 @@ aus sollen die Sessions der anderen gesteuert werden, in einer Oberfläche.
   wo voraussichtlich auf OpenCode umgestellt wird. Machbar, aber eine eigene Phase: Kern mehr-backend-fähig
   machen (Backend-Art am Profil, je Backend eigene Übersetzung und Entscheidungsregeln), OpenCode-Backend
   über dessen HTTP-API/SSE, UI je Backend. Erst ansehen, wenn die OpenCode-V2-API stabiler ist.
-  Machbarkeitsprüfung: `docs/wp/MACHBARKEIT-OPENCODE.md`.
+  Machbarkeitsprüfung: `docs/wp/MACHBARKEIT-OPENCODE.md`; am 24.11.2026 neu geprüft (etwa 10–13 Pakete, Stufen und
+  offene Entscheidungen in Teil C), weiterhin nicht beauftragt.
 
 ## Umsetzungsstrategie: Hauptkontext frei halten, Arbeit über Subagenten (Nutzerwunsch)
 ### Rollen
