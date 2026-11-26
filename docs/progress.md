@@ -431,6 +431,8 @@ Integrations-Branch `feature/phase-3`. Kritischer Pfad: 50 (Teil 2) → 54 → 5
    MCP-Aktionen; WP-69…71 siehe WP-69 §4) im Alltag beobachten.
 10. **Abhängigkeiten (13.11.2026, `feature/deps-update`, `docs/wp/DEPS-2026-11.md`):** Nutzerregel für Updates: nur
    stabile Versionen, die älter als 14 Tage sind; `claude`/Agent SDK ausgenommen (eigener Ablauf `/claude-update`).
+   Seit 26.11.2026 gilt die Regel auch für das Agent SDK; ausgenommen bleiben das installierte `claude` und das
+   CLI-Profil (ADR-257).
    Nach Nutzer-Freigabe nach `main` gemergt und gepusht (13.11.2026); der Merge-Stand ist baumgleich mit dem geprüften
    Branch-Stand (`pnpm check`, `build`, `e2e` 83/83). Die produktive Instanz lädt pnpm 12.17.0 beim nächsten `pnpm`-Aufruf
    selbst nach. Offen: ESLint 10 und TypeScript 7, sobald die Plugins sie unterstützen.

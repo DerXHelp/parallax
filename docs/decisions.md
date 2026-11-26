@@ -3200,3 +3200,16 @@ Phase 1; ADR-095 … 099 bleiben für Phase-1-Nachträge frei).
   unverändert.
 - **Folgen:** Bis WP-116 zeigt die Entscheidungsleiste für diese Art nichts; FakeBackend-Fixtures (`elicitation`,
   `elicitationResult`) decken beide Modi ab.
+
+## ADR-257 – 14-Tage-Regel auch für das Agent SDK
+- **Datum/WP:** 26.11.2026, Nutzer; ergänzt ADR-221.
+- **Entscheidung:** `@anthropic-ai/claude-agent-sdk` wird nur auf Versionen angehoben, die älter als 14 Tage sind;
+  Ziel eines Upgrades ist die neueste solche Version (`docs/sdk-upgrade.md` Schritt 1). Die Ausnahme für das SDK aus
+  ADR-221 entfällt, die Ausnahme für Sicherheits-Fixes (Nutzer entscheidet im Einzelfall) gilt auch hier. Die Regel gilt
+  nur für Parallax: das installierte `claude` aktualisiert sich weiter selbst, und der Kurz-Check `/claude-update`
+  übernimmt das CLI-Profil weiter für die installierte Version. Dependabot lässt das SDK weiter aus.
+- **Begründung:** Das SDK bringt Parallax selbst mit (Installer und Update laden genau die gepinnte Version), es gehört
+  damit zur Lieferkette wie jede andere Abhängigkeit. Das CLI-Profil hält dagegen nur fest, dass das ohnehin laufende
+  `claude` passt, und bringt keinen fremden Code mit.
+- **Folgen:** Parallax liegt beim SDK mindestens 14 Tage hinter der neuesten Version; das installierte `claude` ist
+  meist neuer als `claudeCodeVersion` des SDK (die Versionsregel C.7 verlangt nur `>=`).

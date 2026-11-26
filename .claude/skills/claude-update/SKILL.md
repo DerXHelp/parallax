@@ -116,10 +116,12 @@ wenn
 - der Check echte Änderungen zeigt (Schritt 4 „größer“, neue Nachrichtentypen, neue Werkzeuge), oder
 - das letzte SDK-Upgrade älter als etwa einen Monat ist (Kopfzeile „Stand“ in `docs/sdk-upgrade.md`,
   Zeile `SDK-…` in `docs/progress.md`), oder
-- ein neueres `@anthropic-ai/claude-agent-sdk` passend zur neuen CLI erschienen ist
-  (`claudeCodeVersion` im SDK-Manifest).
+- ein neueres `@anthropic-ai/claude-agent-sdk` erschienen ist, das **älter als 14 Tage** ist
+  (`pnpm view @anthropic-ai/claude-agent-sdk time --json`, ADR-257). Jüngere SDK-Versionen nur mit dem Datum nennen,
+  ab dem sie infrage kommen.
 
-Stufe 2 läuft nie ohne Nutzer-Freigabe.
+Stufe 2 läuft nie ohne Nutzer-Freigabe. Die 14-Tage-Regel gilt nur für das SDK, nicht für diesen Kurz-Check: das
+CLI-Profil übernimmt weiter die installierte `claude`-Version, auch wenn sie frisch ist.
 
 ## 6. Kurzbericht an den Nutzer
 
