@@ -176,11 +176,14 @@ Abhängigkeit, Contract-Änderung) im Bericht unter
 durch den Koordinator ändern (mit Eintrag im Contract-Changelog). Nichts außerhalb der eigenen
 Besitz-Pfade ändern.
 
-## Abhängigkeiten (Nutzer 17.11.2026, ADR-221)
+## Abhängigkeiten (Nutzer 17.11.2026, ADR-221, ADR-257)
 - **Nur Versionen, die älter als 14 Tage sind** (npm und GitHub Actions): `pnpm update
-  --config.minimumReleaseAge=20160 --config.minimumReleaseAgeExclude=@anthropic-ai/claude-agent-sdk`, danach jeden
-  neuen Eintrag unter `packages:` im Lockfile gegen die Registry-Zeit prüfen (`docs/wp/DEPS-2026-11.md`). Agent SDK
-  und `claude` ausgenommen (`/claude-update`). Actions per Commit-SHA mit der Version als Kommentar.
+  --config.minimumReleaseAge=20160`, danach jeden neuen Eintrag unter `packages:` im Lockfile gegen die Registry-Zeit
+  prüfen (`docs/wp/DEPS-2026-11.md`). Actions per Commit-SHA mit der Version als Kommentar.
+- **Agent SDK (seit 26.11.2026, ADR-257):** auch für `@anthropic-ai/claude-agent-sdk` nur Versionen älter als 14 Tage
+  (`pnpm view @anthropic-ai/claude-agent-sdk time`); das Upgrade selbst läuft nach `docs/sdk-upgrade.md`. Die Regel gilt
+  nur für Parallax: das installierte `claude` aktualisiert sich weiter selbst, und das CLI-Profil (`/claude-update`)
+  ist ausgenommen.
 - **Sicherheits-Fixes:** Bei einer CVE mit Schwere **hoch oder kritisch** entscheidet der Nutzer im Einzelfall, ob der
   Fix vor Ablauf der 14 Tage kommt; vorlegen: Paket, Schwere, Pfad (Laufzeit oder nur Entwicklung), Alter des Fixes.
   Sonst wartet der Fix 14 Tage.

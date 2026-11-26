@@ -52,10 +52,14 @@ Profil-/Neue-Session-Status einen dezenten Hinweis („neuer als die mit Paralla
 
 ## 1. Version anheben
 
+- **Zielversion (ADR-257):** die neueste Version, die **älter als 14 Tage** ist –
+  `pnpm view @anthropic-ai/claude-agent-sdk time --json` und die Zeit der Version mit heute vergleichen. Jüngere
+  Versionen nie einbinden; die Ausnahme für Sicherheits-Fixes (ADR-221) entscheidet der Nutzer im Einzelfall. Das
+  installierte `claude` darf neuer sein (Versionsregel C.7 verlangt nur `>= claudeCodeVersion`).
 - In einem Worktree (`.worktrees/sdk-<version>`, Branch `wp/sdk-<version>`):
-  `pnpm add -E @anthropic-ai/claude-agent-sdk@<version>` (exakt, keine Range), danach
-  `pnpm install --frozen-lockfile` gegenprüfen. `minimumReleaseAge` (1 Tag) gilt – eine frisch
-  veröffentlichte Version lässt sich erst danach installieren.
+  `pnpm add -E @anthropic-ai/claude-agent-sdk@<version> --config.minimumReleaseAge=20160` (exakt, keine Range),
+  danach `pnpm install --frozen-lockfile` gegenprüfen. Neue transitive Einträge im Lockfile ebenfalls gegen die
+  Registry-Zeit prüfen (`docs/wp/DEPS-2026-11.md`).
 - **Peer-Ranges prüfen** (ADR-008): `@anthropic-ai/sdk`, `@modelcontextprotocol/sdk`, `zod` aus
   `node_modules/@anthropic-ai/claude-agent-sdk/package.json` mit unseren Versionen vergleichen.
 - **Plattform-Binaries bleiben ausgeschlossen** (`ignoredOptionalDependencies` in
